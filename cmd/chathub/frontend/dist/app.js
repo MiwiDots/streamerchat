@@ -30,6 +30,13 @@ const onlyLiveCheckbox = document.getElementById('onlyLiveCheckbox');
 const autostartRow = document.getElementById('autostartRow');
 const autostartCheckbox = document.getElementById('autostartCheckbox');
 const localeSelect = document.getElementById('localeSelect');
+const versionLabelEl = document.getElementById('versionLabel');
+const checkUpdateBtn = document.getElementById('checkUpdateBtn');
+const updateStatusEl = document.getElementById('updateStatus');
+const updateApplyRow = document.getElementById('updateApplyRow');
+const applyUpdateBtn = document.getElementById('applyUpdateBtn');
+const releaseUrlEl = document.getElementById('releaseUrl');
+let pendingUpdateUrl = '';
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
 const authInfo = document.getElementById('authInfo');
@@ -626,6 +633,10 @@ async function openSettings() {
   } catch (e) {
     autostartRow.classList.add('hidden');
   }
+  // Version label
+  try {
+    versionLabelEl.textContent = await window.go.main.App.GetVersion();
+  } catch (e) {}
   // Show debug paths
   try {
     const cfg = await window.go.main.App.GetConfigPath();
@@ -634,6 +645,61 @@ async function openSettings() {
     document.getElementById('logPath').textContent = log;
   } catch (e) {}
   highlightInput.focus();
+}
+
+if (checkUpdateBtn) {
+  checkUpdateBtn.addEventListener('click', async () => {
+    updateStatusEl.textContent = i18n.t('updateChecking');
+    updateApplyRow.classList.add('hidden');
+    pendingUpdateUrl = '';
+    try {
+      const res = await window.go.main.App.CheckUpdate();
+      if (res.error) {
+        updateStatusEl.textContent = i18n.t('updateFailed', { error: res.error });
+        return;
+      }
+      if (!res.available) {
+        updateStatusEl.textContent = i18n.t('upToDate') + ' (v' + (res.current || '?') + ')';
+        return;
+      }
+      updateStatusEl.textContent = i18n.t('updateAvailable', { version: res.latest || '?' });
+      if (res.downloadUrl) {
+        pendingUpdateUrl = res.downloadUrl;
+        updateApplyRow.classList.remove('hidden');
+      } else {
+        // Non-Windows: no exe asset matches. Offer the release page instead.
+        updateStatusEl.textContent += ' — ' + i18n.t('updateUnsupported');
+      }
+      if (res.releaseUrl) {
+        releaseUrlEl.href = res.releaseUrl;
+        releaseUrlEl.onclick = (e) => {
+          e.preventDefault();
+          try { window.go.main.App.OpenURL(res.releaseUrl); } catch (_) {}
+        };
+      }
+    } catch (e) {
+      updateStatusEl.textContent = i18n.t('updateFailed', { error: String(e) });
+    }
+  });
+}
+
+if (applyUpdateBtn) {
+  applyUpdateBtn.addEventListener('click', async () => {
+    if (!pendingUpdateUrl) return;
+    applyUpdateBtn.disabled = true;
+    updateStatusEl.textContent = i18n.t('updateChecking');
+    try {
+      const err = await window.go.main.App.ApplyUpdate(pendingUpdateUrl);
+      if (err) {
+        updateStatusEl.textContent = i18n.t('updateFailed', { error: err });
+        applyUpdateBtn.disabled = false;
+      }
+      // On success the backend relaunches and the current window is gone.
+    } catch (e) {
+      updateStatusEl.textContent = i18n.t('updateFailed', { error: String(e) });
+      applyUpdateBtn.disabled = false;
+    }
+  });
 }
 
 // Locale change: apply immediately so the user sees the effect, persist to config.

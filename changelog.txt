@@ -1,3 +1,19 @@
+2026-05-26 12:57 - v0.2.0 + in-app self-updater (both apps, Windows)
+  - internal/version: shared Version constant + repo coordinates so a single
+    bump propagates to both binaries.
+  - internal/selfupdate: GitHub-releases-based updater. Latest() hits
+    /releases/latest, Apply() downloads to <exe>.new, renames the running
+    <exe> to <exe>.old (Windows allows that), atomically swaps in the new
+    one, and Restart() relaunches + os.Exit's the current process.
+    CleanupPrevious() removes the .old on the next launch.
+  - cmd/chathub & cmd/wails: new bound methods CheckUpdate / ApplyUpdate /
+    GetVersion. startup() calls selfupdate.CleanupPrevious() right after
+    log init.
+  - frontend/dist (chathub): "Updates" section in settings shows current
+    version, a Check button that hits CheckUpdate, and an Install button
+    that appears only when a newer release is published. Localized in
+    DE/EN. Release-notes link opens in the user's browser.
+
 2026-05-26 12:44 - ChatHub: beep when a channel goes live
   - setLiveStatus now plays the configured mention sound on offline->live
     transitions. Uses the existing 'soundOnMention' setting (none/bell/ping)

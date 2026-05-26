@@ -100,6 +100,21 @@
       </div>
     </div>
     <div class="settings-section">
+      <label data-i18n="updates">Updates</label>
+      <div class="debug-row">
+        <span class="debug-label" data-i18n="versionLabel">Version:</span>
+        <span id="versionLabel">…</span>
+      </div>
+      <div class="debug-row">
+        <button class="btn" id="checkUpdateBtn" data-i18n="checkForUpdates">Check for updates</button>
+        <span id="updateStatus"></span>
+      </div>
+      <div class="debug-row hidden" id="updateApplyRow">
+        <button class="btn btn-primary" id="applyUpdateBtn" data-i18n="installUpdate">Install update</button>
+        <a class="debug-path" id="releaseUrl" href="#" target="_blank">release notes</a>
+      </div>
+    </div>
+    <div class="settings-section">
       <label data-i18n="debug">Debug</label>
       <div class="debug-row">
         <span class="debug-label" data-i18n="configLabel">Config:</span>

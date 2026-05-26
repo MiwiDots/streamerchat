@@ -53,6 +53,16 @@ const STRINGS = {
     connectedChannel: 'Connected to #{channel}',
     userJoined: '{name} joined',
     userParted: '{name} left',
+
+    updates: 'Updates',
+    versionLabel: 'Version:',
+    checkForUpdates: 'Check for updates',
+    installUpdate: 'Install update',
+    upToDate: 'Up to date',
+    updateAvailable: 'Update available: {version}',
+    updateChecking: 'Checking…',
+    updateFailed: 'Update failed: {error}',
+    updateUnsupported: 'Auto-update is only available on Windows. Download manually from the release page.',
   },
   de: {
     emptyAdd: 'Klicke auf <strong>+</strong> um einen Twitch-Channel hinzuzufügen',
@@ -106,6 +116,16 @@ const STRINGS = {
     connectedChannel: 'Verbunden mit #{channel}',
     userJoined: '{name} ist beigetreten',
     userParted: '{name} ist gegangen',
+
+    updates: 'Updates',
+    versionLabel: 'Version:',
+    checkForUpdates: 'Nach Updates suchen',
+    installUpdate: 'Update installieren',
+    upToDate: 'Aktuell',
+    updateAvailable: 'Update verfügbar: {version}',
+    updateChecking: 'Suche…',
+    updateFailed: 'Update fehlgeschlagen: {error}',
+    updateUnsupported: 'Auto-Update gibt es nur unter Windows. Bitte manuell von der Release-Seite herunterladen.',
   },
 };
 

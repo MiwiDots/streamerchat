@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/miwi/streamerchat/internal/chat"
+	"github.com/miwi/streamerchat/internal/selfupdate"
 	"github.com/miwi/streamerchat/internal/twitch"
+	"github.com/miwi/streamerchat/internal/version"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -111,8 +113,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
 		log.SetOutput(f)
-		log.Printf("[BOOT] ChatHub started, log: %s", logPath)
+		log.Printf("[BOOT] ChatHub v%s started, log: %s", version.Version, logPath)
 	}
+
+	// Remove leftover <exe>.old from a previous self-update.
+	selfupdate.CleanupPrevious()
 
 	a.cfg = loadHubConfig()
 	log.Printf("[BOOT] Loaded config: channels=%v username=%q tokenLen=%d",
@@ -893,6 +898,50 @@ func (a *App) TestSave() string {
 	}
 	return ""
 }
+
+// === Self-update ===
+
+// CheckUpdate queries GitHub releases for the latest published version and
+// reports whether it's newer than the running binary. The frontend uses this
+// to surface an "update available" button.
+func (a *App) CheckUpdate() map[string]interface{} {
+	out := map[string]interface{}{
+		"current":   version.Version,
+		"available": false,
+	}
+	rel, err := selfupdate.Latest(version.RepoOwner, version.RepoName)
+	if err != nil {
+		out["error"] = err.Error()
+		return out
+	}
+	out["latest"] = rel.TagName
+	out["notes"] = rel.Body
+	out["releaseUrl"] = rel.HTMLURL
+	out["available"] = selfupdate.IsNewer(version.Version, rel.TagName)
+	out["downloadUrl"] = selfupdate.FindAsset(rel, "chathub.exe")
+	return out
+}
+
+// ApplyUpdate downloads the new exe, swaps it in-place, and relaunches.
+// On non-Windows platforms returns a hint so the UI can fall back to
+// opening the release page in a browser.
+func (a *App) ApplyUpdate(url string) string {
+	if url == "" {
+		return "no download URL"
+	}
+	if err := selfupdate.Apply(url); err != nil {
+		log.Printf("[UPDATE] apply failed: %v", err)
+		return err.Error()
+	}
+	log.Printf("[UPDATE] applied, relaunching")
+	if err := selfupdate.Restart(); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// GetVersion is a tiny helper for the settings UI.
+func (a *App) GetVersion() string { return version.Version }
 
 // === Windows autostart ===
 
