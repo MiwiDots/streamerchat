@@ -1,3 +1,12 @@
+2026-05-26 13:00 - ChatHub: scroll-up now works through history
+  - .chat-view had `justify-content: flex-end` + `overflow-y: auto` which
+    is a known CSS pattern bug: the top of overflowing content gets clipped
+    and scrolling up doesn't reach it. Replaced with normal block scroll;
+    JS already pins to bottom on new messages only if the user is near the
+    bottom, so the bottom-anchor UX is preserved while history is reachable.
+  - Also brought back a thin visible scrollbar — fully hiding it made it
+    look like the area wasn't scrollable.
+
 2026-05-26 12:57 - v0.2.0 + in-app self-updater (both apps, Windows)
   - internal/version: shared Version constant + repo coordinates so a single
     bump propagates to both binaries.
