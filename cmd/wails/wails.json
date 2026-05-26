@@ -1,0 +1,11 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "streamerchat",
+  "outputfilename": "streamerchat",
+  "frontend:install": "true",
+  "frontend:build": "true",
+  "author": {
+    "name": "MiwiDot",
+    "email": "gh@miwidot.dev"
+  }
+}

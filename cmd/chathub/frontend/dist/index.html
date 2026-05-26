@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ChatHub</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <div class="tab-bar" id="tabBar">
+    <button class="tab-add" id="tabAdd" data-i18n-title="addChannel" title="Add channel">+</button>
+  </div>
+
+  <div class="chat-area" id="chatArea">
+    <div class="empty-state" id="emptyState">
+      <h2>ChatHub</h2>
+      <p data-i18n-html="emptyAdd">Click <strong>+</strong> to add a Twitch channel</p>
+      <p class="hint" data-i18n="emptyHint">Anonymous read-only by default. Login via ⚙ to send messages.</p>
+    </div>
+  </div>
+
+  <div class="input-row" id="inputRow">
+    <span class="input-prefix" id="inputPrefix" data-i18n="readOnly">read-only</span>
+    <input class="input-field" id="msgInput" type="text" data-i18n-placeholder="loginRequired" placeholder="Login required to send messages" autocomplete="off" disabled>
+  </div>
+
+  <div class="status-bar" id="statusBar">
+    <span id="statusText" data-i18n="ready">Ready</span>
+    <span class="spacer"></span>
+    <span class="auth-status" id="authStatus" data-i18n="notLoggedIn">Not logged in</span>
+    <button class="icon-btn" id="settingsBtn" data-i18n-title="settings" title="Settings">⚙</button>
+  </div>
+</div>
+
+<!-- Add channel modal -->
+<div class="modal-bg hidden" id="addModalBg">
+  <div class="modal">
+    <div class="modal-header">
+      <span data-i18n="addChannel">Add Channel</span>
+      <span class="modal-close" data-close="add">✕</span>
+    </div>
+    <input class="modal-input" type="text" id="channelInput" data-i18n-placeholder="channelPlaceholder" placeholder="twitch channel name (no #)" autocomplete="off">
+    <div class="modal-btns">
+      <button class="btn" data-close="add" data-i18n="cancel">Cancel</button>
+      <button class="btn btn-primary" id="addChannelBtn" data-i18n="add">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div class="modal-bg hidden" id="settingsModalBg">
+  <div class="modal">
+    <div class="modal-header">
+      <span data-i18n="settings">Settings</span>
+      <span class="modal-close" data-close="settings">✕</span>
+    </div>
+    <div class="settings-section">
+      <label data-i18n="language">Language</label>
+      <select class="modal-input" id="localeSelect">
+        <option value="en">English</option>
+        <option value="de">Deutsch</option>
+      </select>
+    </div>
+    <div class="settings-section">
+      <label data-i18n="highlightKeywords">Highlight keywords (comma separated, your name will be added automatically)</label>
+      <input class="modal-input" type="text" id="highlightInput" data-i18n-placeholder="highlightPlaceholder" placeholder="kappa, lurk, ...">
+    </div>
+    <div class="settings-section">
+      <label data-i18n="notifSound">Notification sound on mention</label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select class="modal-input" id="soundSelect" style="margin-bottom:0;flex:1;">
+          <option value="none" data-i18n="soundNone">None</option>
+          <option value="bell" data-i18n="soundBell">Bell</option>
+          <option value="ping" data-i18n="soundPing">Ping</option>
+        </select>
+        <button class="btn" id="testSoundBtn" data-i18n="test">Test</button>
+      </div>
+    </div>
+    <div class="settings-section">
+      <label class="checkbox-row">
+        <input type="checkbox" id="onlyLiveCheckbox">
+        <span data-i18n="onlyLive">Only show channels that are currently live</span>
+      </label>
+      <label class="checkbox-row hidden" id="autostartRow">
+        <input type="checkbox" id="autostartCheckbox">
+        <span data-i18n="autostart">Start ChatHub automatically with Windows</span>
+      </label>
+    </div>
+    <div class="settings-section">
+      <label data-i18n="twitchLogin">Twitch Login (to send messages)</label>
+      <div class="auth-row" id="authRow">
+        <span id="authInfo" data-i18n="notLoggedIn">Not logged in</span>
+        <button class="btn btn-primary" id="loginBtn" data-i18n="login">Login</button>
+        <button class="btn hidden" id="logoutBtn" data-i18n="logout">Logout</button>
+      </div>
+      <div class="auth-help hidden" id="authHelp">
+        <p><span data-i18n="authStep1">1. Go to</span> <span class="code" id="authUrl"></span></p>
+        <p><span data-i18n="authStep2">2. Enter code:</span> <span class="code big" id="authCode"></span></p>
+        <p class="hint" data-i18n="authWaiting">Waiting for authorization...</p>
+      </div>
+    </div>
+    <div class="settings-section">
+      <label data-i18n="debug">Debug</label>
+      <div class="debug-row">
+        <span class="debug-label" data-i18n="configLabel">Config:</span>
+        <span class="debug-path" id="cfgPath">...</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label" data-i18n="logLabel">Log:</span>
+        <span class="debug-path" id="logPath">...</span>
+      </div>
+      <div class="debug-row">
+        <button class="btn" id="testSaveBtn" data-i18n="forceSave">Force save</button>
+        <span id="testSaveResult"></span>
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-primary" data-close="settings" data-i18n="done">Done</button>
+    </div>
+  </div>
+</div>
+
+<script src="/wails/runtime/runtime.js"></script>
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

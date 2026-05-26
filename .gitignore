@@ -1,0 +1,43 @@
+# Binaries (compiled output, never check in)
+# Anchored to root with `/` so they don't accidentally match the
+# `cmd/chathub/` or `cmd/streamerchat/` source directories.
+/streamerchat
+/streamerchat-gui
+/chathub
+*.exe
+*.dll
+*.so
+*.dylib
+
+# macOS app bundles (built artifacts)
+*.app/
+
+# Wails / Go build output
+cmd/*/build/
+cmd/*/frontend/dist/wailsjs/
+cmd/*/frontend/wailsjs/
+cmd/*/frontend/node_modules/
+build/bin/
+
+# Anything that looks like a config (may carry tokens / secrets)
+config.json
+.env
+.env.*
+*.local.json
+
+# Logs
+*.log
+debug.log
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Stale wails CLI stub at project root (real wails CLI lives in $GOPATH/bin)
+/wails

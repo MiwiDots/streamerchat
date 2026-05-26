@@ -1,0 +1,651 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/miwi/streamerchat/internal/chat"
+	"github.com/miwi/streamerchat/internal/config"
+	"github.com/miwi/streamerchat/internal/twitch"
+	"github.com/miwi/streamerchat/internal/youtube"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+// Embedded at build time via -ldflags
+var defaultClientID string
+
+// App holds the Wails application state.
+type App struct {
+	ctx context.Context
+
+	cfg *config.Config
+
+	mu          sync.Mutex
+	ircClient   *twitch.IRCClient
+	helixClient *twitch.HelixClient
+	botDetector *twitch.BotDetector
+	emotes      *twitch.ThirdPartyEmotes
+	badges      *twitch.BadgeRegistry
+
+	ytChatCancel context.CancelFunc
+}
+
+func NewApp() *App {
+	return &App{}
+}
+
+// startup is called when the app starts.
+func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
+
+	// Open log file next to executable
+	logPath := "streamerchat.log"
+	if exe, err := os.Executable(); err == nil {
+		logPath = filepath.Join(filepath.Dir(exe), "streamerchat.log")
+	}
+	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
+		log.SetOutput(f)
+		log.Printf("[BOOT] StreamerChat (Wails) started, log: %s", logPath)
+	}
+
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		log.Printf("[BOOT] config load failed: %v", err)
+		return
+	}
+	a.cfg = cfg
+
+	// Embed default client ID at build time
+	if a.cfg.Twitch.ClientID == "" && defaultClientID != "" {
+		a.cfg.Twitch.ClientID = defaultClientID
+		a.cfg.Save()
+	}
+
+	// Bot detector
+	a.botDetector = twitch.NewBotDetector()
+
+	// 3rd party emotes (loaded async)
+	a.emotes = twitch.NewThirdPartyEmotes()
+	go a.emotes.Load(cfg.Twitch.BotUserID)
+
+	// Twitch native badges registry (loaded inside bootSequence after auth is valid)
+	a.badges = twitch.NewBadgeRegistry()
+
+	// Start connection sequence
+	go a.bootSequence()
+}
+
+// shutdown is called when the app exits.
+func (a *App) shutdown(_ context.Context) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.ircClient != nil {
+		a.ircClient.Disconnect()
+	}
+	if a.ytChatCancel != nil {
+		a.ytChatCancel()
+	}
+}
+
+// bootSequence handles auth + initial connection.
+func (a *App) bootSequence() {
+	if a.cfg == nil {
+		return
+	}
+
+	if a.cfg.Twitch.AccessToken == "" || a.cfg.Twitch.ClientID == "" {
+		a.emitSystem("Authentication required - please run the CLI version first to authenticate")
+		return
+	}
+
+	info, err := twitch.ValidateToken(a.cfg.Twitch.AccessToken)
+	if err != nil {
+		log.Printf("[AUTH] Validate failed: %v", err)
+		if a.cfg.Twitch.RefreshToken != "" {
+			log.Printf("[AUTH] Attempting refresh...")
+			if token, refErr := twitch.RefreshAccessToken(a.cfg.Twitch.ClientID, a.cfg.Twitch.ClientSecret, a.cfg.Twitch.RefreshToken); refErr == nil {
+				a.cfg.Twitch.AccessToken = token.AccessToken
+				a.cfg.Twitch.RefreshToken = token.RefreshToken
+				a.cfg.Save()
+				if validInfo, vErr := twitch.ValidateToken(token.AccessToken); vErr == nil {
+					info = validInfo
+					log.Printf("[AUTH] Refreshed and validated as %s", validInfo.Login)
+				} else {
+					log.Printf("[AUTH] Validate after refresh failed: %v", vErr)
+				}
+			} else {
+				log.Printf("[AUTH] Refresh failed: %v", refErr)
+			}
+		}
+	} else {
+		log.Printf("[AUTH] Token valid for %s", info.Login)
+	}
+	if info != nil {
+		a.cfg.Twitch.Username = info.Login
+		a.cfg.Twitch.BotUserID = info.UserID
+	}
+	if a.cfg.Twitch.Channel == "" {
+		a.cfg.Twitch.Channel = a.cfg.Twitch.Username
+		a.cfg.Save()
+	}
+
+	a.helixClient, _ = twitch.NewHelixClient(a.cfg.Twitch.ClientID, a.cfg.Twitch.AccessToken, a.cfg.Twitch.BotUserID, a.cfg.Twitch.BotUserID)
+
+	// Load badges now that auth is valid (was previously a race against bootSequence).
+	a.loadBadges()
+
+	go a.runIRCSupervisor()
+	go a.tokenRefreshLoop()
+
+	if a.helixClient != nil {
+		go a.loadChattersAndRoles()
+	}
+
+	if a.cfg.YouTube.VideoID != "" {
+		a.startYouTubeChat(a.cfg.YouTube.VideoID)
+	} else if a.cfg.YouTube.ChannelHandle != "" {
+		go a.startYouTubeAutoDetect(a.cfg.YouTube.ChannelHandle)
+	}
+
+	runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
+		"channel":  a.cfg.Twitch.Channel,
+		"username": a.cfg.Twitch.Username,
+		"youtube":  a.cfg.YouTube.ChannelHandle != "" || a.cfg.YouTube.VideoID != "",
+	})
+}
+
+func (a *App) runIRCSupervisor() {
+	backoff := 2 * time.Second
+	maxBackoff := 60 * time.Second
+
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		default:
+		}
+
+		client := twitch.NewIRCClient(a.cfg.Twitch.Username, a.cfg.Twitch.AccessToken, a.cfg.Twitch.Channel)
+		if a.helixClient != nil {
+			client.SetRoomResolver(func(roomID string) string {
+				if name, err := a.helixClient.GetChannelName(roomID); err == nil {
+					return name
+				}
+				return roomID
+			})
+		}
+		a.mu.Lock()
+		a.ircClient = client
+		a.mu.Unlock()
+
+		clientCtx, cancelClient := context.WithCancel(a.ctx)
+		go a.forwardIRC(clientCtx, client)
+
+		log.Printf("[IRC] Connecting to #%s", a.cfg.Twitch.Channel)
+		err := client.Connect()
+		cancelClient()
+		client.Disconnect()
+
+		if a.ctx.Err() != nil {
+			return
+		}
+
+		log.Printf("[IRC] Disconnected: %v", err)
+		errStr := ""
+		if err != nil {
+			errStr = strings.ToLower(err.Error())
+		}
+		isAuth := strings.Contains(errStr, "login") ||
+			strings.Contains(errStr, "auth") ||
+			strings.Contains(errStr, "improperly formatted") ||
+			strings.Contains(errStr, "invalid")
+
+		if isAuth && a.cfg.Twitch.RefreshToken != "" {
+			if token, refErr := twitch.RefreshAccessToken(a.cfg.Twitch.ClientID, a.cfg.Twitch.ClientSecret, a.cfg.Twitch.RefreshToken); refErr == nil {
+				a.cfg.Twitch.AccessToken = token.AccessToken
+				a.cfg.Twitch.RefreshToken = token.RefreshToken
+				a.cfg.Save()
+				backoff = 2 * time.Second
+				continue
+			}
+		}
+
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
+
+func (a *App) forwardIRC(ctx context.Context, client *twitch.IRCClient) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-client.Messages():
+			if !ok {
+				return
+			}
+			a.emitChat(msg)
+		case jp, ok := <-client.Joins():
+			if !ok {
+				return
+			}
+			a.emitJoinPart(jp)
+		case settings, ok := <-client.Settings():
+			if !ok {
+				return
+			}
+			runtime.EventsEmit(a.ctx, "settings", settings)
+		case err, ok := <-client.Errors():
+			if !ok {
+				return
+			}
+			a.emitSystem(fmt.Sprintf("IRC error: %v", err))
+		}
+	}
+}
+
+func (a *App) tokenRefreshLoop() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if a.cfg.Twitch.RefreshToken == "" {
+			continue
+		}
+		if token, err := twitch.RefreshAccessToken(a.cfg.Twitch.ClientID, a.cfg.Twitch.ClientSecret, a.cfg.Twitch.RefreshToken); err == nil {
+			a.cfg.Twitch.AccessToken = token.AccessToken
+			a.cfg.Twitch.RefreshToken = token.RefreshToken
+			a.cfg.Save()
+			log.Printf("[AUTH] Token refreshed")
+			// Reload badges with the fresh token in case the previous load failed.
+			a.loadBadges()
+		}
+	}
+}
+
+func (a *App) loadChattersAndRoles() {
+	chatters, _ := a.helixClient.GetChatters()
+	entries := make([]map[string]string, 0, len(chatters))
+	for _, c := range chatters {
+		entries = append(entries, map[string]string{
+			"username": c.UserLogin,
+			"userId":   c.UserID,
+		})
+	}
+	runtime.EventsEmit(a.ctx, "chatters", entries)
+
+	roles := map[string]interface{}{
+		"broadcaster": a.cfg.Twitch.Channel,
+	}
+	if mods, err := a.helixClient.GetModerators(); err == nil {
+		roles["mods"] = mods
+	}
+	if vips, err := a.helixClient.GetVIPs(); err == nil {
+		roles["vips"] = vips
+	}
+	var botNames []string
+	for _, c := range chatters {
+		if a.botDetector.IsBot(c.UserLogin) {
+			botNames = append(botNames, c.UserLogin)
+		}
+	}
+	roles["bots"] = botNames
+	runtime.EventsEmit(a.ctx, "roles", roles)
+
+	// Refresh roles every 5 minutes
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		updated := map[string]interface{}{"broadcaster": a.cfg.Twitch.Channel}
+		if mods, err := a.helixClient.GetModerators(); err == nil {
+			updated["mods"] = mods
+		}
+		if vips, err := a.helixClient.GetVIPs(); err == nil {
+			updated["vips"] = vips
+		}
+		runtime.EventsEmit(a.ctx, "roles", updated)
+	}
+}
+
+func (a *App) startYouTubeChat(videoID string) {
+	a.mu.Lock()
+	if a.ytChatCancel != nil {
+		a.ytChatCancel()
+	}
+	chatCtx, cancel := context.WithCancel(a.ctx)
+	a.ytChatCancel = cancel
+	a.mu.Unlock()
+
+	ytClient := youtube.NewInnerTubeClient(videoID)
+
+	go func() {
+		for {
+			select {
+			case <-chatCtx.Done():
+				return
+			case msg := <-ytClient.Messages():
+				a.emitChat(msg)
+			case err := <-ytClient.Errors():
+				log.Printf("[YT] %v", err)
+			}
+		}
+	}()
+
+	go func() {
+		for attempt := 0; attempt < 5; attempt++ {
+			if chatCtx.Err() != nil {
+				return
+			}
+			if err := ytClient.Connect(chatCtx); err != nil {
+				select {
+				case <-chatCtx.Done():
+					return
+				case <-time.After(5 * time.Second):
+				}
+				continue
+			}
+			a.emitSystem(fmt.Sprintf("Connected to YouTube chat (video: %s)", videoID))
+			return
+		}
+	}()
+}
+
+func (a *App) startYouTubeAutoDetect(handle string) {
+	detector := youtube.NewLiveDetector(
+		handle,
+		func(info youtube.LiveStreamInfo) {
+			title := info.Title
+			if title == "" {
+				title = info.VideoID
+			}
+			a.emitSystem(fmt.Sprintf("YouTube stream detected: %s", title))
+			a.startYouTubeChat(info.VideoID)
+		},
+		func() {
+			a.mu.Lock()
+			if a.ytChatCancel != nil {
+				a.ytChatCancel()
+				a.ytChatCancel = nil
+			}
+			a.mu.Unlock()
+			a.emitSystem("YouTube stream ended")
+		},
+	)
+	detector.Start(a.ctx)
+}
+
+// === Event emitters ===
+
+func (a *App) emitChat(msg chat.Message) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "chat", a.chatToMap(msg))
+}
+
+func (a *App) emitJoinPart(jp chat.UserJoinPart) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "joinPart", map[string]interface{}{
+		"username": jp.Username,
+		"isJoin":   jp.IsJoin,
+		"platform": string(jp.Platform),
+	})
+}
+
+func (a *App) emitSystem(text string) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "chat", map[string]interface{}{
+		"type":      "system",
+		"text":      text,
+		"timestamp": time.Now().UnixMilli(),
+		"platform":  "twitch",
+	})
+}
+
+func (a *App) chatToMap(msg chat.Message) map[string]interface{} {
+	ts := msg.Timestamp
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+
+	emoteRanges := make([]map[string]interface{}, 0, len(msg.TwitchEmoteRanges))
+	for _, e := range msg.TwitchEmoteRanges {
+		emoteRanges = append(emoteRanges, map[string]interface{}{
+			"id":    e.ID,
+			"name":  e.Name,
+			"start": e.Start,
+			"end":   e.End,
+		})
+	}
+
+	badges := make([]map[string]string, 0, len(msg.Badges))
+	for _, b := range msg.Badges {
+		badges = append(badges, map[string]string{
+			"name":    b.Name,
+			"version": b.Version,
+		})
+	}
+
+	typeStr := "chat"
+	switch msg.Type {
+	case chat.MessageTypeJoin:
+		typeStr = "join"
+	case chat.MessageTypePart:
+		typeStr = "part"
+	case chat.MessageTypeSub:
+		typeStr = "sub"
+	case chat.MessageTypeGiftSub:
+		typeStr = "giftsub"
+	case chat.MessageTypeRaid:
+		typeStr = "raid"
+	case chat.MessageTypeSuperChat:
+		typeStr = "superchat"
+	case chat.MessageTypeMembership:
+		typeStr = "membership"
+	case chat.MessageTypeBan:
+		typeStr = "ban"
+	case chat.MessageTypeTimeout:
+		typeStr = "timeout"
+	case chat.MessageTypeDeletedMessage:
+		typeStr = "deleted"
+	case chat.MessageTypeClearChat:
+		typeStr = "clearchat"
+	case chat.MessageTypeAnnouncement:
+		typeStr = "announcement"
+	case chat.MessageTypeSystem:
+		typeStr = "system"
+	}
+
+	return map[string]interface{}{
+		"id":              msg.ID,
+		"platform":        string(msg.Platform),
+		"type":            typeStr,
+		"channel":         msg.Channel,
+		"timestamp":       ts.UnixMilli(),
+		"userId":          msg.UserID,
+		"username":        msg.Username,
+		"displayName":     msg.DisplayName,
+		"color":           msg.Color,
+		"isMod":           msg.IsMod,
+		"isVIP":           msg.IsVIP,
+		"isSub":           msg.IsSub,
+		"isBroadcaster":   msg.IsBroadcaster,
+		"text":            msg.Text,
+		"twitchEmotes":    emoteRanges,
+		"badges":          badges,
+		"bits":            msg.Bits,
+		"sourceChannel":   msg.SourceChannel,
+		"isSharedChat":    msg.IsSharedChat,
+		"superChatAmount": msg.SuperChatAmount,
+	}
+}
+
+// === Methods bound to frontend ===
+
+// LookupBadge returns the image URL for a badge in the context of `channel`.
+// Channel-specific artwork (sub tiers, custom badges) wins over global.
+// streamerchat only watches a single primary channel, but signature is kept
+// uniform with chathub for the frontend.
+func (a *App) LookupBadge(channel, setID, version string) string {
+	if a.badges == nil {
+		return ""
+	}
+	return a.badges.Lookup(a.cfg.Twitch.BotUserID, setID, version)
+}
+
+// SendMessage sends a chat message to Twitch IRC.
+// Twitch does not echo PRIVMSGs back to the sending connection, so we also
+// emit a synthetic local-echo event so the user sees their own message.
+func (a *App) SendMessage(text string) {
+	if text == "" {
+		return
+	}
+	a.mu.Lock()
+	c := a.ircClient
+	a.mu.Unlock()
+	if c == nil {
+		return
+	}
+	c.Say(text)
+
+	username := a.cfg.Twitch.Username
+	channel := a.cfg.Twitch.Channel
+	a.emitChat(chat.Message{
+		Platform:      chat.PlatformTwitch,
+		Type:          chat.MessageTypeChat,
+		Channel:       channel,
+		Timestamp:     time.Now(),
+		UserID:        a.cfg.Twitch.BotUserID,
+		Username:      username,
+		DisplayName:   username,
+		IsBroadcaster: strings.EqualFold(username, channel),
+		Text:          text,
+	})
+}
+
+// loadBadges fetches global + channel badges via Helix. Safe to call multiple
+// times (e.g. after a token refresh). Logs success/failure.
+func (a *App) loadBadges() {
+	if a.cfg.Twitch.AccessToken == "" || a.cfg.Twitch.ClientID == "" {
+		log.Printf("[BADGES] skipped (no auth)")
+		return
+	}
+	if err := a.badges.LoadGlobal(a.cfg.Twitch.ClientID, a.cfg.Twitch.AccessToken); err != nil {
+		log.Printf("[BADGES] global load failed: %v", err)
+	}
+	if a.cfg.Twitch.BotUserID != "" {
+		if err := a.badges.LoadChannel(a.cfg.Twitch.BotUserID, a.cfg.Twitch.ClientID, a.cfg.Twitch.AccessToken); err != nil {
+			log.Printf("[BADGES] channel load failed: %v", err)
+		}
+	}
+	log.Printf("[BADGES] loaded %d sets", a.badges.Count())
+}
+
+// LookupEmote returns 3rd-party emote info for a name.
+func (a *App) LookupEmote(name string) map[string]interface{} {
+	if a.emotes == nil {
+		return nil
+	}
+	info, ok := a.emotes.Lookup(name)
+	if !ok {
+		return nil
+	}
+	var url string
+	switch info.Provider {
+	case twitch.EmoteProvider7TV:
+		url = fmt.Sprintf("https://cdn.7tv.app/emote/%s/2x.webp", info.ID)
+	case twitch.EmoteProviderBTTV:
+		ext := "png"
+		if info.Animated {
+			ext = "gif"
+		}
+		url = fmt.Sprintf("https://cdn.betterttv.net/emote/%s/2x.%s", info.ID, ext)
+	case twitch.EmoteProviderFFZ:
+		url = fmt.Sprintf("https://cdn.frankerfacez.com/emote/%s/2", info.ID)
+	}
+	return map[string]interface{}{
+		"provider": int(info.Provider),
+		"id":       info.ID,
+		"animated": info.Animated,
+		"url":      url,
+	}
+}
+
+// GetUserInfo fetches user details + follow status.
+func (a *App) GetUserInfo(userID string) map[string]interface{} {
+	if a.helixClient == nil || userID == "" {
+		return nil
+	}
+	info, err := a.helixClient.GetUserInfo(userID)
+	if err != nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"userId":      info.UserID,
+		"login":       info.Login,
+		"displayName": info.DisplayName,
+		"description": info.Description,
+		"createdAt":   info.CreatedAt,
+		"accountAge":  info.AccountAge,
+		"isFollower":  info.IsFollower,
+		"followedAt":  info.FollowedAt,
+		"followAge":   info.FollowAge,
+		"isBot":       a.botDetector != nil && a.botDetector.IsBot(info.Login),
+	}
+}
+
+// ModAction performs a moderation action.
+func (a *App) ModAction(action, userID, msgID string) string {
+	if a.helixClient == nil {
+		return "no helix client"
+	}
+	var err error
+	switch action {
+	case "ban":
+		err = a.helixClient.BanUser(userID, "Banned via StreamerChat")
+	case "timeout_600":
+		err = a.helixClient.TimeoutUser(userID, 600, "Timed out")
+	case "timeout_3600":
+		err = a.helixClient.TimeoutUser(userID, 3600, "Timed out")
+	case "timeout_86400":
+		err = a.helixClient.TimeoutUser(userID, 86400, "Timed out")
+	case "delete":
+		if msgID != "" {
+			err = a.helixClient.DeleteMessage(msgID)
+		}
+	case "unban":
+		err = a.helixClient.UnbanUser(userID)
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return ""
+}

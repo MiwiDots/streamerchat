@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StreamerChat</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <div class="main">
+    <div class="panel chat-panel">
+      <div class="panel-title">
+        <span class="title-text">StreamerChat</span>
+        <span class="status-pills" id="statusPills">
+          <span class="pill pill-tw">TW:●</span>
+          <span class="pill pill-yt hidden" id="ytPill">YT:●</span>
+        </span>
+      </div>
+      <div class="scroll" id="chat"></div>
+    </div>
+    <div class="panel sidebar">
+      <div class="panel-title sidebar-title" id="userTitle">Users (0)</div>
+      <div class="scroll" id="userList"></div>
+    </div>
+  </div>
+  <div class="input-row">
+    <span class="input-label" id="inputLabel">TW &gt;</span>
+    <input class="input-field" id="msgInput" type="text" placeholder="Type a message... (F2 to switch target, Esc to close modal)" autocomplete="off">
+  </div>
+  <div class="status-bar">
+    <span id="footer">Press F2 to cycle send target  |  Click user for mod actions</span>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-bg hidden" id="modalBg">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <span id="modalUser"></span>
+      <span class="modal-close" id="modalClose">✕</span>
+    </div>
+    <div class="modal-info" id="modalInfo">Loading...</div>
+    <div class="modal-btns">
+      <button class="btn btn-danger" data-action="ban">Ban</button>
+      <button class="btn" data-action="timeout_600">10m</button>
+      <button class="btn" data-action="timeout_3600">1h</button>
+      <button class="btn" data-action="timeout_86400">24h</button>
+      <button class="btn" data-action="delete">Delete</button>
+      <button class="btn" data-action="unban">Unban</button>
+    </div>
+  </div>
+</div>
+
+<script src="/wails/runtime/runtime.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

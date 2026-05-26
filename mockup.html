@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>StreamerChat - Wails Mockup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100vh;
+    background: #0d0d14;
+    color: #ffffff;
+    font-family: 'Cascadia Code', 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.4;
+    overflow: hidden;
+  }
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 6px;
+  }
+  .main {
+    display: flex;
+    flex: 1;
+    gap: 6px;
+    min-height: 0;
+  }
+  .panel {
+    border: 1px solid #444;
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .chat-panel { flex: 1; }
+  .sidebar { width: 220px; }
+  .panel-title {
+    padding: 4px 10px;
+    color: #9146ff;
+    font-weight: bold;
+    border-bottom: 1px solid #444;
+    background: #14141c;
+  }
+  .sidebar .panel-title { color: #00bfff; }
+  .scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 10px;
+    scrollbar-width: thin;
+    scrollbar-color: #444 transparent;
+  }
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+
+  .msg {
+    padding: 1px 0;
+    word-wrap: break-word;
+  }
+  .msg:hover { background: rgba(145, 70, 255, 0.08); cursor: pointer; }
+  .ts { color: #666; margin-right: 6px; }
+  .badge {
+    display: inline-block;
+    padding: 0 4px;
+    border-radius: 2px;
+    font-weight: bold;
+    font-size: 12px;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .badge-tw { color: #9146ff; }
+  .badge-yt { color: #ff0000; }
+  .role-b { color: #ff4444; font-weight: bold; }
+  .role-m { color: #00ff00; font-weight: bold; }
+  .role-v { color: #e005b9; font-weight: bold; }
+  .role-s { color: #00bfff; }
+  .role-bot { color: #666; }
+  .username { font-weight: bold; }
+
+  .emote {
+    height: 28px;
+    width: auto;
+    vertical-align: middle;
+    margin: -8px 2px;
+    image-rendering: -webkit-optimize-contrast;
+  }
+
+  .user {
+    padding: 2px 6px;
+    cursor: pointer;
+    border-radius: 2px;
+  }
+  .user:hover { background: rgba(145, 70, 255, 0.15); }
+  .user.selected { background: #9146ff; color: #fff; }
+
+  .input-row {
+    display: flex;
+    align-items: center;
+    margin-top: 4px;
+    padding: 6px 10px;
+    border: 1px solid #444;
+    border-radius: 4px;
+  }
+  .input-label {
+    color: #9146ff;
+    font-weight: bold;
+    margin-right: 8px;
+  }
+  .input-field {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #fff;
+    font-family: inherit;
+    font-size: inherit;
+    outline: none;
+  }
+  .status {
+    margin-top: 4px;
+    padding: 2px 10px;
+    color: #888;
+    font-size: 12px;
+    background: #222;
+    border-radius: 2px;
+  }
+  .status .ok { color: #00ff00; }
+  .super { color: #ffd700; font-weight: bold; }
+  .system { color: #888; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="main">
+    <div class="panel chat-panel">
+      <div class="panel-title">StreamerChat</div>
+      <div class="scroll" id="chat"></div>
+    </div>
+    <div class="panel sidebar">
+      <div class="panel-title">Users (13)</div>
+      <div class="scroll" id="userList"></div>
+    </div>
+  </div>
+  <div class="input-row">
+    <span class="input-label">TW &gt;</span>
+    <input class="input-field" type="text" placeholder="Type a message...">
+  </div>
+  <div class="status">
+    <span class="ok">TW:●</span> <span class="ok">YT:●</span> | F1:users F2:target PgUp/PgDn:scroll Ctrl+C:quit
+  </div>
+</div>
+
+<script>
+// Helpers
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  if (attrs) {
+    for (const k in attrs) {
+      if (k === 'class') e.className = attrs[k];
+      else if (k === 'style') e.setAttribute('style', attrs[k]);
+      else e.setAttribute(k, attrs[k]);
+    }
+  }
+  for (const c of children) {
+    if (c == null) continue;
+    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  }
+  return e;
+}
+function emote(url, animated) {
+  return el('img', {class: 'emote' + (animated ? ' animated' : ''), src: url, alt: ''});
+}
+function badge(cls, text) {
+  return el('span', {class: cls}, text);
+}
+
+// User list
+const users = [
+  {role: 'b', name: 'miwitv'},
+  {role: 'm', name: 'StammtischBot'},
+  {role: 'v', name: 'dark_gizi', selected: true},
+  {role: 'v', name: 'icesoul_prime'},
+  {role: 'v', name: 'ray_day01'},
+  {role: 'v', name: 'wondows'},
+  {role: 's', name: 'hellboy1377'},
+  {role: 's', name: 'TheLimitGER'},
+  {role: '', name: 'fregadde77'},
+  {role: '', name: 'milfhunte3r'},
+  {role: '', name: 'vjoeblack'},
+  {role: 'bot', name: 'sery_bot'},
+  {role: 'bot', name: 'streamelements'},
+];
+const userListEl = document.getElementById('userList');
+for (const u of users) {
+  const roleEl = u.role
+    ? badge('role-' + u.role, ({b:'B',m:'M',v:'V',s:'S',bot:'~'})[u.role])
+    : el('span', null, ' ');
+  const userEl = el('div', {class: 'user' + (u.selected ? ' selected' : '')}, roleEl, ' ', u.name);
+  userListEl.appendChild(userEl);
+}
+
+// Demo chat messages with mix of native Twitch + 7TV emotes
+const messages = [
+  {ts: '15:04', platform: 'tw', user: 'ModUser', color: '#ff7f50', mod: true, sub: true,
+   parts: [
+     'PogChamp ', emote('https://static-cdn.jtvnw.net/emoticons/v2/305954156/default/dark/3.0'), ' looking good!'
+   ]},
+  {ts: '15:04', platform: 'tw', user: 'CatFan', color: '#1e90ff',
+   parts: [
+     'catJAM ', emote('https://cdn.7tv.app/emote/01F6MZGBR80003E11SHCXKQT3M/2x.webp', true), ' ja!!!'
+   ]},
+  {ts: '15:05', platform: 'tw', user: 'dark_gizi', color: '#e005b9', vip: true, sub: true,
+   parts: [
+     'Kappa ', emote('https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/3.0'), ' nice nice'
+   ]},
+  {ts: '15:05', platform: 'yt', user: '@miwifreebsd1', color: '#ff6b6b',
+   parts: [
+     'moin aus dem yt chat ', emote('https://cdn.7tv.app/emote/60ae3e54259ac5a73e56a426/2x.webp', true)
+   ]},
+  {ts: '15:06', platform: 'tw', user: 'miwitv', color: '#9146ff', broadcaster: true, sub: true,
+   parts: [
+     'Sub ', emote('https://cdn.7tv.app/emote/60ae3e54259ac5a73e56a426/2x.webp', true), ' peepoHappy ', emote('https://cdn.7tv.app/emote/60aeec1ab2ecb015051851a8/2x.webp', true)
+   ]},
+  {ts: '15:06', platform: 'tw', user: 'streamelements', color: '#888', bot: true, mod: true, system: true,
+   parts: [
+     el('span', {class: 'system'}, '>> hellboy1377 hat gerade einen Sub gegönnt!')
+   ]},
+  {ts: '15:07', platform: 'tw', user: 'Viewer3', color: '#ff8c00',
+   parts: [
+     'KEKW ', emote('https://cdn.7tv.app/emote/01F6N5VVGG000DCDF0KEMHEYW8/2x.webp', true),
+     ' KEKW ', emote('https://cdn.7tv.app/emote/01F6N5VVGG000DCDF0KEMHEYW8/2x.webp', true),
+     ' KEKW ', emote('https://cdn.7tv.app/emote/01F6N5VVGG000DCDF0KEMHEYW8/2x.webp', true)
+   ]},
+  {ts: '15:08', platform: 'tw', user: 'ray_day01', color: '#7fff7f', vip: true,
+   parts: [
+     'gut gespielt ', emote('https://static-cdn.jtvnw.net/emoticons/v2/1902/default/dark/3.0')
+   ]},
+  {ts: '15:09', platform: 'yt', user: 'YTViewer', color: '#ffa500',
+   parts: [
+     'POGGERS ', emote('https://cdn.7tv.app/emote/01F6MZGBR80003E11SHCXKQT3M/2x.webp', true)
+   ]},
+  {ts: '15:10', platform: 'tw', user: 'system', color: '#888',
+   parts: [el('span', {class: 'system'}, '-> NewViewer joined')]},
+  {ts: '15:11', platform: 'tw', user: 'NewViewer', color: '#00ced1',
+   parts: [
+     'hi! ', emote('https://static-cdn.jtvnw.net/emoticons/v2/30259/default/dark/3.0')
+   ]},
+  {ts: '15:12', platform: 'tw', user: 'SuperFan', color: '#ff1493', sub: true, super: '$5.00 USD',
+   parts: ['SuperChat support für den stream!']},
+];
+
+const chatEl = document.getElementById('chat');
+for (const m of messages) {
+  const parts = [
+    el('span', {class: 'ts'}, m.ts),
+    badge('badge ' + (m.platform === 'tw' ? 'badge-tw' : 'badge-yt'), m.platform.toUpperCase()),
+    ' ',
+  ];
+  if (m.broadcaster) parts.push(badge('role-b', 'BC'), ' ');
+  if (m.mod) parts.push(badge('role-m', '[M]'), ' ');
+  if (m.vip) parts.push(badge('role-v', '[V]'), ' ');
+  if (m.sub) parts.push(badge('role-s', '[S]'), ' ');
+  if (m.bot) parts.push(badge('role-bot', '~'), ' ');
+  if (m.super) parts.push(el('span', {class: 'super'}, '[' + m.super + ']'), ' ');
+  parts.push(el('span', {class: 'username', style: 'color:' + m.color}, m.user));
+  parts.push(': ');
+  parts.push(...m.parts);
+  chatEl.appendChild(el('div', {class: 'msg'}, ...parts));
+}
+chatEl.scrollTop = chatEl.scrollHeight;
+</script>
+</body>
+</html>

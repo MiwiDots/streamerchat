@@ -1,0 +1,248 @@
+2026-05-26 12:44 - ChatHub: beep when a channel goes live
+  - setLiveStatus now plays the configured mention sound on offline->live
+    transitions. Uses the existing 'soundOnMention' setting (none/bell/ping)
+    so the user controls it from one place.
+  - Suppressed on initial snapshot (prev === undefined) so channels that
+    are already live at boot don't trigger a sound storm.
+
+2026-05-26 12:42 - ChatHub: Chatterino-style user card on username click
+  - cmd/chathub/app.go: new GetUserCard(channel, userIDOrLogin) bound method
+    that aggregates Helix data: /helix/users (avatar, login, display name,
+    created_at, description), /channels/followers (follower count of the
+    target user, best-effort), /channels/followed (following-since for the
+    target -> channel relationship), /subscriptions/user (sub tier when our
+    token has permission). Returns a single map for the frontend.
+  - frontend/dist/app.js: usernames in chat are now clickable; click opens
+    a floating user-card modal. Per-channel ring buffer of the last 50
+    messages per user is kept locally and rendered as "Recent messages"
+    at the bottom of the card. Escape or backdrop click closes.
+  - frontend/dist/style.css: .user-card layout (avatar, name, ID, facts,
+    recent messages). Username cursor:pointer + hover underline.
+
+2026-05-26 12:30 - ChatHub: fix race between badge lookup and channel resolution
+  - After the per-channel BadgeRegistry refactor, the first render of any
+    channel's history happened before resolveChannelID had populated
+    channelIDCache, so LookupBadge couldn't find a userID and fell through
+    to global. The frontend then cached those (wrong) global URLs per
+    channel/set/version key and never refreshed.
+  - app.go LookupBadge now resolves channel->userID synchronously (no-op if
+    already cached) so the very first call gets the correct context.
+  - loadChannelEmotes emits a new 'badgesReady' Wails event on success.
+  - frontend/dist/app.js listens for badgesReady and evicts that channel's
+    entries from the badge cache so subsequent lookups fetch fresh URLs.
+
+2026-05-26 12:23 - BadgeRegistry: per-channel scope, no more cross-channel overwrite
+  - internal/twitch/badges.go: the registry stored a single setID->version
+    map shared across all channels. Loading thelimitger's sub badges would
+    overwrite schlaubiyo's (and vice versa), so the displayed sub-tier
+    artwork was whoever's LoadChannel ran last — wrong art for everyone
+    else.
+  - Refactored into separate `global` and `byChannel[userID]` maps.
+  - Lookup now takes (channelUserID, setID, version): channel scope wins,
+    global is the fallback.
+  - cmd/chathub/app.go: LookupBadge(channel, setID, version) resolves the
+    channel name to the cached broadcaster userID and delegates.
+  - cmd/wails/app.go: same signature (always uses primary BotUserID since
+    streamerchat watches one channel at a time).
+  - cmd/chathub/frontend/dist/app.js: badge cache key is now
+    channel/set/version so cross-channel cache hits can't pollute.
+  - renderBadges takes msg.channel through to lookupBadge.
+
+2026-05-26 12:20 - ChatHub: fix missing channel-specific badges (sub tiers, bits, founder)
+  - loadChannelEmotes() marked the channel as "loaded" BEFORE the load
+    actually happened. If auth wasn't ready yet (race at boot), the load
+    silently returned and the channel was permanently locked out — sub
+    badges and other channel-specific icons never appeared for channels
+    added before the auth flow finished.
+  - Fixed: only set channelEmotesLoaded[channel]=true after a successful
+    LoadChannel call. Wait up to 30s for auth + resolved userID before
+    giving up.
+  - After successful StartLogin, re-trigger loadChannelEmotes for every
+    configured channel so channels added pre-login also get their badges.
+
+2026-05-26 12:17 - ChatHub: immediate live-status check on AddChannel
+  - Previously added channels would sit without a live dot for up to 60s
+    waiting on the next liveStatusLoop tick. AddChannel now fires a
+    one-shot checkAndEmitLive goroutine right after the IRC join, so the
+    indicator appears within ~500ms of the Helix call returning.
+  - Extracted shared helper checkAndEmitLive() used by both AddChannel and
+    the polling loop's per-tick check (DRY).
+
+2026-05-26 12:13 - ChatHub: @username autocomplete
+  - Per-channel chatter tracking: every incoming chat message adds the
+    sender to the active channel's chatter set; existing names are bumped
+    to the end of an insertion-ordered list so recent speakers rank first.
+    Set is capped at 500 names per channel.
+  - New floating .mention-popup anchored above the input. Triggered when
+    the word at the caret begins with '@'. Tab or Enter accepts, Up/Down
+    navigate, Escape closes, click also selects. Plain Enter still sends
+    when the popup is closed.
+  - Suggestions are recency-ranked, prefix-matched, top 8.
+
+2026-05-26 04:32 - StreamerChat: real badge icons in the user list sidebar
+  - The user list was showing colored letter prefixes (B/M/V/S) for roles
+    because the chat-side LookupBadge wasn't being used for sidebar entries.
+  - cmd/wails/frontend/dist/app.js: preloadRoleBadges() resolves the four
+    well-known global badge URLs (broadcaster/1, moderator/1, vip/1,
+    subscriber/0) from the backend BadgeRegistry once at boot, then
+    re-refreshes the user list. Retries at +1.5s and +4s because backend
+    badge load is async and may finish after 'ready' fires.
+  - renderRoleBadge now returns an <img> when a URL is cached, and falls
+    back to the colored letter while the cache is cold so the list never
+    flashes empty.
+  - cmd/wails/frontend/dist/style.css: new .role-badge-img sizing
+    (14x14, aligned with text baseline).
+
+2026-05-26 04:19 - ChatHub: visible join/part events, tighter tabs
+  - frontend/dist/app.js: subscribe to the 'joinPart' Wails event (was being
+    emitted by the backend but ignored by the frontend — the type==='join'
+    handler in renderMessage was dead code). New renderJoinPart() batches
+    consecutive joins/parts per channel over a 1.5s window and renders them
+    as a single "X, Y, Z joined" line (Chatterino-style), capped at 8 names
+    with a "+N" overflow suffix.
+  - frontend/dist/style.css: tab padding 8px/14px -> 4px/10px, font-size
+    14px (inherited) -> 12px; live dot 8px -> 6px, close-x and unread badge
+    also shrunk so the tabs match Chatterino's compact density. New
+    .msg.join-part style for the batched lines.
+  - frontend/dist/i18n.js: userJoined / userParted strings in both locales.
+
+2026-05-26 03:50 - ChatHub: DE/EN language support
+  - frontend/dist/i18n.js: new tiny i18n module with two locales (en, de),
+    string interpolation via {name} placeholders, dataset-driven DOM walk
+    (data-i18n, data-i18n-html, data-i18n-placeholder, data-i18n-title)
+  - frontend/dist/index.html: every user-facing string tagged with data-i18n
+    plus a Language <select> in the settings modal
+  - frontend/dist/app.js: dynamic strings (status bar, placeholders, login
+    UI, history separators, deleted/cleared messages, etc.) now use i18n.t()
+  - frontend/dist/app.js: language switch is immediate — on change the
+    locale is persisted to hubconfig.json AND all visible dynamic text is
+    refreshed without restarting the app
+  - frontend/dist/app.js: i18n.localizeSystemMessage() pattern-translates
+    the small set of backend system messages ("Joined #x", "Connected to
+    #x") emitted by the shared internal/twitch package, so we don't have
+    to touch shared code
+  - cmd/chathub/app.go: HubConfig.Locale field + SetLocale bound method;
+    GetInitialState + ready event include the persisted locale so the UI
+    shows the right language from the very first paint
+
+2026-05-26 03:44 - ChatHub: Windows autostart toggle in settings
+  - cmd/chathub/autostart_windows.go: HKCU\Software\Microsoft\Windows\
+    CurrentVersion\Run integration via golang.org/x/sys/windows/registry.
+    Refuses to register %TEMP% paths (wails dev builds) so the registry
+    never holds a stale path. Surfaced in Windows Settings > Apps > Startup.
+  - cmd/chathub/autostart_other.go: no-op stub for non-Windows builds so
+    the same App methods compile cross-platform.
+  - cmd/chathub/app.go: new bound methods AutostartStatus() + SetAutostart(bool)
+  - frontend/dist/index.html: new "Start ChatHub automatically with Windows"
+    checkbox in the settings modal (hidden on non-Windows via JS)
+  - frontend/dist/app.js: one-click toggle persists immediately on change
+    (no need to close the modal first); reverts UI if the backend errors
+
+2026-05-26 03:28 - ChatHub: wrap tabs, hide scrollbars, drag-to-reorder
+  - frontend/dist/style.css: tab-bar uses flex-wrap so tabs flow onto
+    multiple rows instead of horizontal scrolling
+  - frontend/dist/style.css: chat-view scrollbar fully hidden (still
+    scrollable, just invisible) via webkit width:0 + Firefox scrollbar-width:none
+  - frontend/dist/app.js: tabs are now draggable; drop on another tab
+    inserts before/after based on cursor position; visual hint via
+    .dragging + .drag-over classes
+  - cmd/chathub/app.go: new SetChannelOrder([]string) bound method that
+    accepts the user's new order and persists it to hubconfig.json;
+    AddChannel no longer alphabetically sorts (would fight the user's order)
+
+2026-05-26 03:21 - Fix badge icons + self-echo in StreamerChat Wails app, drop TUI
+  - cmd/wails/app.go: badges now load inside bootSequence AFTER token
+    validate/refresh (was racing the auth flow with a stale token → 401)
+  - cmd/wails/app.go: SendMessage now locally echoes the sent message via
+    emitChat, because Twitch IRC does not echo PRIVMSGs back to the sender
+    on the same connection (chathub gets it for free via its anon read +
+    auth send dual-connection setup; streamerchat uses a single connection)
+  - cmd/wails/app.go: token refresh loop reloads badges with the fresh token
+  - cmd/wails/app.go: added [AUTH] logging on validate/refresh paths
+    (previously silent failures)
+  - Synced ~/.config/streamerchat/config.json token to a valid one (the
+    stored access_token was expired, which masked the real bugs)
+  - Removed TUI: deleted cmd/streamerchat/, internal/tui/, cmd/launcher/,
+    StreamerChat.bat, and the macOS/Windows TUI binaries — Wails GUI is
+    the only client going forward
+
+
+  - Click on any username in chat to open mod action bar
+  - Mod actions: Ban, Timeout 10m/1h/24h, Delete message, Unban
+  - Actions wired to Twitch Helix API (executes in background)
+  - Visual feedback: system message confirms action
+  - ESC or click elsewhere to close mod bar
+  - Unified single chat feed (removed split-view, all messages in one panel)
+  - ChatView now tracks click regions for username hit-testing
+
+2026-04-09 15:15 - Add YouTube Auto-Detect live streams
+  - Added internal/youtube/detect.go
+    - LiveDetector polls channel's /live page every 30s
+    - Detects when channel goes live, extracts video ID automatically
+    - Detects when stream ends, disconnects YouTube chat
+    - No API key needed (scrapes channel page like a browser)
+  - Updated config: added youtube.channel_handle field (@username)
+  - Updated main.go:
+    - YouTube auto-connects when live stream detected
+    - Auto-disconnects when stream ends
+    - First-time setup now asks for YouTube channel handle
+    - Supports both auto-detect and manual video_id override
+  - Fixed Twitch auth: authorization_pending message parsing (underscore vs space)
+
+2026-04-09 14:30 - Add Twitch Device Code OAuth flow
+  - Added internal/twitch/auth.go with full Device Code Grant flow
+    - RequestDeviceCode: starts flow, returns user code + verification URL
+    - PollForToken: polls until user authorizes on Twitch
+    - ValidateToken: checks if token is still valid, returns username/user ID
+    - RefreshAccessToken: refreshes expired tokens automatically
+  - Updated main.go with interactive first-time setup:
+    - Prompts for Client ID and channel name
+    - Runs Device Code flow: "Go to URL, enter code"
+    - Saves credentials to config automatically
+    - On subsequent runs: validates token, auto-refreshes if expired
+  - No more manual token copy-paste needed
+
+2026-04-09 14:25 - Initial project setup
+  - Initialized Go module (github.com/miwi/streamerchat)
+  - Created project structure: cmd/streamerchat, internal/{twitch,youtube,chat,tui,config}
+  - Added unified chat message types (internal/chat/message.go)
+    - Platform enum (Twitch/YouTube), MessageType enum, Badge struct, Message struct
+    - UserJoinPart and ChatSettings types
+  - Added Twitch IRC client (internal/twitch/irc.go)
+    - IRC connection via gempir/go-twitch-irc v4
+    - JOIN/PART event forwarding
+    - PRIVMSG parsing with badges, emotes, bits, colors
+    - CLEARCHAT/CLEARMSG handling (bans, timeouts, message deletes)
+    - USERNOTICE handling (subs, giftsubs, raids, announcements)
+    - ROOMSTATE handling (slow mode, sub-only, etc.)
+    - Auto-reconnect support
+  - Added Twitch Helix API client (internal/twitch/helix.go)
+    - Ban/Unban/Timeout users
+    - Delete messages, Clear chat
+    - Set slow mode, sub-only, emote-only, follower-only
+    - Get chat settings
+  - Added YouTube InnerTube chat client (internal/youtube/innertube.go)
+    - Unofficial InnerTube API (no quota limits)
+    - Fetches ytInitialData and continuation tokens from live chat page
+    - Polling loop with server-dictated intervals
+    - Parses text messages, Super Chats, memberships
+    - Badge parsing (Moderator, Owner, Member)
+  - Added TUI with Bubble Tea v2 (internal/tui/)
+    - styles.go: Color palette, platform badges, role badges, layout styles
+    - chatview.go: Scrollable chat view with message rendering
+    - app.go: Main Bubble Tea model with:
+      - Split view support (side-by-side or stacked)
+      - Mouse support (click panel focus, scroll wheel)
+      - Keyboard controls (Tab: target, PgUp/PgDn: scroll, F1/F2: panel)
+      - Send target cycling (Twitch / YouTube / Both)
+      - Status bar with chat mode indicators
+      - Visual distinction: purple TW badge vs red YT badge
+  - Added config management (internal/config/config.go)
+    - JSON config at ~/.config/streamerchat/config.json
+    - Twitch, YouTube, and UI settings
+    - Setup guide printed on first run
+  - Added main entry point (cmd/streamerchat/main.go)
+    - Connects Twitch IRC and YouTube InnerTube clients
+    - Forwards messages to TUI via Bubble Tea channels
+  - Dependencies: charm.land/bubbletea v2.0.2, charm.land/lipgloss v2.0.2,
+    gempir/go-twitch-irc v4.4.1, nicklaw5/helix v2.32.0
