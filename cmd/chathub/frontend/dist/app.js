@@ -1104,4 +1104,16 @@ function setupEvents() {
 // applyState() will overwrite with the persisted locale once GetInitialState resolves.
 i18n.applyI18n();
 
+// === Frameless window controls (Windows; harmless on macOS) ===
+function bindWindowBtn(id, fn) {
+  const elBtn = document.getElementById(id);
+  if (!elBtn) return;
+  elBtn.addEventListener('click', () => {
+    try { fn(); } catch (e) { console.error('window control', e); }
+  });
+}
+bindWindowBtn('winMinBtn', () => window.runtime.WindowMinimise());
+bindWindowBtn('winMaxBtn', () => window.runtime.WindowToggleMaximise());
+bindWindowBtn('winCloseBtn', () => window.runtime.Quit());
+
 setupEvents();

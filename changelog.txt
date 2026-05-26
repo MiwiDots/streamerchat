@@ -1,3 +1,15 @@
+2026-05-26 13:15 - ChatHub v0.2.4: frameless window with custom titlebar
+  - cmd/chathub/main.go: Frameless: true in wails options.
+  - index.html: window controls (min/max/close) integrated into the right
+    side of the tab bar, plus a flex spacer that doubles as a drag region.
+  - style.css: .tab-bar is the OS drag handle via `-webkit-app-region: drag`
+    + `--wails-draggable: drag`. Tabs / buttons / window controls explicitly
+    opt out with `no-drag` so clicks still work.
+  - app.js: bindings to window.runtime.WindowMinimise / WindowToggleMaximise
+    / Quit for the three buttons.
+  - Result on Windows: native title-bar is gone, ~32px reclaimed at the top.
+    The hover-red close button + standard min/max icons match Win11 style.
+
 2026-05-26 13:08 - ChatHub v0.2.3: persist notification sound selection
   - The mention/live-go notification tone was a pure JS-side variable
     (`soundOnMention`). It was never sent to the backend so it reset to

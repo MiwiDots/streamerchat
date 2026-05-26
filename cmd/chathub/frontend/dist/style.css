@@ -26,7 +26,35 @@ html, body {
   background: #14141c;
   border-bottom: 1px solid #333;
   align-items: stretch;
+  /* Whole tab bar is the OS window drag handle (frameless mode). */
+  --wails-draggable: drag;
+  -webkit-app-region: drag;
 }
+/* But individual tabs / buttons must NOT drag — otherwise click is eaten. */
+.tab, .tab-add, .tab-close, .window-controls, .win-btn {
+  --wails-draggable: no-drag;
+  -webkit-app-region: no-drag;
+}
+.drag-spacer { flex: 1 1 auto; min-width: 20px; }
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  margin-left: auto;
+}
+.win-btn {
+  background: transparent;
+  border: 0;
+  color: #888;
+  font-size: 14px;
+  width: 38px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.win-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.win-btn.win-close:hover { background: #c42b1c; color: #fff; }
 
 .tab {
   display: flex;
