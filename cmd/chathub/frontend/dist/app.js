@@ -749,6 +749,7 @@ function closeSettings() {
   settingsModalBg.classList.add('hidden');
   highlights = highlightInput.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   soundOnMention = soundSelect.value;
+  try { window.go.main.App.SetNotifSound(soundOnMention); } catch (e) {}
   const newOnlyLive = onlyLiveCheckbox && onlyLiveCheckbox.checked;
   if (newOnlyLive !== onlyShowLive) {
     onlyShowLive = newOnlyLive;
@@ -1012,6 +1013,7 @@ async function applyInitialState() {
 function applyState(data) {
   if (!data) return;
   if (data.locale) i18n.setLocale(data.locale);
+  if (data.notifSound) soundOnMention = data.notifSound;
   if (Array.isArray(data.highlights)) highlights = data.highlights.map(h => h.toLowerCase());
   if (Array.isArray(data.channels)) {
     for (const ch of data.channels) {

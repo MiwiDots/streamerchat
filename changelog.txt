@@ -1,3 +1,14 @@
+2026-05-26 13:08 - ChatHub v0.2.3: persist notification sound selection
+  - The mention/live-go notification tone was a pure JS-side variable
+    (`soundOnMention`). It was never sent to the backend so it reset to
+    "none" on every restart. Force-Save only writes what the backend knows.
+  - HubConfig: new `notif_sound` field.
+  - SetNotifSound(string) bound method; "none" / "bell" / "ping".
+  - GetInitialState + ready event include the persisted value.
+  - Frontend: on settings close, calls SetNotifSound with the selected
+    value; applyState() picks it up at boot so the selection survives
+    restarts.
+
 2026-05-26 13:05 - ChatHub v0.2.2: live beep also fires for already-live channels on boot
   - setLiveStatus only beeped on offline -> live transitions (prev === false).
     When the app started with channels already live, prev was undefined and

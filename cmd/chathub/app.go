@@ -29,6 +29,7 @@ type HubConfig struct {
 	Theme          string   `json:"theme"`
 	OnlyShowLive   bool     `json:"only_show_live"`
 	Locale         string   `json:"locale"`
+	NotifSound     string   `json:"notif_sound"`
 
 	// Optional Twitch auth for sending messages
 	ClientID     string `json:"client_id"`
@@ -195,6 +196,7 @@ func (a *App) startup(ctx context.Context) {
 		"username":     a.cfg.Username,
 		"configPath":   hubConfigPath(),
 		"locale":       a.cfg.Locale,
+		"notifSound":   a.cfg.NotifSound,
 	})
 }
 
@@ -790,6 +792,18 @@ func (a *App) SetLocale(locale string) {
 	a.cfg.Save()
 }
 
+// SetNotifSound persists the selected mention/live-go notification tone.
+// Accepts "none", "bell", or "ping"; anything else falls back to "none".
+func (a *App) SetNotifSound(s string) {
+	switch s {
+	case "bell", "ping", "none":
+		a.cfg.NotifSound = s
+	default:
+		a.cfg.NotifSound = "none"
+	}
+	a.cfg.Save()
+}
+
 // === Auth flow (Device Code) ===
 
 // StartLogin requests a device code and returns the verification URL + code.
@@ -874,6 +888,7 @@ func (a *App) GetInitialState() map[string]interface{} {
 		"configPath":   hubConfigPath(),
 		"liveStatus":   liveMap,
 		"locale":       a.cfg.Locale,
+		"notifSound":   a.cfg.NotifSound,
 	}
 }
 
