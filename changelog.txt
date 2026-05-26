@@ -1,3 +1,14 @@
+2026-05-26 14:25 - v0.2.10: bake in the Twitch Client ID
+  - User report from a fresh installation: clicking Login showed
+    "Login error: no client_id configured". Cause: defaultClientID was a
+    blank var meant to be set via -ldflags at build time, but the release
+    build pipeline doesn't pass it, so fresh installs without a hand-edited
+    config.json couldn't log in.
+  - Client IDs of public OAuth apps are not secrets (only client_secret is,
+    and we never use one — device-code flow doesn't need it). Embedded the
+    actual ID as the default value so the very first launch can log in.
+    Build-flag override still works.
+
 2026-05-26 14:15 - v0.2.9: StreamerChat YouTube config in settings UI
   - GetYouTubeConfig + SetYouTubeConfig bound methods.
   - SetYouTubeConfig normalizes handle (prepends "@" if missing), wipes any

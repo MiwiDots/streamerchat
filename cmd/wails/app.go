@@ -20,8 +20,10 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// Embedded at build time via -ldflags
-var defaultClientID string
+// Twitch Client ID for the device-code OAuth flow. Public, not a secret.
+// Baked in so fresh installs without a config can log in out of the box.
+// Can be overridden at build time via -ldflags "-X main.defaultClientID=...".
+var defaultClientID = "opez5azi81po1xb4hb581ikw3xo04y"
 
 // App holds the Wails application state.
 type App struct {

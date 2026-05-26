@@ -20,8 +20,12 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// Set at build time via -ldflags "-X main.defaultClientID=..."
-var defaultClientID string
+// Twitch Client ID for the device-code OAuth flow. Client IDs in
+// public OAuth apps are not secrets — only client_secret is, and we
+// never use one (device-code flow doesn't need it). Baked in so
+// fresh installs without a config can log in out of the box.
+// Can still be overridden at build time via -ldflags "-X main.defaultClientID=...".
+var defaultClientID = "opez5azi81po1xb4hb581ikw3xo04y"
 
 type HubConfig struct {
 	Channels       []string `json:"channels"`
