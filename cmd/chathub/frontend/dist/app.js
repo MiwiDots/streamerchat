@@ -17,7 +17,28 @@ const tabBar = document.getElementById('tabBar');
 const tabAddBtn = document.getElementById('tabAdd');
 const chatArea = document.getElementById('chatArea');
 const emptyState = document.getElementById('emptyState');
-const statusText = document.getElementById('statusText');
+const statusTextEl = document.getElementById('statusText');
+const statusOverlay = document.getElementById('statusOverlay');
+// setStatus shows a transient toast at the bottom of the chat area.
+// Empty text or no overlay = no-op. Auto-hides after 4s unless persist=true.
+let statusHideTimer = null;
+function setStatus(text, opts) {
+  if (!statusOverlay || !statusTextEl) return;
+  if (!text) { statusOverlay.classList.add('hidden'); return; }
+  statusTextEl.textContent = text;
+  statusOverlay.classList.remove('hidden');
+  if (statusHideTimer) clearTimeout(statusHideTimer);
+  const persist = opts && opts.persist;
+  if (!persist) {
+    statusHideTimer = setTimeout(() => statusOverlay.classList.add('hidden'), 4000);
+  }
+}
+// Backwards-compatible shim for the existing statusText.textContent = "..."
+// pattern scattered across the file.
+const statusText = {
+  set textContent(v) { setStatus(v); },
+  get textContent() { return statusTextEl ? statusTextEl.innerText : ''; },
+};
 const authStatus = document.getElementById('authStatus');
 const settingsBtn = document.getElementById('settingsBtn');
 const addModalBg = document.getElementById('addModalBg');

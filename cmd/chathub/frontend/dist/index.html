@@ -7,14 +7,19 @@
 </head>
 <body>
 <div class="app">
-  <div class="tab-bar" id="tabBar">
-    <button class="tab-add" id="tabAdd" data-i18n-title="addChannel" title="Add channel">+</button>
-    <div class="drag-spacer"></div>
+  <!-- Compact top titlebar: drag region + auth pill + settings + window controls -->
+  <div class="titlebar" id="titlebar">
+    <div class="titlebar-drag"></div>
+    <span class="auth-status" id="authStatus" data-i18n="notLoggedIn">Not logged in</span>
+    <button class="icon-btn" id="settingsBtn" data-i18n-title="settings" title="Settings">&#9881;</button>
     <div class="window-controls">
       <button class="win-btn" id="winMinBtn" title="Minimize">&minus;</button>
       <button class="win-btn" id="winMaxBtn" title="Maximize">&#9633;</button>
       <button class="win-btn win-close" id="winCloseBtn" title="Close">&times;</button>
     </div>
+  </div>
+  <div class="tab-bar" id="tabBar">
+    <button class="tab-add" id="tabAdd" data-i18n-title="addChannel" title="Add channel">+</button>
   </div>
 
   <div class="chat-area" id="chatArea">
@@ -30,11 +35,9 @@
     <input class="input-field" id="msgInput" type="text" data-i18n-placeholder="loginRequired" placeholder="Login required to send messages" autocomplete="off" disabled>
   </div>
 
-  <div class="status-bar" id="statusBar">
-    <span id="statusText" data-i18n="ready">Ready</span>
-    <span class="spacer"></span>
-    <span class="auth-status" id="authStatus" data-i18n="notLoggedIn">Not logged in</span>
-    <button class="icon-btn" id="settingsBtn" data-i18n-title="settings" title="Settings">⚙</button>
+  <!-- Status messages overlay on top of the chat area when relevant. -->
+  <div class="status-overlay hidden" id="statusOverlay">
+    <span id="statusText"></span>
   </div>
 </div>
 

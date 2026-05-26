@@ -1,3 +1,15 @@
+2026-05-26 14:55 - v0.2.13: ChatHub UI cleanup — drop bottom bar, move auth + gear up
+  - Bottom status bar gone. Auth pill (@username) and the settings gear
+    moved into a new dedicated titlebar above the tab bar. Window controls
+    moved there too. The tab bar now only contains tabs + the add button.
+  - This means tabs (with flex-wrap) can never grow into and overlap the
+    right-side controls — they always sit on a separate row above.
+  - Drag region moved from the tab-bar to the new titlebar so clicking
+    near a tab doesn't accidentally drag the window.
+  - Transient status messages ("watching #x", auth-expired, send errors)
+    now appear as a small auto-hiding toast at the bottom of the chat
+    area instead of a permanent bar.
+
 2026-05-26 14:45 - v0.2.12: re-login works without an app restart in both apps
   - Bug: after the refresh token died and the user re-logged in via the
     Login button, several services were never (re)started because

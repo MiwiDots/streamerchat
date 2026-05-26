@@ -20,26 +20,62 @@ html, body {
 }
 
 /* Tab bar */
+/* Compact titlebar — sits above the tab bar so tabs (with flex-wrap) can
+   never grow into it and overlap the auth pill / gear / window buttons. */
+.titlebar {
+  display: flex;
+  align-items: stretch;
+  height: 30px;
+  background: #14141c;
+  border-bottom: 1px solid #2a2a35;
+  --wails-draggable: drag;
+  -webkit-app-region: drag;
+}
+.titlebar-drag { flex: 1 1 auto; }
+.titlebar .auth-status,
+.titlebar .icon-btn,
+.titlebar .window-controls,
+.titlebar .win-btn {
+  --wails-draggable: no-drag;
+  -webkit-app-region: no-drag;
+}
+.titlebar .auth-status {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  color: #888;
+  font-size: 12px;
+}
+.titlebar .auth-status.logged-in { color: #9146ff; font-weight: bold; }
+.titlebar .icon-btn {
+  background: transparent;
+  border: 0;
+  color: #888;
+  font-size: 14px;
+  width: 36px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.titlebar .icon-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+
 .tab-bar {
   display: flex;
   flex-wrap: wrap;
   background: #14141c;
   border-bottom: 1px solid #333;
   align-items: stretch;
-  /* Whole tab bar is the OS window drag handle (frameless mode). */
-  --wails-draggable: drag;
-  -webkit-app-region: drag;
+  /* Tab bar is no longer the drag region — the titlebar above is. Avoids
+     accidentally dragging the window when clicking near a tab. */
 }
-/* But individual tabs / buttons must NOT drag — otherwise click is eaten. */
 .tab, .tab-add, .tab-close, .window-controls, .win-btn {
   --wails-draggable: no-drag;
   -webkit-app-region: no-drag;
 }
-.drag-spacer { flex: 1 1 auto; min-width: 20px; }
 .window-controls {
   display: flex;
   align-items: stretch;
-  margin-left: auto;
 }
 .win-btn {
   background: transparent;
@@ -55,6 +91,27 @@ html, body {
 }
 .win-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
 .win-btn.win-close:hover { background: #c42b1c; color: #fff; }
+
+/* Transient status messages (errors, "watching #x") shown as a small
+   floating toast at the bottom of the chat area instead of a permanent bar. */
+.status-overlay {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 28, 0.92);
+  color: #ddd;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 3px;
+  border: 1px solid #333;
+  pointer-events: none;
+  z-index: 100;
+  max-width: 80%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .tab {
   display: flex;
