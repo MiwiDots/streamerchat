@@ -1,3 +1,12 @@
+2026-05-26 15:00 - v0.2.14: ChatHub auth pill traffic-light colors
+  - Auth pill in the titlebar now color-codes the three real states:
+    green @username when logged in, red "Not logged in" when never
+    authenticated / explicitly logged out, amber "Session expired" when
+    the saved refresh token was revoked by Twitch.
+  - setLoggedInUI clears both transient classes up front so a successful
+    re-login doesn't leave the amber "expired" class hanging.
+  - Localized "Session expired" in DE/EN.
+
 2026-05-26 14:55 - v0.2.13: ChatHub UI cleanup — drop bottom bar, move auth + gear up
   - Bottom status bar gone. Auth pill (@username) and the settings gear
     moved into a new dedicated titlebar above the tab bar. Window controls

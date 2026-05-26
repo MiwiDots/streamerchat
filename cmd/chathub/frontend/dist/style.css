@@ -43,10 +43,12 @@ html, body {
   display: flex;
   align-items: center;
   padding: 0 10px;
-  color: #888;
+  color: #ff5555;          /* logged out / never logged in */
   font-size: 12px;
+  font-weight: bold;
 }
-.titlebar .auth-status.logged-in { color: #9146ff; font-weight: bold; }
+.titlebar .auth-status.logged-in { color: #4ade80; }       /* green */
+.titlebar .auth-status.expired   { color: #fbbf24; }       /* amber */
 .titlebar .icon-btn {
   background: transparent;
   border: 0;

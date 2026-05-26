@@ -580,6 +580,10 @@ document.addEventListener('keydown', ensureAudioCtx, { once: true });
 function setLoggedInUI(state, username) {
   loggedIn = state;
   myUsername = username || '';
+  // Always clear both transient classes; the branches below re-add the
+  // right one. Without this an "expired" state would persist through a
+  // subsequent successful login.
+  authStatus.classList.remove('logged-in', 'expired');
   if (state) {
     authStatus.textContent = `@${username}`;
     authStatus.classList.add('logged-in');
@@ -1117,6 +1121,10 @@ function setupEvents() {
 
   window.runtime.EventsOn('authExpired', () => {
     setLoggedInUI(false, '');
+    // Distinguish "session expired" from "never logged in" — both block
+    // sending but the user has a different mental model about each.
+    authStatus.textContent = i18n.t('sessionExpired');
+    authStatus.classList.add('expired');
     statusText.textContent = i18n.t('authExpired');
   });
 
