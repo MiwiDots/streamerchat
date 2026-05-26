@@ -1,3 +1,18 @@
+2026-05-26 16:25 - v0.2.21: StreamerChat — per-message chat sound (WAV support)
+  - internal/config: new UIConfig fields ChatSoundEnabled / ChatSoundFile /
+    ChatSoundVolume (0-100).
+  - cmd/wails/app.go: GetChatSoundConfig / SetChatSoundEnabled /
+    SetChatSoundVolume / PickChatSoundFile / ClearChatSoundFile /
+    LoadChatSoundData (returns the .wav as a data: URL so WebView2 can play
+    it from the asset origin — file:// is blocked).
+  - Settings modal: new "Chat sound" section with enable toggle, .wav file
+    picker (native OpenFileDialog limited to *.wav), Clear button to fall
+    back to a built-in oscillator beep, volume slider, and a Test button.
+  - Per-message playback is throttled to 1 sound per 150 ms so a burst of
+    messages doesn't melt the user's ears. Falls back to the built-in beep
+    if no file is configured.
+  - AudioContext is resumed on first user click/keydown (browser policy).
+
 2026-05-26 16:10 - v0.2.20: cursor-bump on bubbling events (streamerchat fix)
   - v0.2.19 fixed chathub but not streamerchat. Reason: mouseenter and
     pointerenter don't bubble. streamerchat's layout has multiple nested

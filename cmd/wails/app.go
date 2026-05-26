@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
@@ -586,6 +587,81 @@ func (a *App) GetVersion() string { return version.Version }
 func (a *App) SetShowTimestamps(show bool) {
 	a.cfg.UI.ShowTimestamps = show
 	a.cfg.Save()
+}
+
+// === Per-message chat sound ===
+
+// GetChatSoundConfig returns the persisted chat-sound preferences.
+func (a *App) GetChatSoundConfig() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled": a.cfg.UI.ChatSoundEnabled,
+		"file":    a.cfg.UI.ChatSoundFile,
+		"volume":  a.cfg.UI.ChatSoundVolume,
+	}
+}
+
+// SetChatSoundEnabled toggles the per-message sound playback.
+func (a *App) SetChatSoundEnabled(enabled bool) {
+	a.cfg.UI.ChatSoundEnabled = enabled
+	a.cfg.Save()
+}
+
+// SetChatSoundVolume stores a 0-100 volume value for the playback.
+func (a *App) SetChatSoundVolume(volume int) {
+	if volume < 0 {
+		volume = 0
+	}
+	if volume > 100 {
+		volume = 100
+	}
+	a.cfg.UI.ChatSoundVolume = volume
+	a.cfg.Save()
+}
+
+// PickChatSoundFile opens a native file dialog limited to .wav and stores
+// the chosen path. Returns the absolute path (or empty if the user cancelled).
+func (a *App) PickChatSoundFile() string {
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select a .wav file",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "WAV audio (*.wav)", Pattern: "*.wav"},
+		},
+	})
+	if err != nil {
+		log.Printf("[SOUND] file dialog error: %v", err)
+		return ""
+	}
+	if path == "" {
+		return a.cfg.UI.ChatSoundFile
+	}
+	a.cfg.UI.ChatSoundFile = path
+	a.cfg.Save()
+	log.Printf("[SOUND] chat sound file set to %s", path)
+	return path
+}
+
+// ClearChatSoundFile drops the saved path so playback falls back to the
+// built-in beep.
+func (a *App) ClearChatSoundFile() {
+	a.cfg.UI.ChatSoundFile = ""
+	a.cfg.Save()
+}
+
+// LoadChatSoundData reads the saved (or supplied) wav file from disk and
+// returns it as a data: URL the <audio> tag can play directly. WebView2
+// won't load arbitrary file:// URLs from the embedded asset origin, so we
+// shovel the bytes through the IPC bridge.
+func (a *App) LoadChatSoundData() string {
+	path := a.cfg.UI.ChatSoundFile
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("[SOUND] read %s failed: %v", path, err)
+		return ""
+	}
+	return "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(data)
 }
 
 // === YouTube settings ===

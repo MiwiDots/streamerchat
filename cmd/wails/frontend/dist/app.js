@@ -482,6 +482,7 @@ function setupEvents() {
     if (msg.type === 'chat' && msg.username) {
       const changed = addOrUpdateUser(msg);
       if (changed) refreshUserList();
+      playChatSound();
     }
   });
 
@@ -708,6 +709,142 @@ if (checkUpdateBtn) {
 if (applyUpdateBtn) {
   applyUpdateBtn.addEventListener('click', () => applyUpdateFlow(updateStatusEl, applyUpdateBtn, pendingUpdateUrl));
 }
+// === Per-message chat sound ===
+// On every incoming chat message, optionally play either a user-supplied .wav
+// (loaded once into a data URL via the backend so WebView2 can play it from
+// the embedded asset origin) or a built-in oscillator beep. Throttled so a
+// burst of messages can't melt the user's ears.
+let chatSoundEnabled = false;
+let chatSoundVolume = 0.6;
+let chatSoundDataUrl = ''; // empty => use built-in oscillator
+let chatSoundAudio = null; // pre-built Audio element when we have a data URL
+let chatSoundLastPlayed = 0;
+const CHAT_SOUND_MIN_INTERVAL_MS = 150;
+
+function rebuildChatSoundAudio() {
+  if (!chatSoundDataUrl) { chatSoundAudio = null; return; }
+  try {
+    chatSoundAudio = new Audio(chatSoundDataUrl);
+    chatSoundAudio.preload = 'auto';
+    chatSoundAudio.volume = chatSoundVolume;
+  } catch (e) {
+    console.error('chat sound audio init failed', e);
+    chatSoundAudio = null;
+  }
+}
+
+function playChatSound() {
+  if (!chatSoundEnabled) return;
+  const now = Date.now();
+  if (now - chatSoundLastPlayed < CHAT_SOUND_MIN_INTERVAL_MS) return;
+  chatSoundLastPlayed = now;
+  if (chatSoundAudio) {
+    try {
+      // Clone so overlapping calls don't restart the same node.
+      const a = chatSoundAudio.cloneNode();
+      a.volume = chatSoundVolume;
+      a.play().catch(() => {});
+    } catch (e) {}
+    return;
+  }
+  // Fallback: built-in short beep via Web Audio.
+  try {
+    const ctx = ensureBeepCtx();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 660;
+    gain.gain.value = 0.06 * chatSoundVolume;
+    osc.start();
+    setTimeout(() => { osc.stop(); }, 80);
+  } catch (e) {}
+}
+
+let beepCtx = null;
+function ensureBeepCtx() {
+  if (!beepCtx) {
+    try { beepCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
+  }
+  if (beepCtx.state === 'suspended') beepCtx.resume().catch(() => {});
+  return beepCtx;
+}
+document.addEventListener('click', ensureBeepCtx, { once: true });
+document.addEventListener('keydown', ensureBeepCtx, { once: true });
+
+// Wire up settings UI
+const chatSoundCheckbox = document.getElementById('chatSoundCheckbox');
+const chatSoundPickBtn = document.getElementById('chatSoundPickBtn');
+const chatSoundClearBtn = document.getElementById('chatSoundClearBtn');
+const chatSoundFileLabel = document.getElementById('chatSoundFile');
+const chatSoundVolumeInput = document.getElementById('chatSoundVolume');
+const chatSoundVolumeLabel = document.getElementById('chatSoundVolumeLabel');
+const chatSoundTestBtn = document.getElementById('chatSoundTestBtn');
+
+async function loadChatSoundConfig() {
+  try {
+    const c = await window.go.main.App.GetChatSoundConfig();
+    chatSoundEnabled = !!c.enabled;
+    chatSoundVolume = Math.max(0, Math.min(100, c.volume || 60)) / 100;
+    if (chatSoundCheckbox) chatSoundCheckbox.checked = chatSoundEnabled;
+    if (chatSoundVolumeInput) chatSoundVolumeInput.value = String(Math.round(chatSoundVolume * 100));
+    if (chatSoundVolumeLabel) chatSoundVolumeLabel.textContent = String(Math.round(chatSoundVolume * 100));
+    if (chatSoundFileLabel) chatSoundFileLabel.textContent = c.file || '(built-in beep)';
+    chatSoundDataUrl = c.file ? await window.go.main.App.LoadChatSoundData() : '';
+    rebuildChatSoundAudio();
+  } catch (e) {}
+}
+loadChatSoundConfig();
+
+if (chatSoundCheckbox) {
+  chatSoundCheckbox.addEventListener('change', () => {
+    chatSoundEnabled = chatSoundCheckbox.checked;
+    try { window.go.main.App.SetChatSoundEnabled(chatSoundEnabled); } catch (e) {}
+  });
+}
+if (chatSoundPickBtn) {
+  chatSoundPickBtn.addEventListener('click', async () => {
+    try {
+      const path = await window.go.main.App.PickChatSoundFile();
+      if (path) {
+        chatSoundFileLabel.textContent = path;
+        chatSoundDataUrl = await window.go.main.App.LoadChatSoundData();
+        rebuildChatSoundAudio();
+      }
+    } catch (e) { alert('Pick failed: ' + e); }
+  });
+}
+if (chatSoundClearBtn) {
+  chatSoundClearBtn.addEventListener('click', async () => {
+    try { await window.go.main.App.ClearChatSoundFile(); } catch (e) {}
+    chatSoundDataUrl = '';
+    chatSoundAudio = null;
+    chatSoundFileLabel.textContent = '(built-in beep)';
+  });
+}
+if (chatSoundVolumeInput) {
+  chatSoundVolumeInput.addEventListener('input', () => {
+    const v = parseInt(chatSoundVolumeInput.value, 10) || 0;
+    chatSoundVolume = v / 100;
+    if (chatSoundAudio) chatSoundAudio.volume = chatSoundVolume;
+    if (chatSoundVolumeLabel) chatSoundVolumeLabel.textContent = String(v);
+  });
+  chatSoundVolumeInput.addEventListener('change', () => {
+    const v = parseInt(chatSoundVolumeInput.value, 10) || 0;
+    try { window.go.main.App.SetChatSoundVolume(v); } catch (e) {}
+  });
+}
+if (chatSoundTestBtn) {
+  chatSoundTestBtn.addEventListener('click', () => {
+    const prev = chatSoundEnabled;
+    chatSoundEnabled = true;
+    chatSoundLastPlayed = 0; // bypass throttle
+    playChatSound();
+    chatSoundEnabled = prev;
+  });
+}
+
 // === Timestamps toggle ===
 function applyShowTimestamps(show) {
   document.body.classList.toggle('no-ts', !show);

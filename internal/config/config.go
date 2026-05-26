@@ -35,20 +35,24 @@ type YouTubeConfig struct {
 
 // UIConfig holds UI preferences.
 type UIConfig struct {
-	ShowJoinPart   bool   `json:"show_join_part"`
-	ShowTimestamps bool   `json:"show_timestamps"`
-	Layout         string `json:"layout"` // "stacked" or "side-by-side"
-	Theme          string `json:"theme"`  // "dark" or "light"
+	ShowJoinPart     bool   `json:"show_join_part"`
+	ShowTimestamps   bool   `json:"show_timestamps"`
+	Layout           string `json:"layout"` // "stacked" or "side-by-side"
+	Theme            string `json:"theme"`  // "dark" or "light"
+	ChatSoundEnabled bool   `json:"chat_sound_enabled"`
+	ChatSoundFile    string `json:"chat_sound_file"` // absolute path to a .wav, empty = use built-in beep
+	ChatSoundVolume  int    `json:"chat_sound_volume"` // 0-100
 }
 
 // DefaultConfig returns a config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
 		UI: UIConfig{
-			ShowJoinPart:   true,
-			ShowTimestamps: true,
-			Layout:         "stacked",
-			Theme:          "dark",
+			ShowJoinPart:    true,
+			ShowTimestamps:  true,
+			Layout:          "stacked",
+			Theme:           "dark",
+			ChatSoundVolume: 60,
 		},
 	}
 }
