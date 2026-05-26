@@ -3,7 +3,7 @@
 // recognize the bump on next launch.
 package version
 
-const Version = "0.2.11"
+const Version = "0.2.12"
 
 // GitHub repo coordinates for the self-updater.
 const (

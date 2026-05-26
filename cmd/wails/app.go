@@ -670,17 +670,46 @@ func (a *App) StartLogin() map[string]interface{} {
 		log.Printf("[AUTH] Device-code login complete for %s", info.Login)
 
 		// Rebuild helix client and (re)start everything that depends on auth.
+		// On a fresh-install or post-revocation startup, bootSequence will
+		// have bailed out before starting these — so we (re)kick them here.
+		// Calling them again after a normal startup is idempotent enough
+		// (channelEmotesLoaded gates per-channel work, supervisor loops are
+		// single instances by construction).
 		a.helixClient, _ = twitch.NewHelixClient(a.cfg.Twitch.ClientID, a.cfg.Twitch.AccessToken, a.cfg.Twitch.BotUserID, a.cfg.Twitch.BotUserID)
 		a.loadBadges()
 
-		// Tear down any existing IRC client so the supervisor reconnects with
-		// the fresh credentials. The supervisor loop in runIRCSupervisor
-		// already handles auto-reconnect.
+		// Tear down any existing IRC client so the supervisor reconnects
+		// with the fresh credentials, or starts cold if none was running.
 		a.mu.Lock()
+		hadSupervisor := a.ircClient != nil
 		if a.ircClient != nil {
 			a.ircClient.Disconnect()
 		}
 		a.mu.Unlock()
+		if !hadSupervisor {
+			go a.runIRCSupervisor()
+			go a.tokenRefreshLoop()
+		}
+		if a.helixClient != nil {
+			go a.loadChattersAndRoles()
+		}
+		// YouTube wasn't started in bootSequence either if we bailed early.
+		if a.ytChatCancel == nil {
+			if a.cfg.YouTube.VideoID != "" {
+				a.startYouTubeChat(a.cfg.YouTube.VideoID)
+			} else if a.cfg.YouTube.Enabled && a.cfg.YouTube.ChannelHandle != "" {
+				go a.startYouTubeAutoDetect(a.cfg.YouTube.ChannelHandle)
+			}
+		}
+
+		// Re-emit ready so the frontend picks up the new username / channel
+		// and any UI that gates on it (TW/YT pills, login pill) updates.
+		runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
+			"channel":        a.cfg.Twitch.Channel,
+			"username":       a.cfg.Twitch.Username,
+			"youtube":        a.cfg.YouTube.ChannelHandle != "" || a.cfg.YouTube.VideoID != "",
+			"showTimestamps": a.cfg.UI.ShowTimestamps,
+		})
 
 		runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{
 			"success":  true,

@@ -1,3 +1,18 @@
+2026-05-26 14:45 - v0.2.12: re-login works without an app restart in both apps
+  - Bug: after the refresh token died and the user re-logged in via the
+    Login button, several services were never (re)started because
+    bootSequence had bailed out at boot — IRC supervisor, token refresh
+    loop, helix client, YouTube auto-detect were all stuck idle.
+  - cmd/wails/app.go StartLogin success now: starts runIRCSupervisor +
+    tokenRefreshLoop if they were never running, kicks loadChattersAndRoles,
+    spins up YouTube if configured, and re-emits the "ready" event so the
+    frontend picks up the new username/channel and refreshes UI gates.
+  - cmd/chathub/app.go StartLogin success: dropped the duplicate
+    liveStatusLoop spawn (it was started at boot already, was leaking a
+    second goroutine). Added an immediate per-channel checkAndEmitLive so
+    the green live dot appears without waiting up to 60s for the next
+    tick. Re-emits "ready" too.
+
 2026-05-26 14:35 - v0.2.11: optional timestamps toggle in both apps
   - Both apps: Settings now has a "Show timestamps" checkbox. CSS-only
     hide via body.no-ts (no re-rendering needed).

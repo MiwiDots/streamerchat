@@ -861,22 +861,40 @@ func (a *App) StartLogin() map[string]interface{} {
 		a.cfg.UserID = info.UserID
 		a.cfg.Save()
 
-		// Start authenticated sender + add username to highlights
+		// Start the authenticated sender so the user can post immediately.
 		go a.connectSendClient()
 
-		// Now that we have auth, load badges + start live status checks
+		// (loadGlobalBadges + liveStatusLoop + tokenRefreshLoop already
+		// started during startup() — they're cfg-driven and will start
+		// doing real work as soon as we save the fresh token. Don't
+		// double-spawn them; that'd just leak goroutines and double the
+		// Helix poll load.)
 		go a.loadGlobalBadges()
-		go a.liveStatusLoop()
 
-		// Re-trigger channel badge/emote load for any channels that were
-		// added before login (their previous attempts would have skipped
-		// for lack of auth).
+		// Kick an immediate live-check for every configured channel so the
+		// green dot appears without waiting up to 60s for the next tick.
 		a.mu.Lock()
 		chans := append([]string{}, a.cfg.Channels...)
 		a.mu.Unlock()
 		for _, ch := range chans {
 			go a.loadChannelEmotes(ch)
+			go a.checkAndEmitLive(ch)
 		}
+
+		// Re-emit "ready" so the frontend (which subscribed during startup)
+		// can refresh anything that depended on the username being known.
+		runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
+			"channels":     a.cfg.Channels,
+			"highlights":   a.cfg.Highlights,
+			"theme":        a.cfg.Theme,
+			"onlyShowLive": a.cfg.OnlyShowLive,
+			"loggedIn":     true,
+			"username":     info.Login,
+			"configPath":   hubConfigPath(),
+			"locale":       a.cfg.Locale,
+			"notifSound":   a.cfg.NotifSound,
+			"showTimestamps": !a.cfg.HideTimestamps,
+		})
 
 		runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{
 			"success":  true,
