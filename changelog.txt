@@ -1,3 +1,15 @@
+2026-05-26 15:40 - v0.2.17: disable WebView2 renderer code integrity (busy-cursor fix)
+  - Cause traced after CPU/RAM idle showed 0% but cursor still spun, and
+    user confirmed it persists with zero channels. The Wails docs flag a
+    known WebView2 behavior: endpoint-security software (AV, Sophos, Trend
+    Micro, etc.) injects DLLs into WebView2's renderer process. The
+    renderer's code-integrity check trips on those unsigned/wrong-signed
+    DLLs, the Event Viewer fills with "Code Integrity" errors, and the
+    busy cursor pulses over the app window even when nothing is running.
+  - Both apps now opt into WebviewDisableRendererCodeIntegrity in the
+    Wails Windows options. Tradeoff is documented inline: malicious DLLs
+    could also inject — acceptable for a chat client.
+
 2026-05-26 15:25 - v0.2.16: reduce constant background activity (cursor-busy follow-up)
   - User reports cursor still spins constantly even with no chat — must
     be a background loop. Two suspects: live-status poll and emote-lookup
