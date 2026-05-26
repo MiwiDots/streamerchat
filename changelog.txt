@@ -1,3 +1,24 @@
+2026-05-26 14:05 - v0.2.8: StreamerChat device-code login in settings
+  - Real bug exposed by the holiday-scenario chain: both apps' refresh
+    tokens got revoked by Twitch (status 400 = invalid_grant on refresh).
+    ChatHub already had a re-login button. StreamerChat had no login UI
+    at all — the only documented path was "use the CLI version first",
+    and the TUI was removed in v0.1.
+  - cmd/wails/app.go: new StartLogin / OpenURL / Logout bound methods,
+    mirroring chathub's device-code flow. StartLogin returns the
+    verification URL + user code; PollForToken runs in a goroutine and
+    fires a "loginResult" event when done.
+  - On successful login, helixClient is rebuilt, badges are reloaded,
+    and the IRC client is dropped so the supervisor reconnects with the
+    fresh credentials.
+  - When the bootSequence validate AND refresh both fail, we now emit
+    "authExpired" and bail out of IRC/Helix init — previously the IRC
+    supervisor would loop forever hammering Twitch with 401s.
+  - Frontend: Twitch Login section in the settings modal (login button
+    shows the verification URL + code; logout clears state; auth help
+    text guides the user). On the authExpired event the settings modal
+    auto-opens.
+
 2026-05-26 13:50 - v0.2.7: proactive token refresh on startup, faster refresh loop
   - Scenario the user surfaced: away on holiday for 2 weeks, open the app,
     Twitch access token has long expired (and the saved one may even be

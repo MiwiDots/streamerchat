@@ -87,6 +87,19 @@
         <button class="btn btn-primary" id="applyUpdateBtn">Install update</button>
       </div>
     </div>
+    <div class="settings-section">
+      <label>Twitch Login</label>
+      <div class="settings-row">
+        <span id="authInfo">Not logged in</span>
+        <button class="btn btn-primary" id="loginBtn">Login</button>
+        <button class="btn hidden" id="logoutBtn">Logout</button>
+      </div>
+      <div class="auth-help hidden" id="authHelp">
+        <p>1. Go to <span class="code" id="authUrl"></span></p>
+        <p>2. Enter code: <span class="code big" id="authCode"></span></p>
+        <p class="hint">Waiting for authorization…</p>
+      </div>
+    </div>
     <div class="settings-section hidden" id="autostartSection">
       <label class="checkbox-row">
         <input type="checkbox" id="autostartCheckbox">

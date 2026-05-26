@@ -468,6 +468,7 @@ function setupEvents() {
   window.runtime.EventsOn('ready', (data) => {
     ytEnabled = !!data.youtube;
     if (ytEnabled) ytPillEl.classList.remove('hidden');
+    if (data.username) setLoggedInUI(true, data.username);
     // Backend loads global badges async. Try a few times so we catch it
     // whether ready fires before or after the badge load finishes.
     preloadRoleBadges();
@@ -614,6 +615,10 @@ async function openSettings() {
   try {
     settingsVersion.textContent = 'v' + (await window.go.main.App.GetVersion());
   } catch (e) {}
+  // Reflect current login state in the UI every time settings opens.
+  // We treat presence of an active IRC connection / non-empty token as
+  // logged-in; the backend will refine this via the ready/loginResult events.
+  // For boot-after-revocation cases this is "Not logged in" by default.
   // Hide previous run's "available" hint until user re-checks.
   updateApplyRow.classList.add('hidden');
   updateStatusEl.textContent = '';
@@ -666,6 +671,87 @@ if (checkUpdateBtn) {
 if (applyUpdateBtn) {
   applyUpdateBtn.addEventListener('click', () => applyUpdateFlow(updateStatusEl, applyUpdateBtn, pendingUpdateUrl));
 }
+// === Twitch login (device-code flow) ===
+const authInfo = document.getElementById('authInfo');
+const loginBtn = document.getElementById('loginBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const authHelp = document.getElementById('authHelp');
+const authUrl = document.getElementById('authUrl');
+const authCode = document.getElementById('authCode');
+
+function setLoggedInUI(loggedIn, username) {
+  if (!authInfo) return;
+  if (loggedIn) {
+    authInfo.textContent = 'Logged in as @' + (username || '?');
+    loginBtn.classList.add('hidden');
+    logoutBtn.classList.remove('hidden');
+  } else {
+    authInfo.textContent = 'Not logged in';
+    loginBtn.classList.remove('hidden');
+    logoutBtn.classList.add('hidden');
+  }
+}
+
+if (loginBtn) {
+  loginBtn.addEventListener('click', async () => {
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'Requesting…';
+    try {
+      const res = await window.go.main.App.StartLogin();
+      if (res.error) {
+        alert('Login failed: ' + res.error);
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Login';
+        return;
+      }
+      authUrl.textContent = res.verificationUri;
+      authUrl.onclick = () => window.go.main.App.OpenURL(res.verificationUri);
+      authCode.textContent = res.userCode;
+      authHelp.classList.remove('hidden');
+      loginBtn.textContent = 'Waiting…';
+      window.go.main.App.OpenURL(res.verificationUri);
+    } catch (e) {
+      alert('Login error: ' + e);
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Login';
+    }
+  });
+}
+if (logoutBtn) {
+  logoutBtn.addEventListener('click', async () => {
+    try { await window.go.main.App.Logout(); } catch (e) {}
+    setLoggedInUI(false, '');
+  });
+}
+
+// Backend tells us when device-code polling finished.
+if (window.runtime && window.runtime.EventsOn) {
+  window.runtime.EventsOn('loginResult', (data) => {
+    if (!data) return;
+    if (data.error) {
+      alert('Login failed: ' + data.error);
+      authHelp.classList.add('hidden');
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Login';
+      return;
+    }
+    if (data.success) {
+      authHelp.classList.add('hidden');
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Login';
+      setLoggedInUI(true, data.username);
+    }
+  });
+  // Backend emits 'authExpired' when boot validate + refresh both fail.
+  // Auto-open settings so the user knows what to do.
+  window.runtime.EventsOn('authExpired', () => {
+    setLoggedInUI(false, '');
+    if (settingsModalBg && settingsModalBg.classList.contains('hidden')) {
+      openSettings();
+    }
+  });
+}
+
 if (autostartCheckbox) {
   autostartCheckbox.addEventListener('change', async () => {
     const want = autostartCheckbox.checked;

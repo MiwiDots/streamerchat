@@ -146,6 +146,15 @@ func (a *App) bootSequence() {
 			}
 		}
 	}
+	// If after validate + refresh we still have nothing usable, surface this
+	// to the frontend and don't spin up IRC/Helix with a dead token (which
+	// would just hammer Twitch with 401s forever).
+	if info == nil {
+		log.Printf("[AUTH] No valid token after refresh — emitting authExpired, awaiting re-login")
+		a.emitSystem("Authentication expired - please re-login via the settings gear")
+		runtime.EventsEmit(a.ctx, "authExpired", nil)
+		return
+	}
 	if info != nil {
 		a.cfg.Twitch.Username = info.Login
 		a.cfg.Twitch.BotUserID = info.UserID
@@ -569,6 +578,84 @@ func (a *App) ApplyUpdate(url string) string {
 }
 
 func (a *App) GetVersion() string { return version.Version }
+
+// === Auth flow (Device Code) — re-login UI for when refresh tokens die ===
+
+// StartLogin starts the Twitch device-code flow and returns the verification
+// URL + user code for the frontend to display. Polling happens in a goroutine
+// and emits "loginResult" when it finishes.
+func (a *App) StartLogin() map[string]interface{} {
+	if a.cfg.Twitch.ClientID == "" {
+		return map[string]interface{}{"error": "no client_id configured"}
+	}
+	device, err := twitch.RequestDeviceCode(a.cfg.Twitch.ClientID)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	go func() {
+		token, err := twitch.PollForToken(a.cfg.Twitch.ClientID, device.DeviceCode, device.Interval)
+		if err != nil {
+			runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{"error": err.Error()})
+			return
+		}
+		info, err := twitch.ValidateToken(token.AccessToken)
+		if err != nil {
+			runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{"error": err.Error()})
+			return
+		}
+		a.cfg.Twitch.AccessToken = token.AccessToken
+		a.cfg.Twitch.RefreshToken = token.RefreshToken
+		a.cfg.Twitch.Username = info.Login
+		a.cfg.Twitch.BotUserID = info.UserID
+		if a.cfg.Twitch.Channel == "" {
+			a.cfg.Twitch.Channel = info.Login
+		}
+		a.cfg.Save()
+		log.Printf("[AUTH] Device-code login complete for %s", info.Login)
+
+		// Rebuild helix client and (re)start everything that depends on auth.
+		a.helixClient, _ = twitch.NewHelixClient(a.cfg.Twitch.ClientID, a.cfg.Twitch.AccessToken, a.cfg.Twitch.BotUserID, a.cfg.Twitch.BotUserID)
+		a.loadBadges()
+
+		// Tear down any existing IRC client so the supervisor reconnects with
+		// the fresh credentials. The supervisor loop in runIRCSupervisor
+		// already handles auto-reconnect.
+		a.mu.Lock()
+		if a.ircClient != nil {
+			a.ircClient.Disconnect()
+		}
+		a.mu.Unlock()
+
+		runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{
+			"success":  true,
+			"username": info.Login,
+		})
+	}()
+
+	return map[string]interface{}{
+		"verificationUri": device.VerificationURI,
+		"userCode":        device.UserCode,
+	}
+}
+
+// OpenURL opens a URL in the user's default browser. Used by the login flow.
+func (a *App) OpenURL(url string) {
+	runtime.BrowserOpenURL(a.ctx, url)
+}
+
+// Logout clears auth state. Caller is expected to call StartLogin to recover.
+func (a *App) Logout() {
+	a.cfg.Twitch.AccessToken = ""
+	a.cfg.Twitch.RefreshToken = ""
+	a.cfg.Save()
+	a.mu.Lock()
+	if a.ircClient != nil {
+		a.ircClient.Disconnect()
+	}
+	a.mu.Unlock()
+	log.Printf("[AUTH] Logged out")
+}
 
 // AutostartStatus reports the platform support and current state of the
 // "start with Windows" toggle. The frontend uses `supported` to decide
