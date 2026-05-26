@@ -88,6 +88,22 @@
       </div>
     </div>
     <div class="settings-section">
+      <label>YouTube</label>
+      <div class="settings-row">
+        <label class="checkbox-row">
+          <input type="checkbox" id="ytEnabledCheckbox">
+          <span>Enable YouTube live-chat overlay</span>
+        </label>
+      </div>
+      <div class="settings-row">
+        <input class="modal-input" id="ytHandleInput" type="text" placeholder="@yourchannel" autocomplete="off">
+        <button class="btn" id="ytSaveBtn">Save</button>
+      </div>
+      <div class="settings-row">
+        <span id="ytStatus" class="settings-status">Read-only, no login needed. App polls /live every 30s and attaches automatically when you go live.</span>
+      </div>
+    </div>
+    <div class="settings-section">
       <label>Twitch Login</label>
       <div class="settings-row">
         <span id="authInfo">Not logged in</span>

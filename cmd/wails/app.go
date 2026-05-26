@@ -579,6 +579,52 @@ func (a *App) ApplyUpdate(url string) string {
 
 func (a *App) GetVersion() string { return version.Version }
 
+// === YouTube settings ===
+
+// GetYouTubeConfig returns the saved YouTube channel config so the frontend
+// can show what's already set.
+func (a *App) GetYouTubeConfig() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled":       a.cfg.YouTube.Enabled,
+		"channelHandle": a.cfg.YouTube.ChannelHandle,
+		"channelId":     a.cfg.YouTube.ChannelID,
+		"videoId":       a.cfg.YouTube.VideoID,
+	}
+}
+
+// SetYouTubeConfig persists the YouTube section and (re)starts the live
+// auto-detect goroutine if enabled+handle are present. Returns an empty
+// string on success, or an error message.
+func (a *App) SetYouTubeConfig(enabled bool, channelHandle string) string {
+	handle := strings.TrimSpace(channelHandle)
+	if enabled && handle == "" {
+		return "channel handle required when YouTube is enabled"
+	}
+	// Normalize: prepend "@" if the user didn't.
+	if handle != "" && !strings.HasPrefix(handle, "@") {
+		handle = "@" + handle
+	}
+	a.cfg.YouTube.Enabled = enabled
+	a.cfg.YouTube.ChannelHandle = handle
+	// Channel ID is derived from the handle on demand; wipe any stale value
+	// so the auto-detect loop re-resolves on the new handle.
+	if a.cfg.YouTube.ChannelHandle != "" {
+		a.cfg.YouTube.ChannelID = ""
+	}
+	a.cfg.Save()
+	log.Printf("[YT] config updated: enabled=%v handle=%q", enabled, handle)
+
+	// Tear down any running YT goroutine and respawn if appropriate.
+	if a.ytChatCancel != nil {
+		a.ytChatCancel()
+		a.ytChatCancel = nil
+	}
+	if enabled && handle != "" {
+		go a.startYouTubeAutoDetect(handle)
+	}
+	return ""
+}
+
 // === Auth flow (Device Code) — re-login UI for when refresh tokens die ===
 
 // StartLogin starts the Twitch device-code flow and returns the verification

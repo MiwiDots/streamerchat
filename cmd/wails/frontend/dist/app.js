@@ -615,6 +615,14 @@ async function openSettings() {
   try {
     settingsVersion.textContent = 'v' + (await window.go.main.App.GetVersion());
   } catch (e) {}
+  // YouTube config: show whatever's saved so the user can see/edit it.
+  try {
+    const yt = await window.go.main.App.GetYouTubeConfig();
+    if (yt) {
+      document.getElementById('ytEnabledCheckbox').checked = !!yt.enabled;
+      document.getElementById('ytHandleInput').value = yt.channelHandle || '';
+    }
+  } catch (e) {}
   // Reflect current login state in the UI every time settings opens.
   // We treat presence of an active IRC connection / non-empty token as
   // logged-in; the backend will refine this via the ready/loginResult events.
@@ -671,6 +679,36 @@ if (checkUpdateBtn) {
 if (applyUpdateBtn) {
   applyUpdateBtn.addEventListener('click', () => applyUpdateFlow(updateStatusEl, applyUpdateBtn, pendingUpdateUrl));
 }
+// === YouTube settings ===
+const ytSaveBtn = document.getElementById('ytSaveBtn');
+const ytStatus = document.getElementById('ytStatus');
+const ytEnabledCheckbox = document.getElementById('ytEnabledCheckbox');
+const ytHandleInput = document.getElementById('ytHandleInput');
+if (ytSaveBtn) {
+  ytSaveBtn.addEventListener('click', async () => {
+    const enabled = !!ytEnabledCheckbox.checked;
+    const handle = ytHandleInput.value;
+    try {
+      const err = await window.go.main.App.SetYouTubeConfig(enabled, handle);
+      if (err) {
+        ytStatus.textContent = 'Failed: ' + err;
+        ytStatus.style.color = '#ff6b6b';
+      } else {
+        ytStatus.textContent = enabled ? ('Saved. Polling ' + (handle || '') + '…') : 'Disabled.';
+        ytStatus.style.color = '#7fdc7f';
+        // Re-read so we get the normalized handle ("@" prepended etc.)
+        try {
+          const yt = await window.go.main.App.GetYouTubeConfig();
+          if (yt) ytHandleInput.value = yt.channelHandle || '';
+        } catch (e) {}
+      }
+    } catch (e) {
+      ytStatus.textContent = 'Failed: ' + String(e);
+      ytStatus.style.color = '#ff6b6b';
+    }
+  });
+}
+
 // === Twitch login (device-code flow) ===
 const authInfo = document.getElementById('authInfo');
 const loginBtn = document.getElementById('loginBtn');

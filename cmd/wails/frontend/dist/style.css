@@ -113,6 +113,19 @@ html, body {
 }
 .code.big { font-size: 18px; letter-spacing: 2px; }
 
+.modal-input {
+  background: #0d0d14;
+  border: 1px solid #333;
+  color: #ddd;
+  padding: 5px 8px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 13px;
+  flex: 1;
+  min-width: 0;
+}
+.modal-input:focus { outline: none; border-color: #9146ff; }
+
 .main {
   display: flex;
   flex: 1;

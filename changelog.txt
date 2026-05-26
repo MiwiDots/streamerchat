@@ -1,3 +1,12 @@
+2026-05-26 14:15 - v0.2.9: StreamerChat YouTube config in settings UI
+  - GetYouTubeConfig + SetYouTubeConfig bound methods.
+  - SetYouTubeConfig normalizes handle (prepends "@" if missing), wipes any
+    stale channel_id so the next auto-detect re-resolves, and restarts the
+    YT goroutine (cancelling the previous one if running).
+  - Settings modal: new YouTube section with enable checkbox + handle text
+    input + Save button + status line. No login needed (read-only innertube
+    scrape); the explanatory text in the status line says so.
+
 2026-05-26 14:05 - v0.2.8: StreamerChat device-code login in settings
   - Real bug exposed by the holiday-scenario chain: both apps' refresh
     tokens got revoked by Twitch (status 400 = invalid_grant on refresh).
