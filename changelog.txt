@@ -1,3 +1,18 @@
+2026-05-26 15:25 - v0.2.16: reduce constant background activity (cursor-busy follow-up)
+  - User reports cursor still spins constantly even with no chat — must
+    be a background loop. Two suspects: live-status poll and emote-lookup
+    storm.
+  - ChatHub liveStatusLoop: was sequential N Helix calls every 60s, so a
+    user with 12 channels had a 3-5s burst every minute. Fanned out via
+    sync.WaitGroup so the burst is one HTTP RTT instead of N, and lowered
+    cadence from 60s to 120s. Channel adds still trigger an immediate
+    one-off live check so newly-added channels don't have to wait.
+  - ChatHub renderText: emote lookups within a message used to be a
+    sequential `await` per word (one Wails RPC round-trip each). Now
+    collected and resolved via Promise.all, then the DOM is built. Many
+    fewer IPC round-trips, less event-loop pressure for high-traffic
+    messages.
+
 2026-05-26 15:10 - v0.2.15: lazy-load badge + emote images
   - Reported: the mouse cursor goes into loading-spin mode constantly when
     chat is active. Cause: every chat message appends N badge + emote

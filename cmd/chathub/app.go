@@ -351,23 +351,37 @@ func (a *App) liveStatusLoop() {
 		chans := append([]string{}, a.cfg.Channels...)
 		a.mu.Unlock()
 
+		// Fan-out the per-channel Helix call so the whole tick finishes in
+		// roughly one HTTP RTT instead of N. With many channels this used
+		// to stretch the live-check burst over several seconds, which
+		// might be why the user saw "constant" cursor-busy state.
+		var wg sync.WaitGroup
 		for _, ch := range chans {
-			isLive := a.checkLive(ch)
-			a.mu.Lock()
-			prev, had := a.liveStatus[ch]
-			a.liveStatus[ch] = isLive
-			a.mu.Unlock()
-			if !had || prev != isLive {
-				runtime.EventsEmit(a.ctx, "liveStatus", map[string]interface{}{
-					"channel": ch,
-					"live":    isLive,
-				})
-			}
+			wg.Add(1)
+			go func(ch string) {
+				defer wg.Done()
+				isLive := a.checkLive(ch)
+				a.mu.Lock()
+				prev, had := a.liveStatus[ch]
+				a.liveStatus[ch] = isLive
+				a.mu.Unlock()
+				if !had || prev != isLive {
+					runtime.EventsEmit(a.ctx, "liveStatus", map[string]interface{}{
+						"channel": ch,
+						"live":    isLive,
+					})
+				}
+			}(ch)
 		}
+		wg.Wait()
 	}
 
 	check()
-	ticker := time.NewTicker(60 * time.Second)
+	// 2-minute cadence (was 60s) — the green dot drifts at most a minute
+	// from reality, but we cut the long-running Helix burst frequency in
+	// half. AddChannel still triggers an immediate one-off check so a new
+	// channel doesn't have to wait for the next tick.
+	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
