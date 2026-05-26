@@ -132,6 +132,19 @@ func (a *App) bootSequence() {
 		}
 	} else {
 		log.Printf("[AUTH] Token valid for %s", info.Login)
+		// Proactively refresh even on validate-success so the new session
+		// starts with a freshly-issued token. Failure here is non-fatal —
+		// the validated token is still good for its remaining TTL.
+		if a.cfg.Twitch.RefreshToken != "" {
+			if tok, rerr := twitch.RefreshAccessToken(a.cfg.Twitch.ClientID, a.cfg.Twitch.ClientSecret, a.cfg.Twitch.RefreshToken); rerr == nil {
+				a.cfg.Twitch.AccessToken = tok.AccessToken
+				a.cfg.Twitch.RefreshToken = tok.RefreshToken
+				a.cfg.Save()
+				log.Printf("[AUTH] Token refreshed at boot")
+			} else {
+				log.Printf("[AUTH] Boot refresh failed (non-fatal): %v", rerr)
+			}
+		}
 	}
 	if info != nil {
 		a.cfg.Twitch.Username = info.Login
@@ -264,8 +277,10 @@ func (a *App) forwardIRC(ctx context.Context, client *twitch.IRCClient) {
 	}
 }
 
+// tokenRefreshLoop refreshes the access token every 30 minutes. See chathub
+// for the rationale (TTL can be <1h so a 60min cadence races).
 func (a *App) tokenRefreshLoop() {
-	ticker := time.NewTicker(1 * time.Hour)
+	ticker := time.NewTicker(30 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
@@ -276,14 +291,17 @@ func (a *App) tokenRefreshLoop() {
 		if a.cfg.Twitch.RefreshToken == "" {
 			continue
 		}
-		if token, err := twitch.RefreshAccessToken(a.cfg.Twitch.ClientID, a.cfg.Twitch.ClientSecret, a.cfg.Twitch.RefreshToken); err == nil {
-			a.cfg.Twitch.AccessToken = token.AccessToken
-			a.cfg.Twitch.RefreshToken = token.RefreshToken
-			a.cfg.Save()
-			log.Printf("[AUTH] Token refreshed")
-			// Reload badges with the fresh token in case the previous load failed.
-			a.loadBadges()
+		token, err := twitch.RefreshAccessToken(a.cfg.Twitch.ClientID, a.cfg.Twitch.ClientSecret, a.cfg.Twitch.RefreshToken)
+		if err != nil {
+			log.Printf("[AUTH] Token refresh failed: %v", err)
+			continue
 		}
+		a.cfg.Twitch.AccessToken = token.AccessToken
+		a.cfg.Twitch.RefreshToken = token.RefreshToken
+		a.cfg.Save()
+		log.Printf("[AUTH] Token refreshed")
+		// Reload badges with the fresh token in case the previous load failed.
+		a.loadBadges()
 	}
 }
 

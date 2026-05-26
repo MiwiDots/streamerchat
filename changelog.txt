@@ -1,3 +1,17 @@
+2026-05-26 13:50 - v0.2.7: proactive token refresh on startup, faster refresh loop
+  - Scenario the user surfaced: away on holiday for 2 weeks, open the app,
+    Twitch access token has long expired (and the saved one may even be
+    revoked). Old behavior: validate fails -> refresh tried once -> if
+    refresh also fails the user gets a silent logout. Sometimes validate
+    succeeds but the token has a tiny TTL left and dies mid-session.
+  - Both apps now do a proactive refresh at boot even when validate
+    succeeds, so every session starts with a fresh access token.
+  - tokenRefreshLoop interval reduced 60min -> 30min (Twitch access tokens
+    can be valid for <1h; a 60min cadence allowed the token to die between
+    ticks).
+  - cmd/wails/app.go: tokenRefreshLoop now logs refresh failures instead
+    of swallowing them silently.
+
 2026-05-26 13:35 - v0.2.6: StreamerChat settings modal (gear icon in titlebar)
   - cmd/wails/autostart_windows.go + autostart_other.go: copied from chathub
     (registry key name "StreamerChat" instead of "ChatHub").

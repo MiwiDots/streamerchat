@@ -211,11 +211,18 @@ func (a *App) validateAndConnect() {
 	log.Printf("[AUTH] Validating saved token for user=%s", a.cfg.Username)
 	info, err := twitch.ValidateToken(a.cfg.AccessToken)
 	if err == nil {
-		log.Printf("[AUTH] Token valid for %s", info.Login)
+		log.Printf("[AUTH] Token valid for %s, proactively refreshing for the session", info.Login)
 		if info.Login != "" {
 			a.cfg.Username = info.Login
 			a.cfg.UserID = info.UserID
 			a.cfg.Save()
+		}
+		// Even when the token validates we kick off one refresh up-front so
+		// the new session starts with a token that won't expire mid-use just
+		// because the user opened the app right before its TTL elapsed.
+		// Failure here is non-fatal — the existing token is still usable.
+		if a.cfg.RefreshToken != "" {
+			_ = a.refreshTokenSync()
 		}
 		a.connectSendClient()
 		return
@@ -267,9 +274,13 @@ func (a *App) refreshTokenSync() bool {
 	return true
 }
 
-// tokenRefreshLoop runs every hour to keep tokens fresh.
+// tokenRefreshLoop refreshes the access token every 30 minutes. Twitch's
+// access tokens can live as little as ~1h (and sometimes less), so a 60min
+// cadence used to leave a window where the token expired between ticks and
+// the user got disconnected. 30min gives a comfortable safety margin while
+// staying well below any rate-limit ceiling.
 func (a *App) tokenRefreshLoop() {
-	ticker := time.NewTicker(1 * time.Hour)
+	ticker := time.NewTicker(30 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
