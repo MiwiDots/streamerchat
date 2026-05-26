@@ -1,3 +1,13 @@
+2026-05-26 15:10 - v0.2.15: lazy-load badge + emote images
+  - Reported: the mouse cursor goes into loading-spin mode constantly when
+    chat is active. Cause: every chat message appends N badge + emote
+    <img> elements that all start fetching immediately, so WebView2 is in
+    near-constant network-activity state.
+  - Added loading="lazy" + decoding="async" to all badge and emote
+    images in both apps. The browser only fetches them as they enter the
+    viewport, and decoding is off the main thread. Should kill the
+    persistent busy-cursor effect during high-traffic channels.
+
 2026-05-26 15:00 - v0.2.14: ChatHub auth pill traffic-light colors
   - Auth pill in the titlebar now color-codes the three real states:
     green @username when logged in, red "Not logged in" when never

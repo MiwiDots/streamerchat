@@ -167,7 +167,7 @@ async function renderBadges(badges) {
   for (const b of badges) {
     const url = await lookupBadge(b.name, b.version);
     if (url) {
-      fragment.appendChild(el('img', { class: 'badge-img', src: url, alt: b.name, title: b.name }));
+      fragment.appendChild(el('img', { class: 'badge-img', src: url, alt: b.name, title: b.name, loading: 'lazy', decoding: 'async' }));
     }
   }
   return fragment;
@@ -208,7 +208,7 @@ async function renderText(text, nativeEmotes) {
     if (nativeMap.has(i)) {
       const e = nativeMap.get(i);
       const url = `https://static-cdn.jtvnw.net/emoticons/v2/${e.id}/default/dark/2.0`;
-      fragment.appendChild(el('img', { class: 'emote', src: url, alt: '' }));
+      fragment.appendChild(el('img', { class: 'emote', src: url, alt: '', loading: 'lazy', decoding: 'async' }));
       i = e.end + 1;
       continue;
     }
@@ -230,7 +230,7 @@ async function renderText(text, nativeEmotes) {
     // 3rd party emote?
     const emote = await lookupEmote(word);
     if (emote) {
-      fragment.appendChild(el('img', { class: 'emote', src: emote.url, alt: word, title: word }));
+      fragment.appendChild(el('img', { class: 'emote', src: emote.url, alt: word, title: word, loading: 'lazy', decoding: 'async' }));
     } else {
       fragment.appendChild(document.createTextNode(word));
     }

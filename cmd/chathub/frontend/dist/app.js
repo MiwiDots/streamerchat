@@ -326,7 +326,7 @@ async function renderBadges(channel, badges) {
   for (const b of badges) {
     const url = await lookupBadge(channel, b.name, b.version);
     if (url) {
-      const img = el('img', { class: 'badge-img', src: url, alt: b.name, title: b.name });
+      const img = el('img', { class: 'badge-img', src: url, alt: b.name, title: b.name, loading: 'lazy', decoding: 'async' });
       fragment.appendChild(img);
     }
   }
@@ -348,7 +348,7 @@ async function renderText(text, nativeEmotes) {
   while (i < runes.length) {
     if (nativeMap.has(i)) {
       const e = nativeMap.get(i);
-      fragment.appendChild(el('img', { class: 'emote', src: `https://static-cdn.jtvnw.net/emoticons/v2/${e.id}/default/dark/2.0`, alt: '' }));
+      fragment.appendChild(el('img', { class: 'emote', src: `https://static-cdn.jtvnw.net/emoticons/v2/${e.id}/default/dark/2.0`, alt: '', loading: 'lazy', decoding: 'async' }));
       i = e.end + 1;
       continue;
     }
@@ -362,7 +362,7 @@ async function renderText(text, nativeEmotes) {
     const word = runes.slice(wordStart, i).join('');
     const emote = await lookupEmote(word);
     if (emote) {
-      fragment.appendChild(el('img', { class: 'emote', src: emote.url, alt: word, title: word }));
+      fragment.appendChild(el('img', { class: 'emote', src: emote.url, alt: word, title: word, loading: 'lazy', decoding: 'async' }));
     } else {
       fragment.appendChild(document.createTextNode(word));
     }
