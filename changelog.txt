@@ -1,3 +1,15 @@
+2026-05-26 13:05 - ChatHub v0.2.2: live beep also fires for already-live channels on boot
+  - setLiveStatus only beeped on offline -> live transitions (prev === false).
+    When the app started with channels already live, prev was undefined and
+    the beep was suppressed.
+  - Condition relaxed to `prev !== true`, so first-seen-live (initial state
+    snapshot) also counts. Throttled to one beep per 800ms so opening with
+    N already-live channels does not stack overlapping tones.
+  - Browser audio policy caveat: AudioContext requires a user gesture, so
+    the very first boot beep can be silenced if the user hasn't clicked
+    anything yet. After the first click/keypress all subsequent live
+    transitions are audible.
+
 2026-05-26 13:00 - ChatHub: scroll-up now works through history
   - .chat-view had `justify-content: flex-end` + `overflow-y: auto` which
     is a known CSS pattern bug: the top of overflowing content gets clipped

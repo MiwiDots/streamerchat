@@ -238,6 +238,7 @@ function markUnread(channel, isMention) {
   }
 }
 
+let lastLiveBeepAt = 0;
 function setLiveStatus(channel, live) {
   const prev = liveStatus.get(channel);
   liveStatus.set(channel, live);
@@ -249,12 +250,16 @@ function setLiveStatus(channel, live) {
     state.liveDotEl.classList.add('hidden');
   }
   applyOnlyLiveFilter();
-  // Beep on offline->live transitions only. `prev === undefined` is the
-  // first status we ever get for this channel (initial snapshot at boot),
-  // which we don't want to alarm-bomb the user with even for channels that
-  // are already live; only a real flip-up counts.
-  if (live && prev === false && soundOnMention !== 'none') {
-    playBeep();
+  // Beep on offline->live transitions AND on the first-seen-live case
+  // (initial status snapshot at boot when prev === undefined). Throttle
+  // to one beep per 800ms so that opening the app with N already-live
+  // channels doesn't produce a wall of overlapping tones.
+  if (live && prev !== true && soundOnMention !== 'none') {
+    const now = Date.now();
+    if (now - lastLiveBeepAt >= 800) {
+      lastLiveBeepAt = now;
+      playBeep();
+    }
   }
 }
 
