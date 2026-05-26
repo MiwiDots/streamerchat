@@ -1,3 +1,20 @@
+2026-05-26 13:25 - v0.2.5: StreamerChat frameless + auto-update banner; ChatHub debug line removed
+  - cmd/wails/main.go: Frameless: true.
+  - cmd/wails/frontend/dist/index.html: new .titlebar element with the
+    "StreamerChat" label, status pills (TW/YT), a version label, and three
+    Win11-style min/max/close buttons. Drag region across the bar.
+    Update banner sits below the titlebar; hidden by default, slides in
+    only when CheckUpdate reports a newer release.
+  - cmd/wails/frontend/dist/app.js: on boot calls GetVersion + CheckUpdate
+    in the background; shows the banner with one-click Install. Install
+    swaps the exe and relaunches via selfupdate.Apply + Restart.
+  - cmd/wails/frontend/dist/style.css: titlebar layout, window controls
+    (hover-red close), update-banner styling.
+  - cmd/chathub/frontend/dist/app.js: removed the "Loaded N channels
+    from <config path>" debug message from the status bar — was leaking
+    the user's local %APPDATA% path into the always-visible UI. Status
+    bar still surfaces transient errors and auth state.
+
 2026-05-26 13:15 - ChatHub v0.2.4: frameless window with custom titlebar
   - cmd/chathub/main.go: Frameless: true in wails options.
   - index.html: window controls (min/max/close) integrated into the right

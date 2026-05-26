@@ -8,15 +8,27 @@
 </head>
 <body>
 <div class="app">
+  <div class="titlebar">
+    <span class="title-text">StreamerChat</span>
+    <span class="status-pills" id="statusPills">
+      <span class="pill pill-tw">TW:●</span>
+      <span class="pill pill-yt hidden" id="ytPill">YT:●</span>
+    </span>
+    <span class="titlebar-spacer"></span>
+    <span class="titlebar-version" id="versionLabel"></span>
+    <div class="window-controls">
+      <button class="win-btn" id="winMinBtn" title="Minimize">&minus;</button>
+      <button class="win-btn" id="winMaxBtn" title="Maximize">&#9633;</button>
+      <button class="win-btn win-close" id="winCloseBtn" title="Close">&times;</button>
+    </div>
+  </div>
+  <div class="update-banner hidden" id="updateBanner">
+    <span class="update-text" id="updateText"></span>
+    <button class="btn btn-primary" id="updateInstallBtn">Install</button>
+    <button class="btn" id="updateDismissBtn">Later</button>
+  </div>
   <div class="main">
     <div class="panel chat-panel">
-      <div class="panel-title">
-        <span class="title-text">StreamerChat</span>
-        <span class="status-pills" id="statusPills">
-          <span class="pill pill-tw">TW:●</span>
-          <span class="pill pill-yt hidden" id="ytPill">YT:●</span>
-        </span>
-      </div>
       <div class="scroll" id="chat"></div>
     </div>
     <div class="panel sidebar">

@@ -17,14 +17,62 @@ html, body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 6px;
 }
+
+/* Custom frameless titlebar */
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 0 10px;
+  background: #14141c;
+  border-bottom: 1px solid #333;
+  height: 30px;
+  --wails-draggable: drag;
+  -webkit-app-region: drag;
+}
+.titlebar .title-text { color: #9146ff; font-weight: bold; font-size: 13px; }
+.titlebar-spacer { flex: 1 1 auto; }
+.titlebar-version { color: #555; font-size: 11px; }
+.titlebar .status-pills,
+.titlebar .window-controls,
+.win-btn { --wails-draggable: no-drag; -webkit-app-region: no-drag; }
+.window-controls { display: flex; height: 100%; }
+.win-btn {
+  background: transparent;
+  border: 0;
+  color: #888;
+  font-size: 14px;
+  width: 42px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.win-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.win-btn.win-close:hover { background: #c42b1c; color: #fff; }
+
+/* Update banner */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #2a1f3d;
+  border-bottom: 1px solid #4b3a6d;
+  color: #ddd;
+  font-size: 13px;
+}
+.update-banner .update-text { flex: 1; }
+.update-banner .btn { padding: 3px 10px; font-size: 12px; }
 
 .main {
   display: flex;
   flex: 1;
   gap: 6px;
   min-height: 0;
+  padding: 6px;
 }
 
 .panel {

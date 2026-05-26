@@ -535,3 +535,70 @@ function setupEvents() {
 setupEvents();
 updateInputLabel();
 inputEl.focus();
+
+// === Frameless window controls ===
+function bindWindowBtn(id, fn) {
+  const elBtn = document.getElementById(id);
+  if (!elBtn) return;
+  elBtn.addEventListener('click', () => {
+    try { fn(); } catch (e) { console.error('window control', e); }
+  });
+}
+bindWindowBtn('winMinBtn', () => window.runtime.WindowMinimise());
+bindWindowBtn('winMaxBtn', () => window.runtime.WindowToggleMaximise());
+bindWindowBtn('winCloseBtn', () => window.runtime.Quit());
+
+// === Auto-update check ===
+// No settings UI in streamerchat. Strategy: silent background check on boot,
+// show a dismissible banner at the top of the window when a newer release
+// exists. Install button downloads + swaps + relaunches in one click.
+async function initUpdateBanner() {
+  const versionLabelEl = document.getElementById('versionLabel');
+  const banner = document.getElementById('updateBanner');
+  const text = document.getElementById('updateText');
+  const installBtn = document.getElementById('updateInstallBtn');
+  const dismissBtn = document.getElementById('updateDismissBtn');
+  if (!banner) return;
+
+  try {
+    const v = await window.go.main.App.GetVersion();
+    if (versionLabelEl) versionLabelEl.textContent = 'v' + v;
+  } catch (e) {}
+
+  let downloadUrl = '';
+  try {
+    const res = await window.go.main.App.CheckUpdate();
+    if (res && res.available) {
+      downloadUrl = res.downloadUrl || '';
+      text.textContent = 'Update available: ' + (res.latest || '?') +
+        (res.current ? ' (you have v' + res.current + ')' : '');
+      banner.classList.remove('hidden');
+    }
+  } catch (e) {}
+
+  if (installBtn) {
+    installBtn.addEventListener('click', async () => {
+      if (!downloadUrl) {
+        text.textContent = 'No installable asset for this platform — see GitHub releases.';
+        return;
+      }
+      installBtn.disabled = true;
+      text.textContent = 'Downloading…';
+      try {
+        const err = await window.go.main.App.ApplyUpdate(downloadUrl);
+        if (err) {
+          text.textContent = 'Update failed: ' + err;
+          installBtn.disabled = false;
+        }
+        // success: backend relaunches, this window dies.
+      } catch (e) {
+        text.textContent = 'Update failed: ' + String(e);
+        installBtn.disabled = false;
+      }
+    });
+  }
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', () => banner.classList.add('hidden'));
+  }
+}
+initUpdateBanner();

@@ -1028,7 +1028,8 @@ function applyState(data) {
   }
   onlyShowLive = !!data.onlyShowLive;
   setLoggedInUI(!!data.loggedIn, data.username || '');
-  statusText.textContent = i18n.t('loadedChannels', { count: (data.channels || []).length, path: data.configPath || '?' });
+  // Keep the status bar clean by default. Transient messages (errors,
+  // "watching #x", "auth expired") still write into it as before.
 }
 
 // === Wails events ===

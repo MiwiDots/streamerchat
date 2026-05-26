@@ -17,9 +17,10 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "StreamerChat",
-		Width:  1100,
-		Height: 700,
+		Title:     "StreamerChat",
+		Width:     1100,
+		Height:    700,
+		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
