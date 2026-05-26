@@ -1,3 +1,18 @@
+2026-05-26 16:00 - v0.2.19: revert cursor-chasing changes, keep only the real fix
+  - Once the real cause was identified (mouse-sharing software synthesizing
+    incomplete mouse events), all the speculative changes can come out:
+  - REVERTED: WebviewDisableRendererCodeIntegrity flag (was a security
+    tradeoff for a theory that turned out wrong).
+  - REVERTED: chathub liveStatusLoop parallelization + 60s->120s cadence
+    (back to sequential + 60s — the original behavior was fine).
+  - REVERTED: parallel emote lookups via Promise.all in renderText (back
+    to sequential await — sequential is actually friendlier on Wails IPC
+    since each round-trip yields the event loop).
+  - REVERTED: loading="lazy" / decoding="async" on badge & emote images
+    (no measurable impact, just code noise).
+  - KEPT: the bumpCursorState handler on focus / mouseenter / pointerenter
+    that's the actual fix.
+
 2026-05-26 15:50 - v0.2.18: actual busy-cursor cause — mouse-sharing software
   - User figured out: with a normal mouse on the host PC, no spinner.
     With Synergy / Barrier / Mouse Without Borders / Logitech Flow

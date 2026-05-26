@@ -326,7 +326,7 @@ async function renderBadges(channel, badges) {
   for (const b of badges) {
     const url = await lookupBadge(channel, b.name, b.version);
     if (url) {
-      const img = el('img', { class: 'badge-img', src: url, alt: b.name, title: b.name, loading: 'lazy', decoding: 'async' });
+      const img = el('img', { class: 'badge-img', src: url, alt: b.name, title: b.name });
       fragment.appendChild(img);
     }
   }
@@ -344,45 +344,27 @@ async function renderText(text, nativeEmotes) {
       }
     }
   }
-  // First pass: walk the text and collect plain tokens (text, space, native
-  // emote) + a list of word-tokens that need an emote lookup. Then resolve
-  // all word lookups in parallel via Promise.all, then build the DOM. This
-  // collapses N sequential Wails RPC round-trips per message into one
-  // burst, which keeps the WebView event loop quiet between bursts.
-  const tokens = []; // { kind: 'text' | 'native' | 'word', value | id | word }
   let i = 0;
   while (i < runes.length) {
     if (nativeMap.has(i)) {
       const e = nativeMap.get(i);
-      tokens.push({ kind: 'native', id: e.id });
+      fragment.appendChild(el('img', { class: 'emote', src: `https://static-cdn.jtvnw.net/emoticons/v2/${e.id}/default/dark/2.0`, alt: '' }));
       i = e.end + 1;
       continue;
     }
     if (runes[i] === ' ') {
-      tokens.push({ kind: 'text', value: ' ' });
+      fragment.appendChild(document.createTextNode(' '));
       i++;
       continue;
     }
     const wordStart = i;
     while (i < runes.length && runes[i] !== ' ' && !nativeMap.has(i)) i++;
-    tokens.push({ kind: 'word', word: runes.slice(wordStart, i).join('') });
-  }
-  const wordLookups = await Promise.all(
-    tokens.map(t => t.kind === 'word' ? lookupEmote(t.word) : null)
-  );
-  for (let idx = 0; idx < tokens.length; idx++) {
-    const t = tokens[idx];
-    if (t.kind === 'native') {
-      fragment.appendChild(el('img', { class: 'emote', src: `https://static-cdn.jtvnw.net/emoticons/v2/${t.id}/default/dark/2.0`, alt: '', loading: 'lazy', decoding: 'async' }));
-    } else if (t.kind === 'text') {
-      fragment.appendChild(document.createTextNode(t.value));
+    const word = runes.slice(wordStart, i).join('');
+    const emote = await lookupEmote(word);
+    if (emote) {
+      fragment.appendChild(el('img', { class: 'emote', src: emote.url, alt: word, title: word }));
     } else {
-      const emote = wordLookups[idx];
-      if (emote) {
-        fragment.appendChild(el('img', { class: 'emote', src: emote.url, alt: t.word, title: t.word, loading: 'lazy', decoding: 'async' }));
-      } else {
-        fragment.appendChild(document.createTextNode(t.word));
-      }
+      fragment.appendChild(document.createTextNode(word));
     }
   }
   return fragment;
