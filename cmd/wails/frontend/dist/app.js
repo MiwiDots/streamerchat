@@ -542,15 +542,26 @@ inputEl.focus();
 // Synergy / Barrier / Mouse Without Borders / Logitech Flow inject synthetic
 // mouse events that don't carry a proper mouseleave on transition; WebView2
 // then never clears its "navigating" cursor state and shows the loading
-// spinner over the window indefinitely. A brief inline cursor override on
-// focus / re-enter kicks the renderer out of that state.
+// spinner over the window indefinitely. We override `cursor` on the body
+// whenever the user interacts (move/over/click/key/focus). mouseenter
+// doesn't bubble, so we listen on bubbling counterparts (mouseover/
+// pointerover) which fire whenever the cursor moves over any element.
+let cursorBumpQueued = false;
 function bumpCursorState() {
+  if (cursorBumpQueued) return;
+  cursorBumpQueued = true;
   document.body.style.cursor = 'default';
-  requestAnimationFrame(() => { document.body.style.cursor = ''; });
+  requestAnimationFrame(() => {
+    document.body.style.cursor = '';
+    cursorBumpQueued = false;
+  });
 }
 window.addEventListener('focus', bumpCursorState);
-document.addEventListener('mouseenter', bumpCursorState);
-document.addEventListener('pointerenter', bumpCursorState);
+window.addEventListener('blur', bumpCursorState);
+document.addEventListener('mouseover', bumpCursorState);
+document.addEventListener('pointerover', bumpCursorState);
+document.addEventListener('mousemove', bumpCursorState);
+document.addEventListener('keydown', bumpCursorState);
 
 // === Frameless window controls ===
 function bindWindowBtn(id, fn) {

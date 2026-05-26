@@ -1,3 +1,13 @@
+2026-05-26 16:10 - v0.2.20: cursor-bump on bubbling events (streamerchat fix)
+  - v0.2.19 fixed chathub but not streamerchat. Reason: mouseenter and
+    pointerenter don't bubble. streamerchat's layout has multiple nested
+    containers that absorb those events before they reach the document
+    listener.
+  - Switched to bubbling counterparts (mouseover / pointerover / mousemove)
+    plus focus / blur / keydown so the cursor reset fires on basically
+    any interaction. requestAnimationFrame guard prevents thrashing —
+    only one bump per frame.
+
 2026-05-26 16:00 - v0.2.19: revert cursor-chasing changes, keep only the real fix
   - Once the real cause was identified (mouse-sharing software synthesizing
     incomplete mouse events), all the speculative changes can come out:

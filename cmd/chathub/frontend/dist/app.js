@@ -1151,21 +1151,29 @@ function setupEvents() {
 i18n.applyI18n();
 
 // === Cursor-stuck workaround for mouse-sharing software ===
-// Synergy / Barrier / Mouse Without Borders / Logitech Flow inject
-// synthetic mouse events that don't carry a proper mouseleave on transition.
-// WebView2 then never clears the "navigating" cursor state and the
-// loading-spinner cursor pulses over the window indefinitely.
-// Forcing a brief inline cursor override on the body whenever focus or
-// pointer re-enters the window kicks the renderer out of that state.
+// Synergy / Barrier / Mouse Without Borders / Logitech Flow inject synthetic
+// mouse events that don't carry a proper mouseleave on transition; WebView2
+// then never clears its "navigating" cursor state and shows the loading
+// spinner over the window indefinitely. We override `cursor` on the body
+// whenever the user interacts. mouseenter doesn't bubble, so we listen on
+// bubbling counterparts (mouseover / pointerover / mousemove) which fire
+// whenever the cursor moves over any element.
+let cursorBumpQueued = false;
 function bumpCursorState() {
+  if (cursorBumpQueued) return;
+  cursorBumpQueued = true;
   document.body.style.cursor = 'default';
-  // Schedule a clear so site-defined cursors (pointer on buttons etc.)
-  // still work normally.
-  requestAnimationFrame(() => { document.body.style.cursor = ''; });
+  requestAnimationFrame(() => {
+    document.body.style.cursor = '';
+    cursorBumpQueued = false;
+  });
 }
 window.addEventListener('focus', bumpCursorState);
-document.addEventListener('mouseenter', bumpCursorState);
-document.addEventListener('pointerenter', bumpCursorState);
+window.addEventListener('blur', bumpCursorState);
+document.addEventListener('mouseover', bumpCursorState);
+document.addEventListener('pointerover', bumpCursorState);
+document.addEventListener('mousemove', bumpCursorState);
+document.addEventListener('keydown', bumpCursorState);
 
 // === Frameless window controls (Windows; harmless on macOS) ===
 function bindWindowBtn(id, fn) {
