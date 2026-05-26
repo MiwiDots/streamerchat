@@ -186,6 +186,7 @@ html, body {
 .msg:hover { background: rgba(145, 70, 255, 0.06); }
 
 .ts { color: #666; margin-right: 6px; }
+body.no-ts .ts { display: none; }
 
 .badge {
   display: inline-block;

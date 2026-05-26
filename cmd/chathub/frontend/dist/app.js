@@ -626,6 +626,7 @@ async function openSettings() {
   soundSelect.value = soundOnMention;
   if (localeSelect) localeSelect.value = i18n.locale;
   if (onlyLiveCheckbox) onlyLiveCheckbox.checked = onlyShowLive;
+  if (showTimestampsCheckbox) showTimestampsCheckbox.checked = !document.body.classList.contains('no-ts');
   // Autostart toggle: only show the row on Windows
   try {
     const a = await window.go.main.App.AutostartStatus();
@@ -726,6 +727,20 @@ if (localeSelect) {
     authStatus.textContent = loggedIn ? '@' + myUsername : i18n.t('notLoggedIn');
     if (loggedIn) authInfo.textContent = i18n.t('loggedInAs', { name: myUsername });
     else authInfo.textContent = i18n.t('notLoggedIn');
+  });
+}
+
+// Apply / persist the "show timestamps" preference. CSS hides .ts when
+// body has .no-ts so we don't need to re-render anything.
+function applyShowTimestamps(show) {
+  document.body.classList.toggle('no-ts', !show);
+}
+const showTimestampsCheckbox = document.getElementById('showTimestampsCheckbox');
+if (showTimestampsCheckbox) {
+  showTimestampsCheckbox.addEventListener('change', () => {
+    const show = showTimestampsCheckbox.checked;
+    applyShowTimestamps(show);
+    try { window.go.main.App.SetShowTimestamps(show); } catch (e) {}
   });
 }
 
@@ -1014,6 +1029,7 @@ function applyState(data) {
   if (!data) return;
   if (data.locale) i18n.setLocale(data.locale);
   if (data.notifSound) soundOnMention = data.notifSound;
+  applyShowTimestamps(data.showTimestamps !== false);
   if (Array.isArray(data.highlights)) highlights = data.highlights.map(h => h.toLowerCase());
   if (Array.isArray(data.channels)) {
     for (const ch of data.channels) {

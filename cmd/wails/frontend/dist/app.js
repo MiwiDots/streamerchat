@@ -469,6 +469,7 @@ function setupEvents() {
     ytEnabled = !!data.youtube;
     if (ytEnabled) ytPillEl.classList.remove('hidden');
     if (data.username) setLoggedInUI(true, data.username);
+    applyShowTimestamps(data.showTimestamps !== false);
     // Backend loads global badges async. Try a few times so we catch it
     // whether ready fires before or after the badge load finishes.
     preloadRoleBadges();
@@ -615,6 +616,9 @@ async function openSettings() {
   try {
     settingsVersion.textContent = 'v' + (await window.go.main.App.GetVersion());
   } catch (e) {}
+  if (showTimestampsCheckbox) {
+    showTimestampsCheckbox.checked = !document.body.classList.contains('no-ts');
+  }
   // YouTube config: show whatever's saved so the user can see/edit it.
   try {
     const yt = await window.go.main.App.GetYouTubeConfig();
@@ -679,6 +683,19 @@ if (checkUpdateBtn) {
 if (applyUpdateBtn) {
   applyUpdateBtn.addEventListener('click', () => applyUpdateFlow(updateStatusEl, applyUpdateBtn, pendingUpdateUrl));
 }
+// === Timestamps toggle ===
+function applyShowTimestamps(show) {
+  document.body.classList.toggle('no-ts', !show);
+}
+const showTimestampsCheckbox = document.getElementById('showTimestampsCheckbox');
+if (showTimestampsCheckbox) {
+  showTimestampsCheckbox.addEventListener('change', () => {
+    const show = showTimestampsCheckbox.checked;
+    applyShowTimestamps(show);
+    try { window.go.main.App.SetShowTimestamps(show); } catch (e) {}
+  });
+}
+
 // === YouTube settings ===
 const ytSaveBtn = document.getElementById('ytSaveBtn');
 const ytStatus = document.getElementById('ytStatus');

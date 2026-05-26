@@ -34,6 +34,10 @@ type HubConfig struct {
 	OnlyShowLive   bool     `json:"only_show_live"`
 	Locale         string   `json:"locale"`
 	NotifSound     string   `json:"notif_sound"`
+	// HideTimestamps stores the inverse so that the zero value (false)
+	// keeps the historic default of "timestamps visible". A simple
+	// ShowTimestamps would silently invert for users who upgrade.
+	HideTimestamps bool `json:"hide_timestamps"`
 
 	// Optional Twitch auth for sending messages
 	ClientID     string `json:"client_id"`
@@ -201,6 +205,7 @@ func (a *App) startup(ctx context.Context) {
 		"configPath":   hubConfigPath(),
 		"locale":       a.cfg.Locale,
 		"notifSound":   a.cfg.NotifSound,
+		"showTimestamps": !a.cfg.HideTimestamps,
 	})
 }
 
@@ -807,6 +812,13 @@ func (a *App) SetLocale(locale string) {
 	a.cfg.Save()
 }
 
+// SetShowTimestamps toggles the always-visible per-message timestamp column.
+// Stored inverted (HideTimestamps) so the historic default stays "visible".
+func (a *App) SetShowTimestamps(show bool) {
+	a.cfg.HideTimestamps = !show
+	a.cfg.Save()
+}
+
 // SetNotifSound persists the selected mention/live-go notification tone.
 // Accepts "none", "bell", or "ping"; anything else falls back to "none".
 func (a *App) SetNotifSound(s string) {
@@ -904,6 +916,7 @@ func (a *App) GetInitialState() map[string]interface{} {
 		"liveStatus":   liveMap,
 		"locale":       a.cfg.Locale,
 		"notifSound":   a.cfg.NotifSound,
+		"showTimestamps": !a.cfg.HideTimestamps,
 	}
 }
 

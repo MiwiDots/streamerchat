@@ -185,9 +185,10 @@ func (a *App) bootSequence() {
 	}
 
 	runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
-		"channel":  a.cfg.Twitch.Channel,
-		"username": a.cfg.Twitch.Username,
-		"youtube":  a.cfg.YouTube.ChannelHandle != "" || a.cfg.YouTube.VideoID != "",
+		"channel":        a.cfg.Twitch.Channel,
+		"username":       a.cfg.Twitch.Username,
+		"youtube":        a.cfg.YouTube.ChannelHandle != "" || a.cfg.YouTube.VideoID != "",
+		"showTimestamps": a.cfg.UI.ShowTimestamps,
 	})
 }
 
@@ -580,6 +581,12 @@ func (a *App) ApplyUpdate(url string) string {
 }
 
 func (a *App) GetVersion() string { return version.Version }
+
+// SetShowTimestamps toggles the always-visible per-message timestamp column.
+func (a *App) SetShowTimestamps(show bool) {
+	a.cfg.UI.ShowTimestamps = show
+	a.cfg.Save()
+}
 
 // === YouTube settings ===
 

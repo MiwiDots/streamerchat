@@ -1,3 +1,15 @@
+2026-05-26 14:35 - v0.2.11: optional timestamps toggle in both apps
+  - Both apps: Settings now has a "Show timestamps" checkbox. CSS-only
+    hide via body.no-ts (no re-rendering needed).
+  - cmd/chathub/app.go: HubConfig.HideTimestamps (stored inverted so the
+    zero value keeps the historic visible default for upgrading users)
+    + SetShowTimestamps bound method. GetInitialState + ready expose
+    showTimestamps.
+  - cmd/wails/app.go: UIConfig.ShowTimestamps already existed; added the
+    bound SetShowTimestamps method and propagated showTimestamps in the
+    ready event.
+  - i18n entries for DE/EN in chathub.
+
 2026-05-26 14:25 - v0.2.10: bake in the Twitch Client ID
   - User report from a fresh installation: clicking Login showed
     "Login error: no client_id configured". Cause: defaultClientID was a

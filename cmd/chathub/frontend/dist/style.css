@@ -184,6 +184,7 @@ html, body {
 
 .system { color: #888; font-style: italic; }
 .msg.join-part { color: #555; font-style: italic; font-size: 12px; padding: 1px 0; }
+body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
 
 .mention-popup {
   position: fixed;
