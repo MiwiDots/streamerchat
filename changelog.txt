@@ -1,3 +1,18 @@
+2026-05-26 13:35 - v0.2.6: StreamerChat settings modal (gear icon in titlebar)
+  - cmd/wails/autostart_windows.go + autostart_other.go: copied from chathub
+    (registry key name "StreamerChat" instead of "ChatHub").
+  - cmd/wails/app.go: new AutostartStatus / SetAutostart bound methods
+    matching chathub's signatures.
+  - index.html: replaced the static version label with a gear button in the
+    titlebar; new Settings modal showing the version, a "Check for updates"
+    button + Install row, and a Windows autostart checkbox (auto-hidden on
+    other platforms).
+  - app.js: settings open/close, manual update-check that reuses the same
+    download URL state as the boot banner, autostart toggle persists
+    immediately via SetAutostart.
+  - style.css: settings-section / settings-row / checkbox-row styling +
+    btn-primary variant.
+
 2026-05-26 13:25 - v0.2.5: StreamerChat frameless + auto-update banner; ChatHub debug line removed
   - cmd/wails/main.go: Frameless: true.
   - cmd/wails/frontend/dist/index.html: new .titlebar element with the

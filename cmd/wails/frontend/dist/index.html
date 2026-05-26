@@ -15,7 +15,7 @@
       <span class="pill pill-yt hidden" id="ytPill">YT:●</span>
     </span>
     <span class="titlebar-spacer"></span>
-    <span class="titlebar-version" id="versionLabel"></span>
+    <button class="win-btn" id="settingsBtn" title="Settings">&#9881;</button>
     <div class="window-controls">
       <button class="win-btn" id="winMinBtn" title="Minimize">&minus;</button>
       <button class="win-btn" id="winMaxBtn" title="Maximize">&#9633;</button>
@@ -60,6 +60,41 @@
       <button class="btn" data-action="timeout_86400">24h</button>
       <button class="btn" data-action="delete">Delete</button>
       <button class="btn" data-action="unban">Unban</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div class="modal-bg hidden" id="settingsModalBg">
+  <div class="modal">
+    <div class="modal-header">
+      <span>Settings</span>
+      <span class="modal-close" id="settingsClose">✕</span>
+    </div>
+    <div class="settings-section">
+      <label>Version</label>
+      <div class="settings-row">
+        <span id="settingsVersion">…</span>
+      </div>
+    </div>
+    <div class="settings-section">
+      <label>Updates</label>
+      <div class="settings-row">
+        <button class="btn" id="checkUpdateBtn">Check for updates</button>
+        <span id="updateStatus" class="settings-status"></span>
+      </div>
+      <div class="settings-row hidden" id="updateApplyRow">
+        <button class="btn btn-primary" id="applyUpdateBtn">Install update</button>
+      </div>
+    </div>
+    <div class="settings-section hidden" id="autostartSection">
+      <label class="checkbox-row">
+        <input type="checkbox" id="autostartCheckbox">
+        <span>Start StreamerChat automatically with Windows</span>
+      </label>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-primary" id="settingsDone">Done</button>
     </div>
   </div>
 </div>

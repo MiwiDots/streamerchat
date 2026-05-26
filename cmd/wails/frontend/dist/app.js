@@ -548,12 +548,9 @@ bindWindowBtn('winMinBtn', () => window.runtime.WindowMinimise());
 bindWindowBtn('winMaxBtn', () => window.runtime.WindowToggleMaximise());
 bindWindowBtn('winCloseBtn', () => window.runtime.Quit());
 
-// === Auto-update check ===
-// No settings UI in streamerchat. Strategy: silent background check on boot,
-// show a dismissible banner at the top of the window when a newer release
-// exists. Install button downloads + swaps + relaunches in one click.
+// === Boot-time silent update check (auto-banner if newer release exists) ===
+let pendingUpdateUrl = '';
 async function initUpdateBanner() {
-  const versionLabelEl = document.getElementById('versionLabel');
   const banner = document.getElementById('updateBanner');
   const text = document.getElementById('updateText');
   const installBtn = document.getElementById('updateInstallBtn');
@@ -561,15 +558,9 @@ async function initUpdateBanner() {
   if (!banner) return;
 
   try {
-    const v = await window.go.main.App.GetVersion();
-    if (versionLabelEl) versionLabelEl.textContent = 'v' + v;
-  } catch (e) {}
-
-  let downloadUrl = '';
-  try {
     const res = await window.go.main.App.CheckUpdate();
     if (res && res.available) {
-      downloadUrl = res.downloadUrl || '';
+      pendingUpdateUrl = res.downloadUrl || '';
       text.textContent = 'Update available: ' + (res.latest || '?') +
         (res.current ? ' (you have v' + res.current + ')' : '');
       banner.classList.remove('hidden');
@@ -577,28 +568,116 @@ async function initUpdateBanner() {
   } catch (e) {}
 
   if (installBtn) {
-    installBtn.addEventListener('click', async () => {
-      if (!downloadUrl) {
-        text.textContent = 'No installable asset for this platform — see GitHub releases.';
-        return;
-      }
-      installBtn.disabled = true;
-      text.textContent = 'Downloading…';
-      try {
-        const err = await window.go.main.App.ApplyUpdate(downloadUrl);
-        if (err) {
-          text.textContent = 'Update failed: ' + err;
-          installBtn.disabled = false;
-        }
-        // success: backend relaunches, this window dies.
-      } catch (e) {
-        text.textContent = 'Update failed: ' + String(e);
-        installBtn.disabled = false;
-      }
-    });
+    installBtn.addEventListener('click', () => applyUpdateFlow(text, installBtn, pendingUpdateUrl));
   }
   if (dismissBtn) {
     dismissBtn.addEventListener('click', () => banner.classList.add('hidden'));
   }
 }
 initUpdateBanner();
+
+async function applyUpdateFlow(statusEl, btn, url) {
+  if (!url) {
+    statusEl.textContent = 'No installable asset for this platform — see GitHub releases.';
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = 'Downloading…';
+  try {
+    const err = await window.go.main.App.ApplyUpdate(url);
+    if (err) {
+      statusEl.textContent = 'Update failed: ' + err;
+      btn.disabled = false;
+    }
+    // success: backend relaunches, this window dies.
+  } catch (e) {
+    statusEl.textContent = 'Update failed: ' + String(e);
+    btn.disabled = false;
+  }
+}
+
+// === Settings modal (gear icon in titlebar) ===
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsModalBg = document.getElementById('settingsModalBg');
+const settingsClose = document.getElementById('settingsClose');
+const settingsDone = document.getElementById('settingsDone');
+const settingsVersion = document.getElementById('settingsVersion');
+const checkUpdateBtn = document.getElementById('checkUpdateBtn');
+const updateStatusEl = document.getElementById('updateStatus');
+const updateApplyRow = document.getElementById('updateApplyRow');
+const applyUpdateBtn = document.getElementById('applyUpdateBtn');
+const autostartSection = document.getElementById('autostartSection');
+const autostartCheckbox = document.getElementById('autostartCheckbox');
+
+async function openSettings() {
+  settingsModalBg.classList.remove('hidden');
+  try {
+    settingsVersion.textContent = 'v' + (await window.go.main.App.GetVersion());
+  } catch (e) {}
+  // Hide previous run's "available" hint until user re-checks.
+  updateApplyRow.classList.add('hidden');
+  updateStatusEl.textContent = '';
+  // Show autostart row only on Windows.
+  try {
+    const a = await window.go.main.App.AutostartStatus();
+    if (a && a.supported) {
+      autostartSection.classList.remove('hidden');
+      autostartCheckbox.checked = !!a.enabled;
+    } else {
+      autostartSection.classList.add('hidden');
+    }
+  } catch (e) {
+    autostartSection.classList.add('hidden');
+  }
+}
+function closeSettings() { settingsModalBg.classList.add('hidden'); }
+if (settingsBtn) settingsBtn.addEventListener('click', openSettings);
+if (settingsClose) settingsClose.addEventListener('click', closeSettings);
+if (settingsDone) settingsDone.addEventListener('click', closeSettings);
+settingsModalBg.addEventListener('click', (e) => { if (e.target === settingsModalBg) closeSettings(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !settingsModalBg.classList.contains('hidden')) closeSettings();
+});
+
+if (checkUpdateBtn) {
+  checkUpdateBtn.addEventListener('click', async () => {
+    updateStatusEl.textContent = 'Checking…';
+    updateApplyRow.classList.add('hidden');
+    pendingUpdateUrl = '';
+    try {
+      const res = await window.go.main.App.CheckUpdate();
+      if (res.error) { updateStatusEl.textContent = 'Failed: ' + res.error; return; }
+      if (!res.available) {
+        updateStatusEl.textContent = 'Up to date (v' + (res.current || '?') + ')';
+        return;
+      }
+      updateStatusEl.textContent = 'Update available: ' + (res.latest || '?');
+      if (res.downloadUrl) {
+        pendingUpdateUrl = res.downloadUrl;
+        updateApplyRow.classList.remove('hidden');
+      } else {
+        updateStatusEl.textContent += ' — no Windows asset, see GitHub';
+      }
+    } catch (e) {
+      updateStatusEl.textContent = 'Failed: ' + String(e);
+    }
+  });
+}
+if (applyUpdateBtn) {
+  applyUpdateBtn.addEventListener('click', () => applyUpdateFlow(updateStatusEl, applyUpdateBtn, pendingUpdateUrl));
+}
+if (autostartCheckbox) {
+  autostartCheckbox.addEventListener('change', async () => {
+    const want = autostartCheckbox.checked;
+    try {
+      const err = await window.go.main.App.SetAutostart(want);
+      if (err) {
+        alert('Autostart: ' + err);
+        autostartCheckbox.checked = !want;
+      }
+    } catch (e) {
+      alert('Autostart failed: ' + e);
+      autostartCheckbox.checked = !want;
+    }
+  });
+}

@@ -67,6 +67,39 @@ html, body {
 .update-banner .update-text { flex: 1; }
 .update-banner .btn { padding: 3px 10px; font-size: 12px; }
 
+/* Settings modal */
+.settings-section {
+  padding: 10px 16px;
+  border-bottom: 1px solid #2a2a35;
+}
+.settings-section:last-of-type { border-bottom: 0; }
+.settings-section > label {
+  display: block;
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.settings-status { color: #aaa; font-size: 12px; }
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-primary { background: #9146ff; color: #fff; }
+.btn-primary:hover { background: #a06fff; }
+.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
 .main {
   display: flex;
   flex: 1;
