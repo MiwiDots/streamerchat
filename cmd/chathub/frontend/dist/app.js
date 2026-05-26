@@ -1168,6 +1168,23 @@ function setupEvents() {
 // applyState() will overwrite with the persisted locale once GetInitialState resolves.
 i18n.applyI18n();
 
+// === Cursor-stuck workaround for mouse-sharing software ===
+// Synergy / Barrier / Mouse Without Borders / Logitech Flow inject
+// synthetic mouse events that don't carry a proper mouseleave on transition.
+// WebView2 then never clears the "navigating" cursor state and the
+// loading-spinner cursor pulses over the window indefinitely.
+// Forcing a brief inline cursor override on the body whenever focus or
+// pointer re-enters the window kicks the renderer out of that state.
+function bumpCursorState() {
+  document.body.style.cursor = 'default';
+  // Schedule a clear so site-defined cursors (pointer on buttons etc.)
+  // still work normally.
+  requestAnimationFrame(() => { document.body.style.cursor = ''; });
+}
+window.addEventListener('focus', bumpCursorState);
+document.addEventListener('mouseenter', bumpCursorState);
+document.addEventListener('pointerenter', bumpCursorState);
+
 // === Frameless window controls (Windows; harmless on macOS) ===
 function bindWindowBtn(id, fn) {
   const elBtn = document.getElementById(id);

@@ -538,6 +538,20 @@ setupEvents();
 updateInputLabel();
 inputEl.focus();
 
+// === Cursor-stuck workaround for mouse-sharing software ===
+// Synergy / Barrier / Mouse Without Borders / Logitech Flow inject synthetic
+// mouse events that don't carry a proper mouseleave on transition; WebView2
+// then never clears its "navigating" cursor state and shows the loading
+// spinner over the window indefinitely. A brief inline cursor override on
+// focus / re-enter kicks the renderer out of that state.
+function bumpCursorState() {
+  document.body.style.cursor = 'default';
+  requestAnimationFrame(() => { document.body.style.cursor = ''; });
+}
+window.addEventListener('focus', bumpCursorState);
+document.addEventListener('mouseenter', bumpCursorState);
+document.addEventListener('pointerenter', bumpCursorState);
+
 // === Frameless window controls ===
 function bindWindowBtn(id, fn) {
   const elBtn = document.getElementById(id);

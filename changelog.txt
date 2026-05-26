@@ -1,3 +1,15 @@
+2026-05-26 15:50 - v0.2.18: actual busy-cursor cause — mouse-sharing software
+  - User figured out: with a normal mouse on the host PC, no spinner.
+    With Synergy / Barrier / Mouse Without Borders / Logitech Flow
+    (sharing the mouse across two PCs), every time the cursor crosses
+    back into the app window the loading-spinner gets stuck.
+  - Synthetic mouse events from those tools don't carry a clean
+    mouseleave; WebView2 stays in a stale "navigating" cursor state
+    until it gets a proper enter event. We now force a tiny cursor
+    bump on window focus + document mouseenter + pointerenter to kick
+    the renderer out of that state.
+  - The v0.2.17 RendererCodeIntegrity flag is kept (cheap, no downside).
+
 2026-05-26 15:40 - v0.2.17: disable WebView2 renderer code integrity (busy-cursor fix)
   - Cause traced after CPU/RAM idle showed 0% but cursor still spun, and
     user confirmed it persists with zero channels. The Wails docs flag a
