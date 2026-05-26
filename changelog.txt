@@ -1,3 +1,18 @@
+2026-05-27 00:25 - v0.2.22: ChatHub — Chatterino-style stream meta banner
+  - Inspired by Chatterino's "Channel-Title (live) - <uptime> - <viewers> -
+    <title>" header. We now show the same row under the tab bar in
+    ChatHub for whichever channel is currently active, but only when it's
+    actually live on Twitch.
+  - internal/twitch: not touched — fetchStreamInfo is in chathub's app.go
+    because that's where the existing checkLive lived. Now returns the
+    full Helix /streams payload (title, game_name, viewer_count,
+    started_at, language, thumbnail) instead of just a bool. checkLive
+    became a thin wrapper that asks the same call for just the live bit.
+  - new bound method GetStreamInfo(channel) for the frontend.
+  - frontend/dist: new .stream-meta row with channel + game + uptime
+    (computed client-side from started_at, ticks live), viewer count,
+    title. Refreshes on tab-switch and every 60s.
+
 2026-05-26 16:25 - v0.2.21: StreamerChat — per-message chat sound (WAV support)
   - internal/config: new UIConfig fields ChatSoundEnabled / ChatSoundFile /
     ChatSoundVolume (0-100).

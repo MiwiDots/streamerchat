@@ -94,6 +94,28 @@ html, body {
 .win-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
 .win-btn.win-close:hover { background: #c42b1c; color: #fff; }
 
+/* Stream meta banner under the tab bar, shown only for the active channel
+   when it is currently live on Twitch. */
+.stream-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #1a1a24;
+  border-bottom: 1px solid #2a2a35;
+  color: #aaa;
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.sm-live { color: #ff4444; }
+.sm-channel { color: #9146ff; font-weight: bold; }
+.sm-sep { color: #555; }
+.sm-uptime { color: #4ade80; }
+.sm-viewers { color: #fbbf24; }
+.sm-viewers::before { content: '👁 '; }
+.sm-title { color: #ddd; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+
 /* Transient status messages (errors, "watching #x") shown as a small
    floating toast at the bottom of the chat area instead of a permanent bar. */
 .status-overlay {

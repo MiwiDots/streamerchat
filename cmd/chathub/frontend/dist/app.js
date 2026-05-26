@@ -245,6 +245,60 @@ function switchToChannel(channel) {
   statusText.textContent = i18n.t('watching', { channel });
   msgInput.placeholder = loggedIn ? i18n.t('sendTo', { channel }) : i18n.t('loginRequired');
   state.chatViewEl.scrollTop = state.chatViewEl.scrollHeight;
+  refreshStreamMeta();
+}
+
+// === Stream meta banner ===
+// Fetched from Helix via the backend; shown only when the active channel
+// is currently live. Refreshes on tab-switch and once per minute while the
+// same tab stays active.
+const streamMetaEl = document.getElementById('streamMeta');
+const smChannelEl = document.getElementById('smChannel');
+const smUptimeEl = document.getElementById('smUptime');
+const smViewersEl = document.getElementById('smViewers');
+const smTitleEl = document.getElementById('smTitle');
+let streamMetaTimer = null;
+
+function formatUptime(startedAt) {
+  if (!startedAt) return '';
+  const ms = Date.now() - new Date(startedAt).getTime();
+  if (ms < 0 || !isFinite(ms)) return '';
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function applyStreamMeta(channel, info) {
+  if (!info || !info.live) {
+    streamMetaEl.classList.add('hidden');
+    return;
+  }
+  streamMetaEl.classList.remove('hidden');
+  smChannelEl.textContent = '#' + channel + (info.gameName ? ' · ' + info.gameName : '');
+  smUptimeEl.textContent = formatUptime(info.startedAt);
+  smViewersEl.textContent = (info.viewerCount || 0).toLocaleString();
+  smTitleEl.textContent = info.title || '';
+}
+
+async function refreshStreamMeta() {
+  if (streamMetaTimer) { clearInterval(streamMetaTimer); streamMetaTimer = null; }
+  const ch = activeChannel;
+  if (!ch) { streamMetaEl.classList.add('hidden'); return; }
+  try {
+    const info = await window.go.main.App.GetStreamInfo(ch);
+    if (activeChannel === ch) applyStreamMeta(ch, info);
+  } catch (e) { streamMetaEl.classList.add('hidden'); }
+  // Tick uptime locally every 30s without re-hitting Helix; full refresh
+  // every 60s in case the title/game/viewer count changes.
+  streamMetaTimer = setInterval(async () => {
+    if (activeChannel !== ch) return;
+    try {
+      const info = await window.go.main.App.GetStreamInfo(ch);
+      if (activeChannel === ch) applyStreamMeta(ch, info);
+    } catch (e) {}
+  }, 60000);
 }
 
 function markUnread(channel, isMention) {

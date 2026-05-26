@@ -381,14 +381,23 @@ func (a *App) liveStatusLoop() {
 
 // checkLive uses official Helix /streams endpoint. Requires user access token.
 func (a *App) checkLive(channel string) bool {
+	info := a.fetchStreamInfo(channel)
+	return info != nil && info["live"] == true
+}
+
+// fetchStreamInfo returns nil on error / not-logged-in, otherwise a map with
+// the full Helix /streams response fields the frontend needs to render a
+// "channel is live: <title> · <game> · <viewers> · <uptime>" banner.
+// {live, title, gameName, viewerCount, startedAt, thumbnailUrl} — empty
+// values (e.g. live=false) when the channel is offline.
+func (a *App) fetchStreamInfo(channel string) map[string]interface{} {
 	if a.cfg.AccessToken == "" || a.cfg.ClientID == "" {
-		log.Printf("[LIVE] %s: skipped (not logged in)", channel)
-		return false
+		return map[string]interface{}{"live": false}
 	}
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.twitch.tv/helix/streams?user_login=%s", channel), nil)
 	if err != nil {
 		log.Printf("[LIVE] %s: request build error: %v", channel, err)
-		return false
+		return nil
 	}
 	req.Header.Set("Client-Id", a.cfg.ClientID)
 	req.Header.Set("Authorization", "Bearer "+a.cfg.AccessToken)
@@ -396,27 +405,57 @@ func (a *App) checkLive(channel string) bool {
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Printf("[LIVE] %s: http error: %v", channel, err)
-		return false
+		return nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		log.Printf("[LIVE] %s: status=%d", channel, resp.StatusCode)
-		return false
+		return nil
 	}
 	var data struct {
 		Data []struct {
-			ID       string `json:"id"`
-			Type     string `json:"type"`
-			UserName string `json:"user_name"`
+			ID           string `json:"id"`
+			UserName     string `json:"user_name"`
+			GameName     string `json:"game_name"`
+			Title        string `json:"title"`
+			ViewerCount  int    `json:"viewer_count"`
+			StartedAt    string `json:"started_at"`
+			ThumbnailURL string `json:"thumbnail_url"`
+			Language     string `json:"language"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		log.Printf("[LIVE] %s: decode error: %v", channel, err)
-		return false
+		return nil
 	}
-	live := len(data.Data) > 0
-	log.Printf("[LIVE] %s: live=%v", channel, live)
-	return live
+	if len(data.Data) == 0 {
+		log.Printf("[LIVE] %s: live=false", channel)
+		return map[string]interface{}{"live": false}
+	}
+	s := data.Data[0]
+	log.Printf("[LIVE] %s: live=true viewers=%d game=%q", channel, s.ViewerCount, s.GameName)
+	return map[string]interface{}{
+		"live":         true,
+		"title":        s.Title,
+		"gameName":     s.GameName,
+		"viewerCount":  s.ViewerCount,
+		"startedAt":    s.StartedAt,
+		"thumbnailUrl": s.ThumbnailURL,
+		"language":     s.Language,
+	}
+}
+
+// GetStreamInfo is a frontend-bound version of fetchStreamInfo so the UI
+// can refresh the active channel's meta bar on tab-switch and periodically.
+func (a *App) GetStreamInfo(channel string) map[string]interface{} {
+	if channel == "" {
+		return map[string]interface{}{"live": false}
+	}
+	info := a.fetchStreamInfo(strings.ToLower(strings.TrimPrefix(channel, "#")))
+	if info == nil {
+		return map[string]interface{}{"live": false, "error": "fetch failed"}
+	}
+	return info
 }
 
 func (a *App) shutdown(_ context.Context) {
