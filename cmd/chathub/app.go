@@ -96,9 +96,10 @@ type App struct {
 	mu     sync.Mutex
 	irc    *twitch.MultiIRCClient
 	send   *twitch.IRCClient
-	emotes *twitch.ThirdPartyEmotes
-	badges *twitch.BadgeRegistry
-	history *HistoryWriter
+	emotes      *twitch.ThirdPartyEmotes
+	badges      *twitch.BadgeRegistry
+	botDetector *twitch.BotDetector
+	history     *HistoryWriter
 
 	channelEmotesLoaded map[string]bool
 	channelIDCache      map[string]string
@@ -143,6 +144,11 @@ func (a *App) startup(ctx context.Context) {
 
 	a.badges = twitch.NewBadgeRegistry()
 	go a.loadGlobalBadges()
+
+	// Load the TwitchInsights known-bot list once at boot. The constructor
+	// does the HTTP call itself; if it fails we just get an empty detector
+	// and nothing gets flagged as a bot.
+	a.botDetector = twitch.NewBotDetector()
 
 	a.history = NewHistoryWriter()
 	log.Printf("[HISTORY] log dir: %s", a.history.HistoryDir())
@@ -490,14 +496,27 @@ func (a *App) GetChannelChatters(channel string) map[string]interface{} {
 		log.Printf("[CHATTERS] %s: decode error: %v", channel, err)
 		return out
 	}
+	users := make([]map[string]interface{}, 0, len(data.Data))
 	logins := make([]string, 0, len(data.Data))
 	for _, c := range data.Data {
-		if c.UserLogin != "" {
-			logins = append(logins, c.UserLogin)
+		if c.UserLogin == "" {
+			continue
 		}
+		isBot := false
+		if a.botDetector != nil {
+			isBot = a.botDetector.IsBot(c.UserLogin)
+		}
+		users = append(users, map[string]interface{}{
+			"login": c.UserLogin,
+			"isBot": isBot,
+		})
+		logins = append(logins, c.UserLogin)
 	}
 	log.Printf("[CHATTERS] %s: helix returned %d (total=%d)", channel, len(logins), data.Total)
+	// `users` is the new richer shape; `logins` kept for backwards
+	// compatibility with the v0.2.24 frontend during rolling updates.
 	out["users"] = logins
+	out["chatters"] = users
 	out["total"] = data.Total
 	out["source"] = "helix"
 	return out

@@ -120,16 +120,17 @@ html, body {
 .sm-viewers::before { content: '👁 '; }
 .sm-title { color: #ddd; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .sm-chatters {
-  background: rgba(145,70,255,0.15);
-  border: 1px solid rgba(145,70,255,0.4);
-  color: #c0a3ff;
+  background: #9146ff;
+  border: 0;
+  color: #fff;
   cursor: pointer;
   font-size: 14px;
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: 3px;
   flex-shrink: 0;
+  font-weight: bold;
 }
-.sm-chatters:hover { background: rgba(145,70,255,0.35); color: #fff; }
+.sm-chatters:hover { background: #a06fff; }
 
 .chatter-list {
   width: 320px;
@@ -160,6 +161,7 @@ html, body {
 .cl-section-vip .cl-section-title { color: #e005b9; }
 .cl-section-sub .cl-section-title { color: #00bfff; }
 .cl-section-chat .cl-section-title { color: #888; }
+.cl-section-bot .cl-section-title { color: #ff8800; }
 .cl-name {
   padding: 2px 4px;
   cursor: pointer;

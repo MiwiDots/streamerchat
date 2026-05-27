@@ -1,3 +1,15 @@
+2026-05-27 13:05 - v0.2.25: ChatHub — separate Bots category, brighter icon
+  - GetChannelChatters now also returns an isBot flag per user, sourced
+    from the existing twitch.BotDetector (TwitchInsights community list
+    loaded once at boot). Twitch's own API has no "bot" concept, so this
+    is a curated external list rather than a heuristic; empty list on
+    fetch failure means no false positives.
+  - Frontend chatter list has a new "Bots" bucket. A bot that's also a
+    mod (channels often promote their own bots) goes into the Bots bucket
+    rather than Moderators — more useful for at-a-glance scanning.
+  - Stream-meta 👥 button restyled with the brand purple background +
+    white text so it pops instead of blending into the bar.
+
 2026-05-27 12:55 - v0.2.24: ChatHub chatter list — Helix lurkers + always-visible icon
   - User feedback: previous version only showed people who had chatted in
     this session (lurkers missing), and the button was hidden when the

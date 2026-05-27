@@ -922,17 +922,21 @@ async function openChatterList() {
   renderChatterList('', { loading: true });
   // Fire Helix call in the background; render again when it returns. If we
   // already have a cached list show it immediately, then refresh on top.
-  let helixUsers = helixChattersCache.get(ch) || null;
-  if (helixUsers) renderChatterList('', { helixUsers });
+  // helixChatters is the richer [{login, isBot}, …] shape from v0.2.25+.
+  let helixChatters = helixChattersCache.get(ch) || null;
+  if (helixChatters) renderChatterList('', { helixChatters });
   try {
     const res = await window.go.main.App.GetChannelChatters(ch);
-    if (res && Array.isArray(res.users)) {
-      helixUsers = res.users;
-      helixChattersCache.set(ch, helixUsers);
+    if (res && Array.isArray(res.chatters)) {
+      helixChatters = res.chatters;
+    } else if (res && Array.isArray(res.users)) {
+      // Compatibility with the older flat array shape.
+      helixChatters = res.users.map(login => ({ login, isBot: false }));
     }
+    if (helixChatters) helixChattersCache.set(ch, helixChatters);
   } catch (e) {}
   if (activeChannel === ch && !chatterListBg.classList.contains('hidden')) {
-    renderChatterList('', { helixUsers });
+    renderChatterList('', { helixChatters });
   }
 }
 
@@ -954,31 +958,35 @@ function renderChatterList(filterText, opts) {
   const body = el('div', { class: 'cl-body' });
   chatterListModal.appendChild(body);
 
-  if (opts.loading && !opts.helixUsers) {
+  if (opts.loading && !opts.helixChatters) {
     body.appendChild(el('div', { class: 'cl-empty' }, 'Loading…'));
     return;
   }
 
-  // Combine sources: Helix gives us EVERY current viewer (lurkers included),
-  // but no roles. Local userMessages gives us roles for users we've seen
-  // chat in this session. Merge by username, prefer local role data.
-  const merged = new Map(); // login -> { name, displayName, color, isMod, isVIP, isBroadcaster, isSub, userId, fromHelix }
-  if (Array.isArray(opts.helixUsers)) {
-    for (const login of opts.helixUsers) {
+  // Combine sources: Helix gives us EVERY current viewer (lurkers + bots),
+  // with a flag for known bots. Local userMessages gives us roles for users
+  // we've seen chat in this session. Merge by username, prefer local role
+  // data (and never demote a Helix-flagged bot if our local data is silent
+  // about it).
+  const merged = new Map(); // login -> { name, displayName, color, isMod, isVIP, isBroadcaster, isSub, isBot, userId }
+  if (Array.isArray(opts.helixChatters)) {
+    for (const c of opts.helixChatters) {
+      const login = (c.login || '').toString();
+      if (!login) continue;
       merged.set(login.toLowerCase(), {
         name: login,
         displayName: login,
         color: '',
         isMod: false, isVIP: false, isBroadcaster: false, isSub: false,
+        isBot: !!c.isBot,
         userId: '',
-        fromHelix: true,
       });
     }
   }
   if (state) {
     for (const [name, u] of state.userMessages.entries()) {
       const key = name.toLowerCase();
-      const existing = merged.get(key) || { name, displayName: u.displayName || name, color: u.color || '', isMod: false, isVIP: false, isBroadcaster: false, isSub: false, userId: u.userId || '', fromHelix: false };
+      const existing = merged.get(key) || { name, displayName: u.displayName || name, color: u.color || '', isMod: false, isVIP: false, isBroadcaster: false, isSub: false, isBot: false, userId: u.userId || '' };
       existing.displayName = u.displayName || existing.displayName;
       existing.color = u.color || existing.color;
       if (u.isMod) existing.isMod = true;
@@ -986,6 +994,7 @@ function renderChatterList(filterText, opts) {
       if (u.isBroadcaster) existing.isBroadcaster = true;
       if (u.isSub) existing.isSub = true;
       existing.userId = u.userId || existing.userId;
+      // Don't clear the bot flag if Helix already set it.
       merged.set(key, existing);
     }
   }
@@ -996,11 +1005,15 @@ function renderChatterList(filterText, opts) {
     return;
   }
 
-  const buckets = { broadcaster: [], mod: [], vip: [], sub: [], other: [] };
+  // Bots go to their own bucket regardless of any other role. A bot that
+  // also happens to be a mod (channels do this with their own bots) is
+  // more usefully grouped with the other bots than with the human mods.
+  const buckets = { broadcaster: [], mod: [], vip: [], sub: [], other: [], bot: [] };
   const q = (filterText || '').toLowerCase().trim();
   for (const u of merged.values()) {
     if (q && !u.name.toLowerCase().includes(q) && !(u.displayName || '').toLowerCase().includes(q)) continue;
-    if (u.isBroadcaster) buckets.broadcaster.push({ name: u.name, u });
+    if (u.isBot) buckets.bot.push({ name: u.name, u });
+    else if (u.isBroadcaster) buckets.broadcaster.push({ name: u.name, u });
     else if (u.isMod) buckets.mod.push({ name: u.name, u });
     else if (u.isVIP) buckets.vip.push({ name: u.name, u });
     else if (u.isSub) buckets.sub.push({ name: u.name, u });
@@ -1016,6 +1029,7 @@ function renderChatterList(filterText, opts) {
     ['vip',         'VIPs',        buckets.vip],
     ['sub',         'Subscribers', buckets.sub],
     ['chat',        'Chatters',    buckets.other],
+    ['bot',         'Bots',        buckets.bot],
   ];
   let anyShown = false;
   for (const [cls, title, list] of sectionDefs) {
