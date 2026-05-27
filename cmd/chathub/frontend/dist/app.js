@@ -455,16 +455,24 @@ async function renderMessage(msg) {
       state.chatters.delete(dropped);
       state.userMessages.delete(dropped);
     }
-    // Keep a small ring of recent messages for the usercard.
+    // Keep a small ring of recent messages + role flags for the usercard
+    // and the chatter-list popup.
     if (msg.type === 'chat' && msg.text) {
       let u = state.userMessages.get(name);
       if (!u) {
-        u = { userId: msg.userId || '', displayName: msg.displayName || name, color: msg.color || '', messages: [] };
+        u = { userId: msg.userId || '', displayName: msg.displayName || name, color: msg.color || '', messages: [], isMod: false, isVIP: false, isBroadcaster: false, isSub: false };
         state.userMessages.set(name, u);
       }
       u.userId = msg.userId || u.userId;
       u.displayName = msg.displayName || u.displayName;
       u.color = msg.color || u.color;
+      // Roles are sticky — once a user appears as mod/VIP/broadcaster we
+      // keep that flag even if a later message lacks the badge (some IRC
+      // tags can be missing).
+      if (msg.isMod) u.isMod = true;
+      if (msg.isVIP) u.isVIP = true;
+      if (msg.isBroadcaster) u.isBroadcaster = true;
+      if (msg.isSub) u.isSub = true;
       u.messages.push({ ts: msg.timestamp || Date.now(), text: msg.text });
       if (u.messages.length > 50) u.messages.shift();
     }
@@ -889,6 +897,95 @@ channelInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') addChannelBtn.click();
   if (e.key === 'Escape') closeAddModal();
 });
+
+// === Chatter list popup ===
+// Categorizes the locally-tracked chatters of the active channel by their
+// IRC-tag roles (broadcaster / mod / VIP / sub / other). No Helix call —
+// the data is whatever we've observed since the tab opened. Clicking a
+// name opens the existing user card.
+const chatterListBg = el('div', { class: 'modal-bg hidden', id: 'chatterListBg' });
+const chatterListModal = el('div', { class: 'modal chatter-list' });
+chatterListBg.appendChild(chatterListModal);
+chatterListBg.addEventListener('click', (e) => { if (e.target === chatterListBg) closeChatterList(); });
+document.body.appendChild(chatterListBg);
+
+function closeChatterList() { chatterListBg.classList.add('hidden'); }
+
+function openChatterList() {
+  if (!activeChannel) return;
+  renderChatterList('');
+  chatterListBg.classList.remove('hidden');
+}
+
+function renderChatterList(filterText) {
+  const state = channels.get(activeChannel);
+  chatterListModal.replaceChildren();
+  const header = el('div', { class: 'modal-header' },
+    el('span', null, 'Chatter list — ' + activeChannel),
+    el('span', { class: 'modal-close' }, '✕'));
+  header.querySelector('.modal-close').addEventListener('click', closeChatterList);
+  chatterListModal.appendChild(header);
+
+  const search = el('input', { class: 'cl-search', type: 'text', placeholder: 'Search…' });
+  search.value = filterText || '';
+  search.addEventListener('input', () => renderChatterList(search.value));
+  chatterListModal.appendChild(search);
+
+  const body = el('div', { class: 'cl-body' });
+  chatterListModal.appendChild(body);
+
+  if (!state || state.userMessages.size === 0) {
+    body.appendChild(el('div', { class: 'cl-empty' }, 'No chatters seen yet. They\'ll show up here as they post.'));
+    return;
+  }
+
+  const buckets = { broadcaster: [], mod: [], vip: [], sub: [], other: [] };
+  const q = (filterText || '').toLowerCase().trim();
+  for (const [name, u] of state.userMessages.entries()) {
+    if (q && !name.toLowerCase().includes(q) && !(u.displayName || '').toLowerCase().includes(q)) continue;
+    if (u.isBroadcaster) buckets.broadcaster.push({ name, u });
+    else if (u.isMod) buckets.mod.push({ name, u });
+    else if (u.isVIP) buckets.vip.push({ name, u });
+    else if (u.isSub) buckets.sub.push({ name, u });
+    else buckets.other.push({ name, u });
+  }
+  for (const b of Object.values(buckets)) {
+    b.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  const sectionDefs = [
+    ['broadcaster', 'Broadcaster', buckets.broadcaster],
+    ['mod',         'Moderators',  buckets.mod],
+    ['vip',         'VIPs',        buckets.vip],
+    ['sub',         'Subscribers', buckets.sub],
+    ['chat',        'Chatters',    buckets.other],
+  ];
+  let anyShown = false;
+  for (const [cls, title, list] of sectionDefs) {
+    if (list.length === 0) continue;
+    anyShown = true;
+    const section = el('div', { class: 'cl-section cl-section-' + cls });
+    section.appendChild(el('div', { class: 'cl-section-title' }, `${title} (${list.length})`));
+    for (const { name, u } of list) {
+      const row = el('div', { class: 'cl-name', style: u.color ? 'color:' + u.color : '' }, u.displayName || name);
+      row.addEventListener('click', () => {
+        closeChatterList();
+        openUserCard(activeChannel, name, u.userId);
+      });
+      section.appendChild(row);
+    }
+    body.appendChild(section);
+  }
+  if (!anyShown) {
+    body.appendChild(el('div', { class: 'cl-empty' }, 'No match.'));
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !chatterListBg.classList.contains('hidden')) closeChatterList();
+});
+const chatterListBtnEl = document.getElementById('chatterListBtn');
+if (chatterListBtnEl) chatterListBtnEl.addEventListener('click', openChatterList);
 
 // === User card popup ===
 // Click on any username -> floating card with Helix-sourced metadata

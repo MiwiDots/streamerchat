@@ -1,3 +1,15 @@
+2026-05-27 12:35 - v0.2.23: ChatHub — chatter list popup from the stream meta bar
+  - 👥 button on the right side of the .stream-meta row opens a Chatterino-
+    style chatter-list modal.
+  - Locally-tracked chatters (already collected for @-autocomplete) are
+    now also tagged with their IRC-derived role flags (isMod / isVIP /
+    isBroadcaster / isSub) — sticky so a missing badge on a later message
+    doesn't undo the role.
+  - Categories: Broadcaster, Moderators, VIPs, Subscribers, Chatters.
+    Click any name to open the user card. Search box on top filters live.
+  - No Helix call — the official /chat/chatters endpoint needs a mod scope
+    on the channel; using the local data works everywhere and is instant.
+
 2026-05-27 00:25 - v0.2.22: ChatHub — Chatterino-style stream meta banner
   - Inspired by Chatterino's "Channel-Title (live) - <uptime> - <viewers> -
     <title>" header. We now show the same row under the tab bar in
