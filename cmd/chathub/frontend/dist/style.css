@@ -109,6 +109,10 @@ html, body {
   white-space: nowrap;
 }
 .sm-live { color: #ff4444; }
+.stream-meta.offline .sm-live { color: #555; }
+.stream-meta.offline .sm-uptime { color: #666; }
+.stream-meta.offline .sm-viewers { color: #555; }
+.stream-meta.offline .sm-viewers::before { content: '' }
 .sm-channel { color: #9146ff; font-weight: bold; }
 .sm-sep { color: #555; }
 .sm-uptime { color: #4ade80; }
@@ -116,15 +120,16 @@ html, body {
 .sm-viewers::before { content: '👁 '; }
 .sm-title { color: #ddd; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .sm-chatters {
-  background: transparent;
-  border: 0;
-  color: #888;
+  background: rgba(145,70,255,0.15);
+  border: 1px solid rgba(145,70,255,0.4);
+  color: #c0a3ff;
   cursor: pointer;
   font-size: 14px;
-  padding: 2px 6px;
+  padding: 2px 8px;
   border-radius: 3px;
+  flex-shrink: 0;
 }
-.sm-chatters:hover { background: rgba(145,70,255,0.2); color: #fff; }
+.sm-chatters:hover { background: rgba(145,70,255,0.35); color: #fff; }
 
 .chatter-list {
   width: 320px;

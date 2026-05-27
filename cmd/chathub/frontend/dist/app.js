@@ -271,15 +271,15 @@ function formatUptime(startedAt) {
 }
 
 function applyStreamMeta(channel, info) {
-  if (!info || !info.live) {
-    streamMetaEl.classList.add('hidden');
-    return;
-  }
+  // We keep the banner visible even when offline so the 👥 chatter list
+  // button stays reachable. Only the live-specific fields hide in that case.
   streamMetaEl.classList.remove('hidden');
-  smChannelEl.textContent = '#' + channel + (info.gameName ? ' · ' + info.gameName : '');
-  smUptimeEl.textContent = formatUptime(info.startedAt);
-  smViewersEl.textContent = (info.viewerCount || 0).toLocaleString();
-  smTitleEl.textContent = info.title || '';
+  const live = !!(info && info.live);
+  streamMetaEl.classList.toggle('offline', !live);
+  smChannelEl.textContent = '#' + channel + (live && info.gameName ? ' · ' + info.gameName : '');
+  smUptimeEl.textContent = live ? formatUptime(info.startedAt) : 'offline';
+  smViewersEl.textContent = live ? (info.viewerCount || 0).toLocaleString() : '—';
+  smTitleEl.textContent = live ? (info.title || '') : '';
 }
 
 async function refreshStreamMeta() {
@@ -911,13 +911,33 @@ document.body.appendChild(chatterListBg);
 
 function closeChatterList() { chatterListBg.classList.add('hidden'); }
 
-function openChatterList() {
+// Cache of last-fetched Helix chatter logins per channel so re-opening the
+// modal feels instant. Refreshed on every open.
+const helixChattersCache = new Map();
+
+async function openChatterList() {
   if (!activeChannel) return;
-  renderChatterList('');
+  const ch = activeChannel;
   chatterListBg.classList.remove('hidden');
+  renderChatterList('', { loading: true });
+  // Fire Helix call in the background; render again when it returns. If we
+  // already have a cached list show it immediately, then refresh on top.
+  let helixUsers = helixChattersCache.get(ch) || null;
+  if (helixUsers) renderChatterList('', { helixUsers });
+  try {
+    const res = await window.go.main.App.GetChannelChatters(ch);
+    if (res && Array.isArray(res.users)) {
+      helixUsers = res.users;
+      helixChattersCache.set(ch, helixUsers);
+    }
+  } catch (e) {}
+  if (activeChannel === ch && !chatterListBg.classList.contains('hidden')) {
+    renderChatterList('', { helixUsers });
+  }
 }
 
-function renderChatterList(filterText) {
+function renderChatterList(filterText, opts) {
+  opts = opts || {};
   const state = channels.get(activeChannel);
   chatterListModal.replaceChildren();
   const header = el('div', { class: 'modal-header' },
@@ -928,26 +948,63 @@ function renderChatterList(filterText) {
 
   const search = el('input', { class: 'cl-search', type: 'text', placeholder: 'Search…' });
   search.value = filterText || '';
-  search.addEventListener('input', () => renderChatterList(search.value));
+  search.addEventListener('input', () => renderChatterList(search.value, opts));
   chatterListModal.appendChild(search);
 
   const body = el('div', { class: 'cl-body' });
   chatterListModal.appendChild(body);
 
-  if (!state || state.userMessages.size === 0) {
-    body.appendChild(el('div', { class: 'cl-empty' }, 'No chatters seen yet. They\'ll show up here as they post.'));
+  if (opts.loading && !opts.helixUsers) {
+    body.appendChild(el('div', { class: 'cl-empty' }, 'Loading…'));
+    return;
+  }
+
+  // Combine sources: Helix gives us EVERY current viewer (lurkers included),
+  // but no roles. Local userMessages gives us roles for users we've seen
+  // chat in this session. Merge by username, prefer local role data.
+  const merged = new Map(); // login -> { name, displayName, color, isMod, isVIP, isBroadcaster, isSub, userId, fromHelix }
+  if (Array.isArray(opts.helixUsers)) {
+    for (const login of opts.helixUsers) {
+      merged.set(login.toLowerCase(), {
+        name: login,
+        displayName: login,
+        color: '',
+        isMod: false, isVIP: false, isBroadcaster: false, isSub: false,
+        userId: '',
+        fromHelix: true,
+      });
+    }
+  }
+  if (state) {
+    for (const [name, u] of state.userMessages.entries()) {
+      const key = name.toLowerCase();
+      const existing = merged.get(key) || { name, displayName: u.displayName || name, color: u.color || '', isMod: false, isVIP: false, isBroadcaster: false, isSub: false, userId: u.userId || '', fromHelix: false };
+      existing.displayName = u.displayName || existing.displayName;
+      existing.color = u.color || existing.color;
+      if (u.isMod) existing.isMod = true;
+      if (u.isVIP) existing.isVIP = true;
+      if (u.isBroadcaster) existing.isBroadcaster = true;
+      if (u.isSub) existing.isSub = true;
+      existing.userId = u.userId || existing.userId;
+      merged.set(key, existing);
+    }
+  }
+
+  if (merged.size === 0) {
+    body.appendChild(el('div', { class: 'cl-empty' },
+      'No chatters yet. If you are a mod or the broadcaster of this channel, the full viewer list will appear here once Helix responds.'));
     return;
   }
 
   const buckets = { broadcaster: [], mod: [], vip: [], sub: [], other: [] };
   const q = (filterText || '').toLowerCase().trim();
-  for (const [name, u] of state.userMessages.entries()) {
-    if (q && !name.toLowerCase().includes(q) && !(u.displayName || '').toLowerCase().includes(q)) continue;
-    if (u.isBroadcaster) buckets.broadcaster.push({ name, u });
-    else if (u.isMod) buckets.mod.push({ name, u });
-    else if (u.isVIP) buckets.vip.push({ name, u });
-    else if (u.isSub) buckets.sub.push({ name, u });
-    else buckets.other.push({ name, u });
+  for (const u of merged.values()) {
+    if (q && !u.name.toLowerCase().includes(q) && !(u.displayName || '').toLowerCase().includes(q)) continue;
+    if (u.isBroadcaster) buckets.broadcaster.push({ name: u.name, u });
+    else if (u.isMod) buckets.mod.push({ name: u.name, u });
+    else if (u.isVIP) buckets.vip.push({ name: u.name, u });
+    else if (u.isSub) buckets.sub.push({ name: u.name, u });
+    else buckets.other.push({ name: u.name, u });
   }
   for (const b of Object.values(buckets)) {
     b.sort((a, b) => a.name.localeCompare(b.name));

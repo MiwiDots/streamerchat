@@ -445,6 +445,64 @@ func (a *App) fetchStreamInfo(channel string) map[string]interface{} {
 	}
 }
 
+// GetChannelChatters tries Helix /chat/chatters to fetch the full live
+// viewer list for the given channel. The endpoint requires that the
+// authenticated user is the broadcaster or a moderator of the channel
+// (moderator:read:chatters scope) — for any other channel Twitch returns
+// 401 / 403 and we just return an empty list so the frontend falls back
+// to the locally-tracked chatter list.
+func (a *App) GetChannelChatters(channel string) map[string]interface{} {
+	out := map[string]interface{}{"users": []string{}, "source": "none"}
+	if a.cfg.AccessToken == "" || a.cfg.ClientID == "" || a.cfg.UserID == "" {
+		return out
+	}
+	channel = strings.ToLower(strings.TrimPrefix(channel, "#"))
+	broadcasterID := a.resolveChannelID(channel)
+	if broadcasterID == "" {
+		return out
+	}
+	url := fmt.Sprintf("https://api.twitch.tv/helix/chat/chatters?broadcaster_id=%s&moderator_id=%s&first=1000",
+		broadcasterID, a.cfg.UserID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return out
+	}
+	req.Header.Set("Client-Id", a.cfg.ClientID)
+	req.Header.Set("Authorization", "Bearer "+a.cfg.AccessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[CHATTERS] %s: http error: %v", channel, err)
+		return out
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		// 401/403 just means we're not a mod of that channel; not an error.
+		log.Printf("[CHATTERS] %s: status=%d (not a mod of this channel?)", channel, resp.StatusCode)
+		return out
+	}
+	var data struct {
+		Data []struct {
+			UserLogin string `json:"user_login"`
+		} `json:"data"`
+		Total int `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		log.Printf("[CHATTERS] %s: decode error: %v", channel, err)
+		return out
+	}
+	logins := make([]string, 0, len(data.Data))
+	for _, c := range data.Data {
+		if c.UserLogin != "" {
+			logins = append(logins, c.UserLogin)
+		}
+	}
+	log.Printf("[CHATTERS] %s: helix returned %d (total=%d)", channel, len(logins), data.Total)
+	out["users"] = logins
+	out["total"] = data.Total
+	out["source"] = "helix"
+	return out
+}
+
 // GetStreamInfo is a frontend-bound version of fetchStreamInfo so the UI
 // can refresh the active channel's meta bar on tab-switch and periodically.
 func (a *App) GetStreamInfo(channel string) map[string]interface{} {
