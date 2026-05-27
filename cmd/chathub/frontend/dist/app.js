@@ -277,7 +277,7 @@ function applyStreamMeta(channel, info) {
   const live = !!(info && info.live);
   streamMetaEl.classList.toggle('offline', !live);
   smChannelEl.textContent = '#' + channel + (live && info.gameName ? ' · ' + info.gameName : '');
-  smUptimeEl.textContent = live ? formatUptime(info.startedAt) : 'offline';
+  smUptimeEl.textContent = live ? formatUptime(info.startedAt) : i18n.t('streamOffline');
   smViewersEl.textContent = live ? (info.viewerCount || 0).toLocaleString() : '—';
   smTitleEl.textContent = live ? (info.title || '') : '';
 }
@@ -946,12 +946,12 @@ function renderChatterList(filterText, opts) {
   const state = channels.get(activeChannel);
   chatterListModal.replaceChildren();
   const header = el('div', { class: 'modal-header' },
-    el('span', null, 'Chatter list — ' + activeChannel),
+    el('span', null, i18n.t('chatterListTitle', { channel: activeChannel })),
     el('span', { class: 'modal-close' }, '✕'));
   header.querySelector('.modal-close').addEventListener('click', closeChatterList);
   chatterListModal.appendChild(header);
 
-  const search = el('input', { class: 'cl-search', type: 'text', placeholder: 'Search…' });
+  const search = el('input', { class: 'cl-search', type: 'text', placeholder: i18n.t('chatterListSearch') });
   search.value = filterText || '';
   search.addEventListener('input', () => renderChatterList(search.value, opts));
   chatterListModal.appendChild(search);
@@ -960,8 +960,7 @@ function renderChatterList(filterText, opts) {
   // missing. Twitch's /chat/chatters endpoint only returns the full list
   // when the caller is broadcaster or moderator of the channel.
   if (opts.helixSource && opts.helixSource !== 'helix' && !opts.loading) {
-    const note = el('div', { class: 'cl-note' },
-      'Showing only users who have chatted in this tab. Twitch only exposes the full viewer list (incl. lurkers) to broadcasters and moderators of the channel.');
+    const note = el('div', { class: 'cl-note' }, i18n.t('chatterListRestricted'));
     chatterListModal.appendChild(note);
   }
 
@@ -969,7 +968,7 @@ function renderChatterList(filterText, opts) {
   chatterListModal.appendChild(body);
 
   if (opts.loading && !opts.helixChatters) {
-    body.appendChild(el('div', { class: 'cl-empty' }, 'Loading…'));
+    body.appendChild(el('div', { class: 'cl-empty' }, i18n.t('chatterListLoading')));
     return;
   }
 
@@ -1010,8 +1009,7 @@ function renderChatterList(filterText, opts) {
   }
 
   if (merged.size === 0) {
-    body.appendChild(el('div', { class: 'cl-empty' },
-      'No chatters yet. If you are a mod or the broadcaster of this channel, the full viewer list will appear here once Helix responds.'));
+    body.appendChild(el('div', { class: 'cl-empty' }, i18n.t('chatterListEmpty')));
     return;
   }
 
@@ -1034,12 +1032,12 @@ function renderChatterList(filterText, opts) {
   }
 
   const sectionDefs = [
-    ['broadcaster', 'Broadcaster', buckets.broadcaster],
-    ['mod',         'Moderators',  buckets.mod],
-    ['vip',         'VIPs',        buckets.vip],
-    ['sub',         'Subscribers', buckets.sub],
-    ['chat',        'Chatters',    buckets.other],
-    ['bot',         'Bots',        buckets.bot],
+    ['broadcaster', i18n.t('chatterListSectionBroadcaster'), buckets.broadcaster],
+    ['mod',         i18n.t('chatterListSectionMods'),        buckets.mod],
+    ['vip',         i18n.t('chatterListSectionVIPs'),        buckets.vip],
+    ['sub',         i18n.t('chatterListSectionSubs'),        buckets.sub],
+    ['chat',        i18n.t('chatterListSectionChatters'),    buckets.other],
+    ['bot',         i18n.t('chatterListSectionBots'),        buckets.bot],
   ];
   let anyShown = false;
   for (const [cls, title, list] of sectionDefs) {
@@ -1058,7 +1056,7 @@ function renderChatterList(filterText, opts) {
     body.appendChild(section);
   }
   if (!anyShown) {
-    body.appendChild(el('div', { class: 'cl-empty' }, 'No match.'));
+    body.appendChild(el('div', { class: 'cl-empty' }, i18n.t('chatterListNoMatch')));
   }
 }
 

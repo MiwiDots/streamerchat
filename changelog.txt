@@ -1,3 +1,11 @@
+2026-05-27 13:25 - v0.2.27: ChatHub — i18n for chatter-list strings + stream meta
+  - Recent additions (chatter list modal, section titles, restriction note,
+    search placeholder, offline label, button hover title) all shipped with
+    hardcoded English. Moved every string into i18n.js with DE + EN
+    counterparts and replaced the inline literals with i18n.t() calls.
+  - No behavior change; just a cleanup so the German locale doesn't drop
+    back to English in the new UI surfaces.
+
 2026-05-27 13:15 - v0.2.26: chatter list — explain why lurkers may be missing
   - User noticed lurkers still don't appear. Cause is a Twitch policy
     limit, not a bug: /chat/chatters only returns the full list to the

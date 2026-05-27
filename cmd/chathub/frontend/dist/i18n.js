@@ -56,6 +56,24 @@ const STRINGS = {
     userJoined: '{name} joined',
     userParted: '{name} left',
 
+    // Chatter list
+    chatterListTitle: 'Chatter list — #{channel}',
+    chatterListSearch: 'Search…',
+    chatterListEmpty: 'No chatters yet. They’ll show up here as they post.',
+    chatterListNoMatch: 'No match.',
+    chatterListLoading: 'Loading…',
+    chatterListRestricted: 'Showing only users who have chatted in this tab. Twitch only exposes the full viewer list (incl. lurkers) to broadcasters and moderators of the channel.',
+    chatterListSectionBroadcaster: 'Broadcaster',
+    chatterListSectionMods: 'Moderators',
+    chatterListSectionVIPs: 'VIPs',
+    chatterListSectionSubs: 'Subscribers',
+    chatterListSectionChatters: 'Chatters',
+    chatterListSectionBots: 'Bots',
+
+    // Stream meta
+    streamOffline: 'offline',
+    chatterListTitleHover: 'Chatter list',
+
     updates: 'Updates',
     versionLabel: 'Version:',
     checkForUpdates: 'Check for updates',
@@ -120,6 +138,24 @@ const STRINGS = {
     connectedChannel: 'Verbunden mit #{channel}',
     userJoined: '{name} ist beigetreten',
     userParted: '{name} ist gegangen',
+
+    // Chatter list
+    chatterListTitle: 'Chatter-Liste — #{channel}',
+    chatterListSearch: 'Suchen…',
+    chatterListEmpty: 'Noch keine Chatter. Sobald jemand schreibt taucht er hier auf.',
+    chatterListNoMatch: 'Keine Treffer.',
+    chatterListLoading: 'Lade…',
+    chatterListRestricted: 'Es werden nur User angezeigt die in diesem Tab geschrieben haben. Twitch gibt die komplette Zuschauerliste (inkl. Lurker) nur an Broadcaster und Moderatoren des Channels heraus.',
+    chatterListSectionBroadcaster: 'Broadcaster',
+    chatterListSectionMods: 'Moderatoren',
+    chatterListSectionVIPs: 'VIPs',
+    chatterListSectionSubs: 'Subscriber',
+    chatterListSectionChatters: 'Chatter',
+    chatterListSectionBots: 'Bots',
+
+    // Stream meta
+    streamOffline: 'offline',
+    chatterListTitleHover: 'Chatter-Liste',
 
     updates: 'Updates',
     versionLabel: 'Version:',
