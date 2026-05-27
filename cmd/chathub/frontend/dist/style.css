@@ -171,6 +171,15 @@ html, body {
 }
 .cl-name:hover { background: rgba(145,70,255,0.2); color: #fff; }
 .cl-empty { color: #555; font-size: 12px; padding: 20px; text-align: center; }
+.cl-note {
+  margin: 0 14px 8px;
+  padding: 6px 8px;
+  background: rgba(251,191,36,0.1);
+  border-left: 2px solid #fbbf24;
+  color: #ddd;
+  font-size: 11px;
+  line-height: 1.4;
+}
 
 /* Transient status messages (errors, "watching #x") shown as a small
    floating toast at the bottom of the chat area instead of a permanent bar. */

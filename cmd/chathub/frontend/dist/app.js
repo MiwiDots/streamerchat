@@ -924,19 +924,20 @@ async function openChatterList() {
   // already have a cached list show it immediately, then refresh on top.
   // helixChatters is the richer [{login, isBot}, …] shape from v0.2.25+.
   let helixChatters = helixChattersCache.get(ch) || null;
-  if (helixChatters) renderChatterList('', { helixChatters });
+  let helixSource = 'unknown';
+  if (helixChatters) renderChatterList('', { helixChatters, helixSource: 'helix' });
   try {
     const res = await window.go.main.App.GetChannelChatters(ch);
+    helixSource = (res && res.source) || 'none';
     if (res && Array.isArray(res.chatters)) {
       helixChatters = res.chatters;
     } else if (res && Array.isArray(res.users)) {
-      // Compatibility with the older flat array shape.
       helixChatters = res.users.map(login => ({ login, isBot: false }));
     }
-    if (helixChatters) helixChattersCache.set(ch, helixChatters);
-  } catch (e) {}
+    if (helixChatters && helixChatters.length > 0) helixChattersCache.set(ch, helixChatters);
+  } catch (e) { helixSource = 'error'; }
   if (activeChannel === ch && !chatterListBg.classList.contains('hidden')) {
-    renderChatterList('', { helixChatters });
+    renderChatterList('', { helixChatters, helixSource });
   }
 }
 
@@ -954,6 +955,15 @@ function renderChatterList(filterText, opts) {
   search.value = filterText || '';
   search.addEventListener('input', () => renderChatterList(search.value, opts));
   chatterListModal.appendChild(search);
+
+  // Surface the data source so the user understands why "lurkers" may be
+  // missing. Twitch's /chat/chatters endpoint only returns the full list
+  // when the caller is broadcaster or moderator of the channel.
+  if (opts.helixSource && opts.helixSource !== 'helix' && !opts.loading) {
+    const note = el('div', { class: 'cl-note' },
+      'Showing only users who have chatted in this tab. Twitch only exposes the full viewer list (incl. lurkers) to broadcasters and moderators of the channel.');
+    chatterListModal.appendChild(note);
+  }
 
   const body = el('div', { class: 'cl-body' });
   chatterListModal.appendChild(body);
