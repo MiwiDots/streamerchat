@@ -143,6 +143,10 @@ type App struct {
 	// runs a LiveDetector + (when live) an InnerTube chat poller. The
 	// cancel func tears down both.
 	ytWatchers map[string]context.CancelFunc
+	// Per-channel reference to the active InnerTube client so we can
+	// pull the live stream's SendParams when the user posts. Keyed
+	// by the same tab key ("yt:<handle>") emitMessage uses.
+	ytClients map[string]*youtube.InnerTubeClient
 }
 
 func NewApp() *App {
@@ -151,6 +155,7 @@ func NewApp() *App {
 		channelIDCache:      make(map[string]string),
 		liveStatus:          make(map[string]bool),
 		ytWatchers:          make(map[string]context.CancelFunc),
+		ytClients:           make(map[string]*youtube.InnerTubeClient),
 	}
 }
 
@@ -919,10 +924,18 @@ func (a *App) startYouTubeWatcher(handle string) {
 			chatCancel = cc
 			a.mu.Unlock()
 			ytClient := youtube.NewInnerTubeClient(info.VideoID)
+			a.mu.Lock()
+			a.ytClients[tabKey] = ytClient
+			a.mu.Unlock()
 			go func() {
 				for {
 					select {
 					case <-chatCtx.Done():
+						a.mu.Lock()
+						if a.ytClients[tabKey] == ytClient {
+							delete(a.ytClients, tabKey)
+						}
+						a.mu.Unlock()
 						return
 					case msg := <-ytClient.Messages():
 						msg.Channel = tabKey
@@ -1400,6 +1413,81 @@ func (a *App) SendMessage(channel, text string) string {
 		return "connecting, try again in a moment"
 	}
 	sender.SayTo(channel, text)
+	return ""
+}
+
+// === YouTube auth + send ===
+
+// StartYouTubeLogin spawns an isolated Edge/Chrome window pointed at
+// Google's login page. The user authenticates and the resulting session
+// cookies get pulled via CDP and saved into the OS keyring. Blocks until
+// the user finishes or `timeout` elapses; the frontend should disable the
+// button while this is in flight.
+func (a *App) StartYouTubeLogin() string {
+	// 5 minutes is plenty for typing a password + 2FA. The browser window
+	// stays open, so the user can take their time.
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Minute)
+	defer cancel()
+	creds, err := youtube.LaunchLoginFlow(ctx, 5*time.Minute)
+	if err != nil {
+		log.Printf("[YT-LOGIN] %v", err)
+		return err.Error()
+	}
+	if err := youtube.SaveLoginCookies(creds); err != nil {
+		log.Printf("[YT-LOGIN] save failed: %v", err)
+		return err.Error()
+	}
+	log.Printf("[YT-LOGIN] cookies saved to OS keyring")
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "youtubeLoginChanged", map[string]interface{}{
+			"loggedIn": true,
+		})
+	}
+	return ""
+}
+
+// LogoutYouTube clears the saved cookies.
+func (a *App) LogoutYouTube() string {
+	if err := youtube.ClearLoginCookies(); err != nil {
+		return err.Error()
+	}
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "youtubeLoginChanged", map[string]interface{}{
+			"loggedIn": false,
+		})
+	}
+	return ""
+}
+
+// HasYouTubeLogin reports whether a session is currently saved.
+func (a *App) HasYouTubeLogin() bool {
+	c, err := youtube.LoadLoginCookies()
+	return err == nil && c.Valid()
+}
+
+// SendYouTubeMessage posts to the live stream attached to the given tab
+// key (e.g. "yt:@DEmiwitv"). The active InnerTube client's SendParams
+// identifies the chat; if the channel isn't currently live we surface
+// that as an error instead of silently dropping the message.
+func (a *App) SendYouTubeMessage(tabKey, text string) string {
+	a.mu.Lock()
+	client := a.ytClients[tabKey]
+	a.mu.Unlock()
+	if client == nil {
+		return "channel not live (no active YouTube chat session)"
+	}
+	params := client.SendParams()
+	if params == "" {
+		return "this channel's chat doesn't accept input (sub-only, follower-only, or chat disabled)"
+	}
+	creds, err := youtube.LoadLoginCookies()
+	if err != nil {
+		return "not logged in to YouTube — click Connect YouTube in settings"
+	}
+	if err := youtube.SendLiveChatMessage(creds, params, text); err != nil {
+		log.Printf("[YT-SEND] %v", err)
+		return err.Error()
+	}
 	return ""
 }
 

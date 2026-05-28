@@ -134,6 +134,19 @@
       </div>
     </div>
     <div class="settings-section">
+      <label>YouTube Login (to send messages)</label>
+      <div class="auth-row">
+        <span id="ytAuthInfo">Not connected</span>
+        <button class="btn btn-primary" id="ytLoginBtn">Connect YouTube</button>
+        <button class="btn hidden" id="ytLogoutBtn">Disconnect</button>
+      </div>
+      <p class="hint" id="ytLoginHint" style="margin-top:6px;color:#888;font-size:11px;">
+        Opens an isolated Edge/Chrome window for the YouTube login. The
+        session cookies are stored in the OS keyring (Windows Credential
+        Manager / macOS Keychain) — never in plain config.
+      </p>
+    </div>
+    <div class="settings-section">
       <label data-i18n="updates">Updates</label>
       <div class="debug-row">
         <span class="debug-label" data-i18n="versionLabel">Version:</span>

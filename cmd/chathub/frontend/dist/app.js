@@ -1286,15 +1286,16 @@ msgInput.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter' && activeChannel && msgInput.value.trim()) {
     const text = msgInput.value.trim();
     const meta = parseChannelKey(activeChannel);
-    if (meta.platform !== 'twitch') {
-      // YouTube send is in v0.3.1 (needs Google OAuth + YouTube Data API).
-      statusText.textContent = 'Send for ' + meta.platform + ' is not wired up yet — coming in the next release.';
-      return;
-    }
     msgInput.value = '';
     try {
-      // Backend SendMessage expects the Twitch channel name (no prefix).
-      const err = await window.go.main.App.SendMessage(meta.displayName, text);
+      let err = '';
+      if (meta.platform === 'youtube') {
+        // YouTube send uses the full tabKey ("yt:@handle") on the backend.
+        err = await window.go.main.App.SendYouTubeMessage(activeChannel, text);
+      } else {
+        // Twitch send takes the plain channel name without any prefix.
+        err = await window.go.main.App.SendMessage(meta.displayName, text);
+      }
       if (err) statusText.textContent = 'Send error: ' + err;
     } catch (ex) { console.error(ex); }
   }
@@ -1443,6 +1444,66 @@ document.addEventListener('mouseover', bumpCursorState);
 document.addEventListener('pointerover', bumpCursorState);
 document.addEventListener('mousemove', bumpCursorState);
 document.addEventListener('keydown', bumpCursorState);
+
+// === YouTube login wiring ===
+const ytAuthInfo = document.getElementById('ytAuthInfo');
+const ytLoginBtn = document.getElementById('ytLoginBtn');
+const ytLogoutBtn = document.getElementById('ytLogoutBtn');
+
+function setYTLoginUI(loggedIn) {
+  if (!ytAuthInfo) return;
+  if (loggedIn) {
+    ytAuthInfo.textContent = 'Connected';
+    ytAuthInfo.style.color = '#4ade80';
+    ytLoginBtn.classList.add('hidden');
+    ytLogoutBtn.classList.remove('hidden');
+  } else {
+    ytAuthInfo.textContent = 'Not connected';
+    ytAuthInfo.style.color = '#ff5555';
+    ytLoginBtn.classList.remove('hidden');
+    ytLogoutBtn.classList.add('hidden');
+  }
+}
+
+async function refreshYTLoginUI() {
+  try {
+    const has = await window.go.main.App.HasYouTubeLogin();
+    setYTLoginUI(!!has);
+  } catch (e) {}
+}
+refreshYTLoginUI();
+
+if (ytLoginBtn) {
+  ytLoginBtn.addEventListener('click', async () => {
+    ytLoginBtn.disabled = true;
+    ytAuthInfo.textContent = 'Browser window opening — log in there…';
+    ytAuthInfo.style.color = '#fbbf24';
+    try {
+      const err = await window.go.main.App.StartYouTubeLogin();
+      if (err) {
+        alert('YouTube login failed: ' + err);
+        setYTLoginUI(false);
+      } else {
+        setYTLoginUI(true);
+      }
+    } catch (e) {
+      alert('YouTube login error: ' + e);
+      setYTLoginUI(false);
+    }
+    ytLoginBtn.disabled = false;
+  });
+}
+if (ytLogoutBtn) {
+  ytLogoutBtn.addEventListener('click', async () => {
+    try { await window.go.main.App.LogoutYouTube(); } catch (e) {}
+    setYTLoginUI(false);
+  });
+}
+if (window.runtime && window.runtime.EventsOn) {
+  window.runtime.EventsOn('youtubeLoginChanged', (data) => {
+    setYTLoginUI(!!(data && data.loggedIn));
+  });
+}
 
 // === Frameless window controls (Windows; harmless on macOS) ===
 function bindWindowBtn(id, fn) {

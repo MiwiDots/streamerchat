@@ -1,3 +1,34 @@
+2026-05-28 16:00 - v0.3.1-alpha: ChatHub — YouTube SEND via InnerTube cookie auth
+  - User pushed back on "why YouTube Data API at all" — research confirmed
+    InnerTube /live_chat/send_message accepts the same cookie-based auth
+    YouTube's own web client uses, no quota, no Google Cloud project.
+    YouTube.js / kusaanko's lib use the same path in production.
+  - New internal/youtube/login.go: cookie set struct + OS-keyring persistence
+    (Windows Credential Manager / macOS Keychain / Linux Secret Service via
+    zalando/go-keyring). Cookies never touch config.json.
+  - New internal/youtube/send.go: computes the SAPISIDHASH Authorization
+    header (timestamp + sha1) and POSTs to InnerTube live_chat/send_message
+    with the right context payload + UA + Origin.
+  - New internal/youtube/login_flow.go: spawns an isolated Edge / Chrome
+    window (tmp --user-data-dir, headed) at the Google login URL via
+    chromedp's CDP allocator. Polls Network.GetCookies every 2s until
+    SAPISID lands, then snapshots SID/HSID/SSID/APISID/__Secure-3PSID/
+    __Secure-3PAPISID/LOGIN_INFO/VISITOR_INFO1_LIVE and tears down the
+    browser. tmp profile is wiped on exit so we don't leave login state.
+  - innertube reader now extracts sendLiveChatMessageEndpoint.params on
+    initial chat page render so SendLiveChatMessage knows which chat to
+    post into. Per-tab InnerTubeClient kept in App.ytClients so send
+    routing knows the current live stream.
+  - App.go: new StartYouTubeLogin / LogoutYouTube / HasYouTubeLogin /
+    SendYouTubeMessage bound methods. Frontend send-handler routes to
+    SendYouTubeMessage when the active tab is a YT tab.
+  - Settings modal: new "YouTube Login" section with Connect / Disconnect
+    buttons and a status pill that lives in the same place as the Twitch
+    pill. Updates immediately via the new youtubeLoginChanged event.
+
+  Pre-release. Requires Edge or Chrome on the user's machine for the
+  login window. Cookies live in the OS keyring under "chathub-youtube".
+
 2026-05-28 11:00 - v0.3.0-alpha: ChatHub — experimental YouTube read support
   - Channels can now be Twitch OR YouTube. Storage stays []string but
     YouTube entries get a "yt:" prefix (e.g. "yt:@DEmiwitv"); legacy

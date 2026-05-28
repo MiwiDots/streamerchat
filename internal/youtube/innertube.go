@@ -24,9 +24,19 @@ type InnerTubeClient struct {
 	videoID       string
 	continuation  string
 	clientVersion string
-	messages      chan chat.Message
-	errors        chan error
+	// sendParams is the `sendLiveChatMessageEndpoint.params` value pulled
+	// from the initial chat-page render. It's required as the `params`
+	// field on the send_message request; the caller fetches it via
+	// SendParams() after Connect.
+	sendParams string
+	messages   chan chat.Message
+	errors     chan error
 }
+
+// SendParams returns the send-message endpoint params extracted from the
+// initial chat-page render, or empty if not available (stream not live,
+// chat disabled, etc.).
+func (c *InnerTubeClient) SendParams() string { return c.sendParams }
 
 // NewInnerTubeClient creates a new YouTube chat client for the given video.
 func NewInnerTubeClient(videoID string) *InnerTubeClient {
@@ -103,6 +113,10 @@ func (c *InnerTubeClient) fetchInitialData(ctx context.Context) error {
 	if c.continuation == "" {
 		return fmt.Errorf("could not find continuation token - stream may not be live")
 	}
+	// Best-effort: extract send-message params for authenticated chat
+	// posting. Missing params is non-fatal (stream may not accept input,
+	// or chat may be sub-only — the read path still works).
+	c.sendParams = extractSendParams(initialData)
 
 	c.messages <- chat.Message{
 		Platform:  chat.PlatformYouTube,
@@ -390,6 +404,30 @@ func extractContinuation(data map[string]interface{}) string {
 		}
 	}
 
+	return ""
+}
+
+// extractSendParams pulls the `sendLiveChatMessageEndpoint.params` value
+// from the initial chat-page render. That token is what the InnerTube
+// `/live_chat/send_message` endpoint accepts as the `params` field to
+// identify which chat we're posting into. Empty if the page didn't
+// surface a message-input renderer (chat disabled / not live / etc.).
+func extractSendParams(data map[string]interface{}) string {
+	// The path is:
+	// contents.liveChatRenderer.actionPanel.liveChatMessageInputRenderer
+	//   .sendButton.buttonRenderer.serviceEndpoint
+	//     .sendLiveChatMessageEndpoint.params
+	endpoint := navigateJSON(data,
+		"contents", "liveChatRenderer",
+		"actionPanel", "liveChatMessageInputRenderer",
+		"sendButton", "buttonRenderer",
+		"serviceEndpoint", "sendLiveChatMessageEndpoint",
+	)
+	if m, ok := endpoint.(map[string]interface{}); ok {
+		if p, ok := m["params"].(string); ok {
+			return p
+		}
+	}
 	return ""
 }
 
