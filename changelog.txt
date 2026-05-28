@@ -1,3 +1,14 @@
+2026-05-28 21:45 - v0.3.10-alpha: surface Twitch NOTICE rejects
+  - PRIVMSGs were reaching the IRC layer (confirmed via the v0.3.9
+    [SEND] logs) but disappearing without a trace. Twitch sends a
+    NOTICE back with a msg-id tag (msg_followersonly, msg_subsonly,
+    msg_banned, msg_duplicate, msg_ratelimit, etc.) explaining why,
+    and we weren't listening for it. The send client now does:
+    OnNoticeMessage logs the msg-id + reason and pushes the human-
+    readable reason into the chat view as a system message so the
+    user sees "Twitch: This room is in follower-only mode" instead of
+    just nothing happening.
+
 2026-05-28 20:55 - v0.3.9-alpha: diagnose Twitch send + join race
   - connectSendClient used to fire one goroutine for Connect() and a
     second one that slept 2s before issuing Join() for every secondary

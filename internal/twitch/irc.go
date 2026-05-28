@@ -232,6 +232,23 @@ func (c *IRCClient) registerHandlers() {
 		c.messages <- m
 	})
 
+	// OnNoticeMessage covers Twitch's NOTICE replies — these are how the
+	// IRC layer tells us a PRIVMSG was rejected (msg_followersonly,
+	// msg_subsonly, msg_banned, msg_duplicate, msg_ratelimit, …) or the
+	// auth failed (login_authentication_failed). Without this handler all
+	// rejected sends look like "nothing happened" to the user.
+	c.client.OnNoticeMessage(func(msg twitch.NoticeMessage) {
+		msgID := msg.MsgID
+		log.Printf("[SEND] NOTICE %s in #%s: %s", msgID, msg.Channel, msg.Message)
+		c.messages <- chat.Message{
+			Platform:  chat.PlatformTwitch,
+			Type:      chat.MessageTypeSystem,
+			Channel:   strings.TrimPrefix(msg.Channel, "#"),
+			Timestamp: time.Now(),
+			Text:      fmt.Sprintf("Twitch: %s", msg.Message),
+		}
+	})
+
 	c.client.OnRoomStateMessage(func(msg twitch.RoomStateMessage) {
 		s := chat.ChatSettings{
 			SlowMode:     msg.Tags["slow"] != "0" && msg.Tags["slow"] != "",
