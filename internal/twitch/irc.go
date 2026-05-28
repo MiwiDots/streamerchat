@@ -260,6 +260,7 @@ func (c *IRCClient) registerHandlers() {
 	})
 
 	c.client.OnReconnectMessage(func(_ twitch.ReconnectMessage) {
+		log.Printf("[SEND] OnReconnectMessage: Twitch told us to reconnect (#%s)", c.channel)
 		c.messages <- chat.Message{
 			Platform:  chat.PlatformTwitch,
 			Type:      chat.MessageTypeSystem,
@@ -269,6 +270,7 @@ func (c *IRCClient) registerHandlers() {
 	})
 
 	c.client.OnConnect(func() {
+		log.Printf("[SEND] OnConnect: authed + joined for primary=#%s extras=%v", c.channel, c.extraJoins)
 		c.messages <- chat.Message{
 			Platform:  chat.PlatformTwitch,
 			Type:      chat.MessageTypeSystem,

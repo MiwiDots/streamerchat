@@ -412,11 +412,21 @@ func (a *App) connectSendClient() {
 
 	log.Printf("[SEND] connecting IRC for user=%s, channels=%v", a.cfg.Username, twitchChans)
 	go func() {
+		// gempir's Connect() blocks and auto-reconnects internally. If it
+		// returns, the supervision is over (intentional Disconnect or
+		// terminal failure) and a.send is now a zombie. Null it out so
+		// the next SendMessage triggers a lazy reconnect via the path in
+		// SendMessage itself.
 		if err := send.Connect(); err != nil {
-			log.Printf("[SEND] connect returned: %v", err)
+			log.Printf("[SEND] connect returned with error: %v — clearing zombie sender", err)
 		} else {
-			log.Printf("[SEND] connect goroutine exited cleanly (disconnect)")
+			log.Printf("[SEND] connect returned cleanly — clearing zombie sender")
 		}
+		a.mu.Lock()
+		if a.send == send {
+			a.send = nil
+		}
+		a.mu.Unlock()
 	}()
 }
 

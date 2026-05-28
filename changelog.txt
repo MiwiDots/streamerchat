@@ -1,3 +1,21 @@
+2026-05-28 22:00 - v0.3.11-alpha: idle send dies — instrument + clear zombie
+  - User reports Twitch send works at startup but silently stops after
+    idle. gempir's Connect() blocks and is supposed to reconnect
+    internally, but if it ever returns (terminal auth failure, ctx
+    cancel, …) we kept a.send pointing at the dead client and every
+    subsequent SayTo() vanished. Now: when the Connect goroutine
+    returns we null out a.send so the next SendMessage falls into the
+    lazy-connect branch and spins up a fresh IRCClient with the
+    current token.
+  - Added [SEND] OnConnect (logged the moment Twitch confirms auth +
+    JOIN) and [SEND] OnReconnectMessage (logged when Twitch tells us
+    to reconnect). Next idle-then-send test will show either:
+      * OnConnect fires once, no later reconnects → Twitch is silently
+        rejecting PRIVMSGs and the NOTICE handler (v0.3.10) should
+        surface why.
+      * OnReconnect or "connect returned" appears → gempir is cycling
+        and the new code re-creates the sender.
+
 2026-05-28 21:45 - v0.3.10-alpha: surface Twitch NOTICE rejects
   - PRIVMSGs were reaching the IRC layer (confirmed via the v0.3.9
     [SEND] logs) but disappearing without a trace. Twitch sends a
