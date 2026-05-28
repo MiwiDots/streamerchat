@@ -638,7 +638,9 @@ func (a *App) shutdown(_ context.Context) {
 
 // GetHistory returns the last messages for a channel (called by frontend on tab open).
 func (a *App) GetHistory(channel string, limit int) []map[string]interface{} {
+	log.Printf("[HISTORY] GetHistory called for channel=%q limit=%d", channel, limit)
 	if a.history == nil {
+		log.Printf("[HISTORY] GetHistory bailing — a.history nil")
 		return nil
 	}
 	if limit <= 0 || limit > 1000 {

@@ -104,8 +104,10 @@ function el(tag, attrs, ...children) {
 
 // === Channel tabs ===
 async function loadHistoryForChannel(channel) {
+  console.log('[history] loading for', channel);
   try {
     const history = await window.go.main.App.GetHistory(channel, 200);
+    console.log('[history] got', history ? history.length : 0, 'messages for', channel);
     if (history && history.length > 0) {
       // Render historical separator
       const state = channels.get(channel);
