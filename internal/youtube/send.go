@@ -27,12 +27,30 @@ func computeSAPISIDHASH(sapisid, origin string) string {
 	return "SAPISIDHASH " + ts + "_" + hex.EncodeToString(h.Sum(nil))
 }
 
+// sanitizeCookieValue drops bytes Go's net/http rejects as invalid in a
+// Cookie header value. RFC6265 defines cookie-octet as %x21-7E excluding
+// the few special chars below; high-bit bytes (e.g. the stray 0xEF the
+// SQLite reader sometimes returns) trigger "invalid byte" warnings and
+// the whole cookie gets dropped from the outgoing request.
+func sanitizeCookieValue(v string) string {
+	b := make([]byte, 0, len(v))
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c < 0x21 || c > 0x7E || c == '"' || c == ',' || c == ';' || c == '\\' {
+			continue
+		}
+		b = append(b, c)
+	}
+	return string(b)
+}
+
 // cookieHeader joins the relevant cookies into the single Cookie: header
 // value the request needs. Empty values are skipped so we don't emit
 // trailing semicolons.
 func (c LoginCookies) cookieHeader() string {
 	var parts []string
 	add := func(name, val string) {
+		val = sanitizeCookieValue(val)
 		if val != "" {
 			parts = append(parts, name+"="+val)
 		}

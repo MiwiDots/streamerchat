@@ -425,13 +425,22 @@ func (a *App) connectSendClient() {
 }
 
 // liveStatusLoop polls Twitch every 60s for live status of all channels.
+// YouTube (and any other non-Twitch) channels are skipped — their live
+// state is owned by the per-channel LiveDetector and would otherwise be
+// overwritten with `false` here because Helix /streams returns 400 for a
+// "yt:@..." login, wiping the live indicator the detector just set.
 func (a *App) liveStatusLoop() {
 	check := func() {
 		a.mu.Lock()
 		chans := append([]string{}, a.cfg.Channels...)
 		a.mu.Unlock()
 
-		for _, ch := range chans {
+		for _, raw := range chans {
+			ref := parseChannelRef(raw)
+			if ref.Platform != "twitch" {
+				continue
+			}
+			ch := ref.Name
 			isLive := a.checkLive(ch)
 			a.mu.Lock()
 			prev, had := a.liveStatus[ch]
@@ -981,6 +990,7 @@ func (a *App) startYouTubeWatcher(handle string) {
 						return
 					}
 					if err := ytClient.Connect(chatCtx); err != nil {
+						log.Printf("[YT] %s: connect attempt %d failed: %v", handle, attempt+1, err)
 						select {
 						case <-chatCtx.Done():
 							return
@@ -990,6 +1000,7 @@ func (a *App) startYouTubeWatcher(handle string) {
 					}
 					return
 				}
+				log.Printf("[YT] %s: giving up after 5 connect attempts", handle)
 			}()
 		},
 		func() {

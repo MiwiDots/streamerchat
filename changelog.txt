@@ -1,3 +1,22 @@
+2026-05-28 19:00 - v0.3.7-alpha: stop liveStatusLoop from clobbering YT tabs
+  - The Twitch live poller iterated cfg.Channels without filtering, so
+    every 60s it called Helix /streams with a "yt:@..." login, got a
+    400 back, treated the YT channel as offline, and emitted
+    liveStatus(false) — which wiped the live-dot the per-channel
+    LiveDetector had set seconds earlier. Net effect: YT channels were
+    permanently dark even when the stream was live.
+  - liveStatusLoop now skips non-twitch entries. YT live state is owned
+    by youtube.LiveDetector + the channel watcher, which is correct.
+  - InnerTube connect errors are now logged in the retry loop so the
+    "chat area empty even though stream is live" case has visible
+    diagnostics next time.
+  - cookieHeader() drops bytes that fall outside the RFC6265
+    cookie-octet set. Without this, a stray high-bit byte in
+    VISITOR_INFO1_LIVE (the Windows SQLite reader occasionally returns
+    one) triggered "net/http: invalid byte 'ï'" and the whole Cookie
+    header got rejected, which would have broken the new authenticated
+    fetchInitialData path silently.
+
 2026-05-28 18:30 - v0.3.6-alpha: fix send regressions on Twitch and YouTube
   - Twitch: connectSendClient was passing the first entry of
     cfg.Channels as the IRC primary, including YouTube ("yt:@handle")
