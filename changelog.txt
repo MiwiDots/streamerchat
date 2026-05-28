@@ -1,3 +1,23 @@
+2026-05-28 22:30 - v0.3.12-alpha: migrate Twitch send to Helix
+  - Twitch officially flags IRC as "historically" supported in their
+    docs and the preferred path is now "EventSub + Twitch API". The
+    silent post-idle drops we've been chasing match Twitch's
+    documented behaviour of throttling raw-IRC PRIVMSG for unverified
+    clients while returning no NOTICE at all. Chatterino moved off
+    IRC-send to the Helix endpoint for the same reason.
+  - SendMessage now calls POST https://api.twitch.tv/helix/chat/messages
+    with broadcaster_id + sender_id + message. The endpoint returns:
+      * 200 with is_sent=true → message went out
+      * 200 with is_sent=false + drop_reason → surfaced as an error so
+        the UI shows "Twitch: This room is in follower-only mode" etc.
+      * 4xx → HTTP body propagated as the error string
+  - Required scope user:write:chat added to requiredScopes; users will
+    be re-prompted on next Twitch login to grant it.
+  - IRC connection stays alive — it's still our reader. Only the send
+    path migrated. connectSendClient / NewIRCClient send-path code is
+    still wired up so the read client and join/part handlers don't
+    move.
+
 2026-05-28 22:00 - v0.3.11-alpha: idle send dies — instrument + clear zombie
   - User reports Twitch send works at startup but silently stops after
     idle. gempir's Connect() blocks and is supposed to reconnect

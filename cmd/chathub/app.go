@@ -1450,21 +1450,32 @@ func (a *App) Logout() {
 	a.mu.Unlock()
 }
 
-// SendMessage sends a chat message to a specific channel (requires login).
+// SendMessage sends a chat message to a specific channel via Twitch's
+// Helix POST /chat/messages endpoint. Replaces the previous IRC PRIVMSG
+// path which was silently throttled by Twitch for unverified clients
+// after idle — Helix returns an explicit HTTP status + drop_reason so
+// the user actually sees why a message was rejected (sub-only, banned,
+// duplicate, ratelimit, …). IRC connection is retained for READING
+// chat only.
 func (a *App) SendMessage(channel, text string) string {
-	if a.cfg.AccessToken == "" {
-		log.Printf("[SEND] rejected — no access token")
+	if a.cfg.AccessToken == "" || a.cfg.ClientID == "" {
+		log.Printf("[SEND] rejected — no access token / client id")
 		return "not logged in"
 	}
-	a.mu.Lock()
-	sender := a.send
-	a.mu.Unlock()
-	if sender == nil {
-		log.Printf("[SEND] no IRC client yet, lazy-connecting for %s", channel)
-		go a.connectSendClient()
-		return "connecting, try again in a moment"
+	if a.cfg.UserID == "" {
+		log.Printf("[SEND] rejected — no user id (re-login required?)")
+		return "missing user id — please re-login"
 	}
-	sender.SayTo(channel, text)
+	channel = strings.ToLower(strings.TrimPrefix(channel, "#"))
+	broadcasterID := a.resolveChannelID(channel)
+	if broadcasterID == "" {
+		log.Printf("[SEND] could not resolve broadcaster id for #%s", channel)
+		return "could not resolve channel"
+	}
+	log.Printf("[SEND] Helix POST #%s (broadcaster=%s) text=%q", channel, broadcasterID, text)
+	if err := twitch.SendChatMessage(a.cfg.ClientID, a.cfg.AccessToken, broadcasterID, a.cfg.UserID, text); err != nil {
+		return err.Error()
+	}
 	return ""
 }
 

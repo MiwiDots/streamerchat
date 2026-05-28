@@ -14,6 +14,10 @@ var requiredScopes = []string{
 	// Chat
 	"chat:read",
 	"chat:edit",
+	// Required by the Helix POST /chat/messages endpoint (Twitch's modern
+	// replacement for IRC PRIVMSG sending). Without this, the call fails
+	// with 401 "missing scope: user:write:chat".
+	"user:write:chat",
 	// Moderation
 	"moderator:manage:banned_users",
 	"moderator:manage:chat_messages",
