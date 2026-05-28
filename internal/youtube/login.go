@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
-	"github.com/zalando/go-keyring"
+	"github.com/miwi/streamerchat/internal/credstore"
 )
 
 // LoginCookies is the subset of YouTube session cookies we need to send a
@@ -14,17 +15,22 @@ import (
 // checks for. SAPISID is the critical one — the SAPISIDHASH Authorization
 // header is computed from it.
 type LoginCookies struct {
-	SAPISID         string `json:"sapisid"`
-	SID             string `json:"sid"`
-	HSID            string `json:"hsid"`
-	SSID            string `json:"ssid"`
-	APISID          string `json:"apisid"`
-	Secure3PSID     string `json:"__Secure-3PSID,omitempty"`
-	Secure3PAPISID  string `json:"__Secure-3PAPISID,omitempty"`
-	Secure1PSID     string `json:"__Secure-1PSID,omitempty"`
-	Secure1PAPISID  string `json:"__Secure-1PAPISID,omitempty"`
-	LoginInfo       string `json:"login_info,omitempty"`
+	SAPISID          string `json:"sapisid"`
+	SID              string `json:"sid"`
+	HSID             string `json:"hsid"`
+	SSID             string `json:"ssid"`
+	APISID           string `json:"apisid"`
+	Secure3PSID      string `json:"__Secure-3PSID,omitempty"`
+	Secure3PAPISID   string `json:"__Secure-3PAPISID,omitempty"`
+	Secure1PSID      string `json:"__Secure-1PSID,omitempty"`
+	Secure1PAPISID   string `json:"__Secure-1PAPISID,omitempty"`
+	LoginInfo        string `json:"login_info,omitempty"`
 	VisitorInfo1Live string `json:"visitor_info1_live,omitempty"`
+
+	// Timestamps so we can show "session age" in the UI and proactively
+	// refresh before SAPISID rotates server-side.
+	SavedAt     time.Time `json:"saved_at,omitempty"`
+	RefreshedAt time.Time `json:"refreshed_at,omitempty"`
 
 	// Optional human label set after first login (e.g. user's YT handle)
 	// so the UI can show "Logged in as @miwi".
@@ -38,35 +44,32 @@ func (c LoginCookies) Valid() bool {
 	return c.SAPISID != "" && (c.SID != "" || c.Secure3PSID != "" || c.Secure1PSID != "")
 }
 
-const (
-	keyringService = "chathub-youtube"
-	keyringAccount = "session-cookies"
-)
-
 // ErrNotLoggedIn is returned by LoadLoginCookies when nothing is stored.
 var ErrNotLoggedIn = errors.New("no YouTube session stored")
 
-// SaveLoginCookies persists the cookie set to the OS keyring (Windows
-// Credential Manager / macOS Keychain / Linux Secret Service). Values are
-// JSON-encoded into a single keyring entry.
+// SaveLoginCookies persists the cookie set to the OS keyring via the
+// shared credstore package. Stamps SavedAt if missing.
 func SaveLoginCookies(c LoginCookies) error {
 	if !c.Valid() {
 		return fmt.Errorf("refusing to store invalid cookie set (need SAPISID + a SID variant)")
+	}
+	if c.SavedAt.IsZero() {
+		c.SavedAt = time.Now()
 	}
 	data, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
-	return keyring.Set(keyringService, keyringAccount, string(data))
+	return credstore.Set(credstore.YouTube, string(data))
 }
 
 // LoadLoginCookies returns the previously saved set or ErrNotLoggedIn if
 // the keyring entry is missing.
 func LoadLoginCookies() (LoginCookies, error) {
 	var c LoginCookies
-	raw, err := keyring.Get(keyringService, keyringAccount)
+	raw, err := credstore.Get(credstore.YouTube)
 	if err != nil {
-		if errors.Is(err, keyring.ErrNotFound) {
+		if errors.Is(err, credstore.ErrNotFound) {
 			return c, ErrNotLoggedIn
 		}
 		return c, err
@@ -77,12 +80,7 @@ func LoadLoginCookies() (LoginCookies, error) {
 	return c, nil
 }
 
-// ClearLoginCookies deletes the keyring entry. Idempotent — missing entries
-// are not an error.
+// ClearLoginCookies deletes the keyring entry. Idempotent.
 func ClearLoginCookies() error {
-	err := keyring.Delete(keyringService, keyringAccount)
-	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
-		return err
-	}
-	return nil
+	return credstore.Clear(credstore.YouTube)
 }

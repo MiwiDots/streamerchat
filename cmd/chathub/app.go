@@ -174,7 +174,20 @@ func (a *App) startup(ctx context.Context) {
 	// Remove leftover <exe>.old from a previous self-update.
 	selfupdate.CleanupPrevious()
 
+	// Keep the YouTube cookie session warm in the background. One refresh
+	// ~30s after boot validates the saved session and folds in any
+	// Set-Cookie updates the YT home page hands back, then a 24h ticker
+	// repeats. If Google ever rotates SAPISID server-side we'll pick that
+	// up on the next tick instead of waiting for the user to discover a
+	// dead send.
+	youtube.StartAutoRefresh(ctx, 24*time.Hour)
+
 	a.cfg = loadHubConfig()
+	// Twitch access + refresh tokens have moved from config.json into the
+	// OS keyring. This call either hydrates them from the keyring if a
+	// previous install already migrated, or migrates them in-place from
+	// the old config.json fields and wipes them from disk.
+	a.migrateTwitchTokensFromConfig()
 	log.Printf("[BOOT] Loaded config: channels=%v username=%q tokenLen=%d",
 		a.cfg.Channels, a.cfg.Username, len(a.cfg.AccessToken))
 
@@ -336,6 +349,7 @@ func (a *App) refreshTokenSync() bool {
 	a.cfg.AccessToken = token.AccessToken
 	a.cfg.RefreshToken = token.RefreshToken
 	a.cfg.Save()
+	a.saveTwitchTokens()
 	log.Printf("[AUTH] Token refreshed successfully")
 	return true
 }
@@ -1207,6 +1221,9 @@ func (a *App) StartLogin() map[string]interface{} {
 		a.cfg.Username = info.Login
 		a.cfg.UserID = info.UserID
 		a.cfg.Save()
+		// Tokens go straight into the OS keyring; the config.json copy is
+		// wiped by saveTwitchTokens on the next Save round-trip.
+		a.saveTwitchTokens()
 
 		// Start the authenticated sender so the user can post immediately.
 		go a.connectSendClient()
@@ -1391,6 +1408,7 @@ func (a *App) Logout() {
 	a.cfg.Username = ""
 	a.cfg.UserID = ""
 	a.cfg.Save()
+	a.clearTwitchTokens()
 	a.mu.Lock()
 	if a.send != nil {
 		a.send.Disconnect()

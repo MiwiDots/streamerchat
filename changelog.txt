@@ -1,3 +1,22 @@
+2026-05-28 17:30 - v0.3.4-alpha: YT auto-refresh + Twitch tokens to OS keyring
+  - new internal/credstore: shared keyring wrapper. Service constants
+    (chathub-twitch, chathub-youtube, chathub-kick) so the call sites
+    use named enums instead of inline strings. Get / Set / Clear.
+  - YouTube cookie auto-refresh: StartAutoRefresh runs from boot, fires
+    once after 30s (validate + fold in fresh Set-Cookie values) and then
+    every 24h. If YouTube redirects to ServiceLogin the keyring entry
+    is cleared and authExpired surfaces. Reuses cookiejar so Google's
+    rotating cookies actually get persisted instead of dropped.
+  - LoginCookies struct gained SavedAt / RefreshedAt timestamps.
+  - Twitch access + refresh tokens are migrated out of config.json into
+    the OS keyring on first boot. Existing users keep their session —
+    migrate-then-wipe leaves the in-memory tokens intact, the config
+    file no longer carries the plaintext. New logins / refreshes write
+    only to the keyring.
+  - cmd/chathub/twitch_creds.go: small migrate / save / clear helpers
+    wired into validateAndConnect's refresh path, the device-code
+    login success path, and Logout.
+
 2026-05-28 17:00 - v0.3.3-alpha: kill chromedp, read cookies directly from disk
   - Google blocks automation-controlled browsers ("Couldn't sign you in /
     This browser or app may not be secure") regardless of which flags we
