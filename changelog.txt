@@ -1,3 +1,14 @@
+2026-05-28 16:30 - v0.3.2-alpha: tabbed settings + browser fallback for YT login
+  - Settings modal was scrolling forever once Twitch + YouTube + Updates +
+    Debug sections piled up. Refactored into 6 tabs (General /
+    Notifications / Twitch / YouTube / Updates / Debug) with a Chrome-like
+    tab strip on top; only one pane is rendered at a time.
+  - YouTube login retry: previously findChromiumBinary returned the FIRST
+    install we saw and gave up if that one failed to spawn (user reported
+    "chrome failed to start" even with Chrome actually running). Now we
+    enumerate every candidate (Edge, Chrome, Brave, …) and try each one
+    in turn until one launches, logging each attempt.
+
 2026-05-28 16:00 - v0.3.1-alpha: ChatHub — YouTube SEND via InnerTube cookie auth
   - User pushed back on "why YouTube Data API at all" — research confirmed
     InnerTube /live_chat/send_message accepts the same cookie-based auth

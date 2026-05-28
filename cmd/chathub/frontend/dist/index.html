@@ -79,101 +79,121 @@
 
 <!-- Settings modal -->
 <div class="modal-bg hidden" id="settingsModalBg">
-  <div class="modal">
+  <div class="modal settings-modal">
     <div class="modal-header">
       <span data-i18n="settings">Settings</span>
       <span class="modal-close" data-close="settings">✕</span>
     </div>
-    <div class="settings-section">
-      <label data-i18n="language">Language</label>
-      <select class="modal-input" id="localeSelect">
-        <option value="en">English</option>
-        <option value="de">Deutsch</option>
-      </select>
+    <div class="settings-tabs" id="settingsTabs">
+      <button class="settings-tab-btn active" data-tab="general">General</button>
+      <button class="settings-tab-btn" data-tab="notifications">Notifications</button>
+      <button class="settings-tab-btn" data-tab="twitch">Twitch</button>
+      <button class="settings-tab-btn" data-tab="youtube">YouTube</button>
+      <button class="settings-tab-btn" data-tab="updates">Updates</button>
+      <button class="settings-tab-btn" data-tab="debug">Debug</button>
     </div>
-    <div class="settings-section">
-      <label data-i18n="highlightKeywords">Highlight keywords (comma separated, your name will be added automatically)</label>
-      <input class="modal-input" type="text" id="highlightInput" data-i18n-placeholder="highlightPlaceholder" placeholder="kappa, lurk, ...">
-    </div>
-    <div class="settings-section">
-      <label data-i18n="notifSound">Notification sound on mention</label>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <select class="modal-input" id="soundSelect" style="margin-bottom:0;flex:1;">
-          <option value="none" data-i18n="soundNone">None</option>
-          <option value="bell" data-i18n="soundBell">Bell</option>
-          <option value="ping" data-i18n="soundPing">Ping</option>
+    <div class="settings-pane active" data-pane="general">
+      <div class="settings-section">
+        <label data-i18n="language">Language</label>
+        <select class="modal-input" id="localeSelect">
+          <option value="en">English</option>
+          <option value="de">Deutsch</option>
         </select>
-        <button class="btn" id="testSoundBtn" data-i18n="test">Test</button>
+      </div>
+      <div class="settings-section">
+        <label class="checkbox-row">
+          <input type="checkbox" id="onlyLiveCheckbox">
+          <span data-i18n="onlyLive">Only show channels that are currently live</span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="showTimestampsCheckbox" checked>
+          <span data-i18n="showTimestamps">Show timestamps</span>
+        </label>
+        <label class="checkbox-row hidden" id="autostartRow">
+          <input type="checkbox" id="autostartCheckbox">
+          <span data-i18n="autostart">Start ChatHub automatically with Windows</span>
+        </label>
       </div>
     </div>
-    <div class="settings-section">
-      <label class="checkbox-row">
-        <input type="checkbox" id="onlyLiveCheckbox">
-        <span data-i18n="onlyLive">Only show channels that are currently live</span>
-      </label>
-      <label class="checkbox-row">
-        <input type="checkbox" id="showTimestampsCheckbox" checked>
-        <span data-i18n="showTimestamps">Show timestamps</span>
-      </label>
-      <label class="checkbox-row hidden" id="autostartRow">
-        <input type="checkbox" id="autostartCheckbox">
-        <span data-i18n="autostart">Start ChatHub automatically with Windows</span>
-      </label>
-    </div>
-    <div class="settings-section">
-      <label data-i18n="twitchLogin">Twitch Login (to send messages)</label>
-      <div class="auth-row" id="authRow">
-        <span id="authInfo" data-i18n="notLoggedIn">Not logged in</span>
-        <button class="btn btn-primary" id="loginBtn" data-i18n="login">Login</button>
-        <button class="btn hidden" id="logoutBtn" data-i18n="logout">Logout</button>
+    <div class="settings-pane" data-pane="notifications">
+      <div class="settings-section">
+        <label data-i18n="highlightKeywords">Highlight keywords (comma separated, your name will be added automatically)</label>
+        <input class="modal-input" type="text" id="highlightInput" data-i18n-placeholder="highlightPlaceholder" placeholder="kappa, lurk, ...">
       </div>
-      <div class="auth-help hidden" id="authHelp">
-        <p><span data-i18n="authStep1">1. Go to</span> <span class="code" id="authUrl"></span></p>
-        <p><span data-i18n="authStep2">2. Enter code:</span> <span class="code big" id="authCode"></span></p>
-        <p class="hint" data-i18n="authWaiting">Waiting for authorization...</p>
+      <div class="settings-section">
+        <label data-i18n="notifSound">Notification sound on mention</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select class="modal-input" id="soundSelect" style="margin-bottom:0;flex:1;">
+            <option value="none" data-i18n="soundNone">None</option>
+            <option value="bell" data-i18n="soundBell">Bell</option>
+            <option value="ping" data-i18n="soundPing">Ping</option>
+          </select>
+          <button class="btn" id="testSoundBtn" data-i18n="test">Test</button>
+        </div>
       </div>
     </div>
-    <div class="settings-section">
-      <label>YouTube Login (to send messages)</label>
-      <div class="auth-row">
-        <span id="ytAuthInfo">Not connected</span>
-        <button class="btn btn-primary" id="ytLoginBtn">Connect YouTube</button>
-        <button class="btn hidden" id="ytLogoutBtn">Disconnect</button>
-      </div>
-      <p class="hint" id="ytLoginHint" style="margin-top:6px;color:#888;font-size:11px;">
-        Opens an isolated Edge/Chrome window for the YouTube login. The
-        session cookies are stored in the OS keyring (Windows Credential
-        Manager / macOS Keychain) — never in plain config.
-      </p>
-    </div>
-    <div class="settings-section">
-      <label data-i18n="updates">Updates</label>
-      <div class="debug-row">
-        <span class="debug-label" data-i18n="versionLabel">Version:</span>
-        <span id="versionLabel">…</span>
-      </div>
-      <div class="debug-row">
-        <button class="btn" id="checkUpdateBtn" data-i18n="checkForUpdates">Check for updates</button>
-        <span id="updateStatus"></span>
-      </div>
-      <div class="debug-row hidden" id="updateApplyRow">
-        <button class="btn btn-primary" id="applyUpdateBtn" data-i18n="installUpdate">Install update</button>
-        <a class="debug-path" id="releaseUrl" href="#" target="_blank">release notes</a>
+    <div class="settings-pane" data-pane="twitch">
+      <div class="settings-section">
+        <label data-i18n="twitchLogin">Twitch Login (to send messages)</label>
+        <div class="auth-row" id="authRow">
+          <span id="authInfo" data-i18n="notLoggedIn">Not logged in</span>
+          <button class="btn btn-primary" id="loginBtn" data-i18n="login">Login</button>
+          <button class="btn hidden" id="logoutBtn" data-i18n="logout">Logout</button>
+        </div>
+        <div class="auth-help hidden" id="authHelp">
+          <p><span data-i18n="authStep1">1. Go to</span> <span class="code" id="authUrl"></span></p>
+          <p><span data-i18n="authStep2">2. Enter code:</span> <span class="code big" id="authCode"></span></p>
+          <p class="hint" data-i18n="authWaiting">Waiting for authorization...</p>
+        </div>
       </div>
     </div>
-    <div class="settings-section">
-      <label data-i18n="debug">Debug</label>
-      <div class="debug-row">
-        <span class="debug-label" data-i18n="configLabel">Config:</span>
-        <span class="debug-path" id="cfgPath">...</span>
+    <div class="settings-pane" data-pane="youtube">
+      <div class="settings-section">
+        <label>YouTube Login (to send messages)</label>
+        <div class="auth-row">
+          <span id="ytAuthInfo">Not connected</span>
+          <button class="btn btn-primary" id="ytLoginBtn">Connect YouTube</button>
+          <button class="btn hidden" id="ytLogoutBtn">Disconnect</button>
+        </div>
+        <p class="hint" style="margin-top:6px;color:#888;font-size:11px;">
+          Opens an isolated Edge/Chrome window for the YouTube login. The
+          session cookies are stored in the OS keyring (Windows Credential
+          Manager / macOS Keychain) — never in plain config.
+        </p>
       </div>
-      <div class="debug-row">
-        <span class="debug-label" data-i18n="logLabel">Log:</span>
-        <span class="debug-path" id="logPath">...</span>
+    </div>
+    <div class="settings-pane" data-pane="updates">
+      <div class="settings-section">
+        <label data-i18n="updates">Updates</label>
+        <div class="debug-row">
+          <span class="debug-label" data-i18n="versionLabel">Version:</span>
+          <span id="versionLabel">…</span>
+        </div>
+        <div class="debug-row">
+          <button class="btn" id="checkUpdateBtn" data-i18n="checkForUpdates">Check for updates</button>
+          <span id="updateStatus"></span>
+        </div>
+        <div class="debug-row hidden" id="updateApplyRow">
+          <button class="btn btn-primary" id="applyUpdateBtn" data-i18n="installUpdate">Install update</button>
+          <a class="debug-path" id="releaseUrl" href="#" target="_blank">release notes</a>
+        </div>
       </div>
-      <div class="debug-row">
-        <button class="btn" id="testSaveBtn" data-i18n="forceSave">Force save</button>
-        <span id="testSaveResult"></span>
+    </div>
+    <div class="settings-pane" data-pane="debug">
+      <div class="settings-section">
+        <label data-i18n="debug">Debug</label>
+        <div class="debug-row">
+          <span class="debug-label" data-i18n="configLabel">Config:</span>
+          <span class="debug-path" id="cfgPath">...</span>
+        </div>
+        <div class="debug-row">
+          <span class="debug-label" data-i18n="logLabel">Log:</span>
+          <span class="debug-path" id="logPath">...</span>
+        </div>
+        <div class="debug-row">
+          <button class="btn" id="testSaveBtn" data-i18n="forceSave">Force save</button>
+          <span id="testSaveResult"></span>
+        </div>
       </div>
     </div>
     <div class="modal-btns">

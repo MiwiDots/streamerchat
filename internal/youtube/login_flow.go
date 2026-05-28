@@ -26,11 +26,29 @@ import (
 // is expected to surface a settings-modal-level status while it runs and
 // to persist the returned LoginCookies via SaveLoginCookies on success.
 func LaunchLoginFlow(parent context.Context, timeout time.Duration) (LoginCookies, error) {
-	exe, err := findChromiumBinary()
-	if err != nil {
-		return LoginCookies{}, err
+	exes := findChromiumBinaries()
+	if len(exes) == 0 {
+		return LoginCookies{}, fmt.Errorf("no Chromium-family browser found (need Edge, Chrome, or Brave)")
 	}
 
+	// Try each browser in turn — Edge first, then Chrome, then Brave.
+	// chromedp's error when a browser fails to start is generic ("chrome
+	// failed to start") so without the per-attempt log the user has no
+	// way to know what was actually tried.
+	var lastErr error
+	for _, exe := range exes {
+		log.Printf("[YT-LOGIN] trying browser: %s", exe)
+		creds, err := tryLoginWithBrowser(parent, exe, timeout)
+		if err == nil {
+			return creds, nil
+		}
+		log.Printf("[YT-LOGIN] %s failed: %v", exe, err)
+		lastErr = err
+	}
+	return LoginCookies{}, fmt.Errorf("all candidate browsers failed; last error: %w", lastErr)
+}
+
+func tryLoginWithBrowser(parent context.Context, exe string, timeout time.Duration) (LoginCookies, error) {
 	tmpProfile, err := os.MkdirTemp("", "chathub-yt-login-*")
 	if err != nil {
 		return LoginCookies{}, fmt.Errorf("temp profile: %w", err)
@@ -152,11 +170,23 @@ func extractLoginCookies(cookies []*network.Cookie) (LoginCookies, bool) {
 	return c, c.Valid()
 }
 
-// findChromiumBinary returns the path to a Chromium-family browser we can
-// drive via CDP. Prefers Edge (always present on Win10+), falls back to
-// Chrome / Brave / Vivaldi. On macOS and Linux we mostly use this for
-// local dev so we cover the common defaults there too.
-func findChromiumBinary() (string, error) {
+// findChromiumBinaries returns every Chromium-family browser we can drive
+// via CDP, in preference order. Edge first (always present on Win10+),
+// then Chrome / Brave / Vivaldi. Caller tries them in order.
+func findChromiumBinaries() []string {
+	var out []string
+	for _, p := range chromiumCandidates() {
+		if p == "" {
+			continue
+		}
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func chromiumCandidates() []string {
 	var candidates []string
 	switch runtime.GOOS {
 	case "windows":
@@ -182,14 +212,5 @@ func findChromiumBinary() (string, error) {
 			"/usr/bin/brave-browser",
 		}
 	}
-	for _, p := range candidates {
-		if p == "" {
-			continue
-		}
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			log.Printf("[YT-LOGIN] using browser: %s", p)
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("no Chromium-family browser found (need Edge, Chrome, or Brave on PATH/standard install paths)")
+	return candidates
 }

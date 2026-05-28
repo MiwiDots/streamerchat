@@ -581,6 +581,42 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
 .btn:hover { background: #444; }
 .btn-primary { background: #9146ff; }
 .btn-primary:hover { background: #b366ff; }
+
+/* Tabbed settings modal */
+.settings-modal {
+  width: 580px;
+  max-width: 92vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.settings-tabs {
+  display: flex;
+  border-bottom: 1px solid #2a2a35;
+  background: #14141c;
+  padding: 0 8px;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+.settings-tab-btn {
+  background: transparent;
+  border: 0;
+  color: #888;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+.settings-tab-btn:hover { color: #ccc; }
+.settings-tab-btn.active {
+  color: #fff;
+  border-bottom-color: #9146ff;
+}
+.settings-pane { display: none; overflow-y: auto; flex: 1; padding-bottom: 4px; }
+.settings-pane.active { display: block; }
+
 .settings-section {
   margin-bottom: 12px;
 }

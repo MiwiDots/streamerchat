@@ -1445,6 +1445,17 @@ document.addEventListener('pointerover', bumpCursorState);
 document.addEventListener('mousemove', bumpCursorState);
 document.addEventListener('keydown', bumpCursorState);
 
+// === Settings tabs ===
+// Each .settings-tab-btn toggles its sibling .settings-pane by data-tab key.
+// Default-active tab is whichever has .active set in the HTML at page load.
+document.querySelectorAll('.settings-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.tab;
+    document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.settings-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === key));
+  });
+});
+
 // === YouTube login wiring ===
 const ytAuthInfo = document.getElementById('ytAuthInfo');
 const ytLoginBtn = document.getElementById('ytLoginBtn');
