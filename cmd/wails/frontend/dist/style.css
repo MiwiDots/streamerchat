@@ -68,6 +68,33 @@ html, body {
 .update-banner .btn { padding: 3px 10px; font-size: 12px; }
 
 /* Settings modal */
+.settings-tabs {
+  display: flex;
+  border-bottom: 1px solid #2a2a35;
+  background: #14141c;
+  padding: 0 8px;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+.settings-tab-btn {
+  background: transparent;
+  border: 0;
+  color: #888;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+.settings-tab-btn:hover { color: #ccc; }
+.settings-tab-btn.active {
+  color: #fff;
+  border-bottom-color: #9146ff;
+}
+.settings-pane { display: none; overflow-y: auto; flex: 1; padding-bottom: 4px; }
+.settings-pane.active { display: block; }
+
 .settings-section {
   padding: 10px 16px;
   border-bottom: 1px solid #2a2a35;

@@ -593,6 +593,22 @@ func (a *App) SetUpdateChannel(channel string) string {
 	return ""
 }
 
+// GetShowJoinPart returns whether join/part messages should be rendered
+// in chat. Default is true for fresh installs and configs that don't
+// have the field — the legacy gui shipped this enabled.
+func (a *App) GetShowJoinPart() bool {
+	return a.cfg.UI.ShowJoinPart
+}
+
+// SetShowJoinPart persists the toggle.
+func (a *App) SetShowJoinPart(v bool) string {
+	a.cfg.UI.ShowJoinPart = v
+	if err := a.cfg.Save(); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 func (a *App) ApplyUpdate(url string) string {
 	if url == "" {
 		return "no download URL"

@@ -1,3 +1,13 @@
+2026-05-29 02:00 - v0.3.19-alpha: streamerchat-gui tabbed settings + join/part toggle
+  - streamerchat-gui's Settings modal was one long scroll. Now mirrors
+    chathub's tabbed layout: General / Sound / Twitch / YouTube /
+    Updates / About panes with a top tab bar.
+  - General → Show join/part messages toggle (default ON, matches
+    DefaultConfig). The joinPart event handler now skips the
+    chat-line render when the toggle is off; the right-hand user list
+    still updates because that's where you actually want to see
+    who's around. New backend hooks: GetShowJoinPart, SetShowJoinPart.
+
 2026-05-29 01:45 - v0.3.18-alpha: kill startup spam + fix tab-list flicker
   - At boot the IRC layer emitted one "Joined #channel" + one
     "Connected to #channel" system message per watched channel,

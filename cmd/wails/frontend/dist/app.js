@@ -496,12 +496,16 @@ function setupEvents() {
         };
         applyRoles(u);
         users.set(key, u);
-        renderMessage({ type: 'join', platform: jp.platform, username: jp.username, timestamp: Date.now() });
+        if (showJoinPart) {
+          renderMessage({ type: 'join', platform: jp.platform, username: jp.username, timestamp: Date.now() });
+        }
         refreshUserList();
       }
     } else {
       if (users.delete(key)) {
-        renderMessage({ type: 'part', platform: jp.platform, username: jp.username, timestamp: Date.now() });
+        if (showJoinPart) {
+          renderMessage({ type: 'part', platform: jp.platform, username: jp.username, timestamp: Date.now() });
+        }
         refreshUserList();
       }
     }
@@ -630,6 +634,32 @@ const settingsModalBg = document.getElementById('settingsModalBg');
 const settingsClose = document.getElementById('settingsClose');
 const settingsDone = document.getElementById('settingsDone');
 const settingsVersion = document.getElementById('settingsVersion');
+
+// === Settings tabs ===
+document.querySelectorAll('.settings-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.tab;
+    document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.settings-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === key));
+  });
+});
+
+// === join/part visibility toggle ===
+let showJoinPart = true;
+const showJoinPartCheckbox = document.getElementById('showJoinPartCheckbox');
+if (showJoinPartCheckbox) {
+  (async () => {
+    try {
+      const v = await window.go.main.App.GetShowJoinPart();
+      showJoinPart = !!v;
+      showJoinPartCheckbox.checked = showJoinPart;
+    } catch (_) {}
+  })();
+  showJoinPartCheckbox.addEventListener('change', async () => {
+    showJoinPart = !!showJoinPartCheckbox.checked;
+    try { await window.go.main.App.SetShowJoinPart(showJoinPart); } catch (_) {}
+  });
+}
 const checkUpdateBtn = document.getElementById('checkUpdateBtn');
 const updateStatusEl = document.getElementById('updateStatus');
 const updateApplyRow = document.getElementById('updateApplyRow');
