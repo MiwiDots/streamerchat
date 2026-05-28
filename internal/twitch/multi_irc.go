@@ -3,6 +3,7 @@ package twitch
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/rand"
 	"strings"
 	"sync"
@@ -90,7 +91,11 @@ func (m *MultiIRCClient) Channels() []string {
 	return out
 }
 
-// JoinChannel adds a channel to the watch list.
+// JoinChannel adds a channel to the watch list. We deliberately don't
+// emit a "Joined #channel" system message — the tab + live indicator
+// already convey that the channel is being watched, and at startup
+// firing 22 of these floods the chat view before any real chatter
+// activity shows up.
 func (m *MultiIRCClient) JoinChannel(channel string) {
 	channel = strings.ToLower(strings.TrimPrefix(channel, "#"))
 	m.mu.Lock()
@@ -99,9 +104,6 @@ func (m *MultiIRCClient) JoinChannel(channel string) {
 	m.mu.Unlock()
 	if !already {
 		m.client.Join(channel)
-		if m.onSystem != nil {
-			m.onSystem(channel, fmt.Sprintf("Joined #%s", channel))
-		}
 	}
 }
 
@@ -290,12 +292,13 @@ func (m *MultiIRCClient) registerHandlers() {
 	})
 
 	m.client.OnConnect(func() {
+		// IRC connection is implicit — at startup this would fire one
+		// "Connected to #channel" line per watched channel, drowning the
+		// historical messages we just loaded. The connect lifecycle
+		// stays in the log instead.
 		m.mu.RLock()
-		for ch := range m.channels {
-			if m.onSystem != nil {
-				m.onSystem(ch, fmt.Sprintf("Connected to #%s", ch))
-			}
-		}
+		n := len(m.channels)
 		m.mu.RUnlock()
+		log.Printf("[IRC] read client connected (%d channels)", n)
 	})
 }

@@ -1355,18 +1355,28 @@ function applyState(data) {
   if (data.notifSound) soundOnMention = data.notifSound;
   applyShowTimestamps(data.showTimestamps !== false);
   if (Array.isArray(data.highlights)) highlights = data.highlights.map(h => h.toLowerCase());
+  // Set onlyShowLive BEFORE adding tabs so addChannelTab's initial
+  // applyOnlyLiveFilter call hides offline tabs from the start instead
+  // of showing them and then collapsing the list a second later when
+  // the live poll fills in. Same for the seeded liveStatus map.
+  onlyShowLive = !!data.onlyShowLive;
+  if (data.liveStatus) {
+    for (const [ch, live] of Object.entries(data.liveStatus)) {
+      liveStatus.set(ch, !!live);
+    }
+  }
   if (Array.isArray(data.channels)) {
     for (const ch of data.channels) {
       if (!channels.has(ch)) addChannelTab(ch);
     }
   }
-  // Apply known live status to existing tabs
+  // Re-apply liveStatus through setLiveStatus so the live-dot DOM ends
+  // up in sync with the map we just seeded.
   if (data.liveStatus) {
     for (const [ch, live] of Object.entries(data.liveStatus)) {
       setLiveStatus(ch, !!live);
     }
   }
-  onlyShowLive = !!data.onlyShowLive;
   setLoggedInUI(!!data.loggedIn, data.username || '');
   // Keep the status bar clean by default. Transient messages (errors,
   // "watching #x", "auth expired") still write into it as before.
