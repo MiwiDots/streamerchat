@@ -15,6 +15,7 @@ import (
 type IRCClient struct {
 	client       *twitch.Client
 	channel      string
+	extraJoins   []string // joined inside OnConnect alongside `channel`
 	messages     chan chat.Message
 	joins        chan chat.UserJoinPart
 	settings     chan chat.ChatSettings
@@ -23,8 +24,12 @@ type IRCClient struct {
 	resolveRoom  func(roomID string) string  // callback to resolve room IDs
 }
 
-// NewIRCClient creates a new Twitch IRC client.
-func NewIRCClient(username, oauthToken, channel string) *IRCClient {
+// NewIRCClient creates a new Twitch IRC client. extraChannels are joined
+// alongside the primary one as soon as the underlying connection signals
+// "connected" — this replaces a race where a goroutine sleeps 2s after
+// Connect() and then issues Join() calls that may land before the IRC
+// server has authenticated us.
+func NewIRCClient(username, oauthToken, channel string, extraChannels ...string) *IRCClient {
 	client := twitch.NewClient(username, "oauth:"+strings.TrimPrefix(oauthToken, "oauth:"))
 
 	// Explicitly request all capabilities including membership for JOIN/PART
@@ -34,14 +39,20 @@ func NewIRCClient(username, oauthToken, channel string) *IRCClient {
 		"twitch.tv/membership",
 	}
 
+	extras := make([]string, 0, len(extraChannels))
+	for _, ch := range extraChannels {
+		extras = append(extras, strings.TrimPrefix(ch, "#"))
+	}
+
 	irc := &IRCClient{
-		client:    client,
-		channel:   strings.TrimPrefix(channel, "#"),
-		messages:  make(chan chat.Message, 256),
-		joins:     make(chan chat.UserJoinPart, 256),
-		settings:  make(chan chat.ChatSettings, 16),
-		errors:    make(chan error, 16),
-		roomNames: make(map[string]string),
+		client:     client,
+		channel:    strings.TrimPrefix(channel, "#"),
+		extraJoins: extras,
+		messages:   make(chan chat.Message, 256),
+		joins:      make(chan chat.UserJoinPart, 256),
+		settings:   make(chan chat.ChatSettings, 16),
+		errors:     make(chan error, 16),
+		roomNames:  make(map[string]string),
 	}
 
 	irc.registerHandlers()
@@ -68,9 +79,14 @@ func (c *IRCClient) Errors() <-chan error {
 	return c.errors
 }
 
-// Connect starts the IRC connection and joins the channel.
+// Connect starts the IRC connection and joins the primary channel +
+// every extraChannel passed to NewIRCClient. Blocks until the underlying
+// client returns (i.e. terminal disconnect).
 func (c *IRCClient) Connect() error {
 	c.client.Join(c.channel)
+	for _, ch := range c.extraJoins {
+		c.client.Join(ch)
+	}
 	return c.client.Connect()
 }
 
@@ -86,7 +102,9 @@ func (c *IRCClient) Say(text string) {
 
 // SayTo sends a message to a specific channel (must be joined first).
 func (c *IRCClient) SayTo(channel, text string) {
-	c.client.Say(strings.TrimPrefix(channel, "#"), text)
+	ch := strings.TrimPrefix(channel, "#")
+	log.Printf("[SEND] PRIVMSG #%s: %q", ch, text)
+	c.client.Say(ch, text)
 }
 
 // Join adds a channel to the client's joined channels.

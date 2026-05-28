@@ -1,3 +1,17 @@
+2026-05-28 20:55 - v0.3.9-alpha: diagnose Twitch send + join race
+  - connectSendClient used to fire one goroutine for Connect() and a
+    second one that slept 2s before issuing Join() for every secondary
+    channel. If the IRC server hadn't authed us within 2s, those JOINs
+    landed on an unauthenticated connection and were silently dropped —
+    looked like "Twitch chat works for a while, then sending stops".
+    NewIRCClient now takes the extra channels up front and the JOIN
+    list is issued inline before client.Connect(), which the gempir lib
+    delivers as soon as the auth handshake finishes (and re-delivers on
+    every auto-reconnect, so we stay joined after network blips).
+  - Added [SEND] logs on connect, on lazy-reconnect, and on every
+    outgoing PRIVMSG so the next round of testing surfaces what
+    actually reaches the IRC layer.
+
 2026-05-28 20:30 - v0.3.8-alpha: auto-scroll + YT poll recovery
   - appendAndScroll measured "is the user at the bottom?" AFTER appending
     the new message, so a tall multi-line line bumped scrollHeight past

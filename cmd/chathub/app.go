@@ -406,20 +406,16 @@ func (a *App) connectSendClient() {
 		return
 	}
 	primary := twitchChans[0]
-	send := twitch.NewIRCClient(a.cfg.Username, a.cfg.AccessToken, primary)
+	send := twitch.NewIRCClient(a.cfg.Username, a.cfg.AccessToken, primary, twitchChans[1:]...)
 	a.send = send
 	a.mu.Unlock()
 
+	log.Printf("[SEND] connecting IRC for user=%s, channels=%v", a.cfg.Username, twitchChans)
 	go func() {
 		if err := send.Connect(); err != nil {
-			log.Printf("[SEND] connect failed: %v", err)
-		}
-	}()
-	// Join remaining channels after a short delay (need to be connected first)
-	go func() {
-		time.Sleep(2 * time.Second)
-		for _, ch := range twitchChans[1:] {
-			send.Join(ch)
+			log.Printf("[SEND] connect returned: %v", err)
+		} else {
+			log.Printf("[SEND] connect goroutine exited cleanly (disconnect)")
 		}
 	}()
 }
@@ -1447,13 +1443,14 @@ func (a *App) Logout() {
 // SendMessage sends a chat message to a specific channel (requires login).
 func (a *App) SendMessage(channel, text string) string {
 	if a.cfg.AccessToken == "" {
+		log.Printf("[SEND] rejected — no access token")
 		return "not logged in"
 	}
 	a.mu.Lock()
 	sender := a.send
 	a.mu.Unlock()
 	if sender == nil {
-		// Lazy connect on first send
+		log.Printf("[SEND] no IRC client yet, lazy-connecting for %s", channel)
 		go a.connectSendClient()
 		return "connecting, try again in a moment"
 	}
