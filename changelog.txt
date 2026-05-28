@@ -1,3 +1,47 @@
+2026-05-29 02:45 - v0.3.22 (stable): rollup of the v0.3.x alpha line
+  Headline changes since v0.2.27 (last stable):
+  - Twitch send via Helix POST /chat/messages instead of raw-IRC
+    PRIVMSG (Twitch's own docs call IRC "historically supported" and
+    Chatterino moved off it for the same reason — silent drops after
+    idle, no NOTICE feedback). Needs a one-time re-login on Twitch
+    to grant the new user:write:chat scope. IRC stays for read.
+  - YouTube live chat: read + send via InnerTube cookie auth, with
+    a LaunchLoginFlow that spawns an isolated Edge/Chrome window and
+    pulls the session cookies out of the browser's SQLite store
+    (no chromedp / no CDP automation Google would block). Auto-
+    refresh every 24h keeps the session warm. Send is gated by the
+    sendLiveChatMessageEndpoint extracted from the authenticated
+    initial-data render.
+  - Token storage moved out of plaintext config.json into the OS
+    keyring (Windows DPAPI + per-user file, macOS Keychain, Linux
+    libsecret), with one-shot migration for existing installs.
+  - Self-updater channels: stable / beta / alpha, picked per-user
+    from Settings → Updates. Alpha testers now get -alpha builds
+    via the in-app updater instead of manual downloads.
+  - Settings UI is tabbed in both apps (General / Sound / Twitch /
+    YouTube / Updates / About in streamerchat-gui; chathub already
+    had its tabbed layout).
+  - Chat history persistence: per-channel .jsonl restored from disk
+    on startup; filenames sanitized so YouTube tab keys (containing
+    colons) actually persist on Windows.
+  - Lots of smaller fixes shipped during the alpha:
+      auto-scroll for tall multi-line messages, YT poll loop that
+      refreshes a stale continuation, liveStatusLoop no longer wipes
+      YT live-dots, IRC send no longer races its JOINs, chat history
+      load no longer races init, no more "Joined #" / "Connected
+      to" spam on startup, tab-list no longer flashes all tabs
+      visible before hiding offline ones, scrollbar polish on the
+      settings modal, join/part toggle (default ON) in the gui.
+  See the v0.3.0-alpha through v0.3.21-alpha entries below for the
+  per-release detail.
+
+2026-05-29 02:30 - v0.3.21-alpha: hide stray vertical scroll arrows on settings tab bar
+  - Settings tab bar in both apps showed Windows WebView2's vertical
+    scroll arrows at the right edge even when only horizontal scroll
+    was meaningful. Added scrollbar-width:none + a webkit override
+    so the tab row scrolls horizontally when too many tabs to fit
+    but nothing else paints scrollbar UI.
+
 2026-05-29 02:15 - v0.3.20-alpha: gui settings scrollbar polish
   - Settings modal in streamerchat-gui was showing an empty outer
     scrollbar on Windows WebView2 even when every pane fit, because
