@@ -80,6 +80,14 @@
     <div class="settings-section">
       <label>Updates</label>
       <div class="settings-row">
+        <label for="updateChannelSelect">Update channel:</label>
+        <select id="updateChannelSelect">
+          <option value="stable">Stable</option>
+          <option value="beta">Beta</option>
+          <option value="alpha">Alpha (pre-releases)</option>
+        </select>
+      </div>
+      <div class="settings-row">
         <button class="btn" id="checkUpdateBtn">Check for updates</button>
         <span id="updateStatus" class="settings-status"></span>
       </div>

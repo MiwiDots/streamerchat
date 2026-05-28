@@ -1,3 +1,9 @@
+2026-05-29 01:30 - v0.3.17-alpha: gui update-channel dropdown
+  - streamerchat-gui got the backend hooks for update channels in
+    v0.3.14 but no UI to flip them — only chathub had the dropdown.
+    Now Settings → Updates in the gui app also has the channel
+    selector with the same hydrate-on-open / persist-on-change wiring.
+
 2026-05-29 01:20 - v0.3.16-alpha: fix history-nil race
   - The v0.3.15 diagnostics caught the actual bug: the frontend's
     setupEvents() pulls GetInitialState the moment the Wails runtime

@@ -634,6 +634,20 @@ const checkUpdateBtn = document.getElementById('checkUpdateBtn');
 const updateStatusEl = document.getElementById('updateStatus');
 const updateApplyRow = document.getElementById('updateApplyRow');
 const applyUpdateBtn = document.getElementById('applyUpdateBtn');
+const updateChannelSelect = document.getElementById('updateChannelSelect');
+if (updateChannelSelect) {
+  (async () => {
+    try {
+      const cur = await window.go.main.App.GetUpdateChannel();
+      if (cur) updateChannelSelect.value = cur;
+    } catch (_) {}
+  })();
+  updateChannelSelect.addEventListener('change', async () => {
+    try {
+      await window.go.main.App.SetUpdateChannel(updateChannelSelect.value);
+    } catch (_) {}
+  });
+}
 const autostartSection = document.getElementById('autostartSection');
 const autostartCheckbox = document.getElementById('autostartCheckbox');
 
