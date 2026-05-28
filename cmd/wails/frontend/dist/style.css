@@ -67,7 +67,20 @@ html, body {
 .update-banner .update-text { flex: 1; }
 .update-banner .btn { padding: 3px 10px; font-size: 12px; }
 
-/* Settings modal */
+/* Settings modal layout: switch the modal into a flex column so the
+   tab-bar + button row stay fixed and only the active pane scrolls.
+   Without this, .modal's outer overflow:auto wins and Windows WebView2
+   shows an empty scrollbar even when every pane fits, because the
+   layout briefly grows past the modal during transition. */
+#settingsModalBg .modal {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+#settingsModalBg .modal-header { padding: 12px 16px; margin: 0; }
+#settingsModalBg .modal-btns { padding: 12px 16px; margin: 0; border-top: 1px solid #2a2a35; }
+
 .settings-tabs {
   display: flex;
   border-bottom: 1px solid #2a2a35;

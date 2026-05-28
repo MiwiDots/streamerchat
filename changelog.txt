@@ -1,3 +1,12 @@
+2026-05-29 02:15 - v0.3.20-alpha: gui settings scrollbar polish
+  - Settings modal in streamerchat-gui was showing an empty outer
+    scrollbar on Windows WebView2 even when every pane fit, because
+    .modal had overflow:auto and its layout flexed past the height
+    briefly while the tab-bar+pane+button-row stacked. Made the
+    settings modal a proper flex column with overflow:hidden, and
+    moved padding onto the header / pane / button-row so the active
+    pane is the only scrollable region.
+
 2026-05-29 02:00 - v0.3.19-alpha: streamerchat-gui tabbed settings + join/part toggle
   - streamerchat-gui's Settings modal was one long scroll. Now mirrors
     chathub's tabbed layout: General / Sound / Twitch / YouTube /
