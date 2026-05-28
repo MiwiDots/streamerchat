@@ -29,8 +29,20 @@ type InnerTubeClient struct {
 	// field on the send_message request; the caller fetches it via
 	// SendParams() after Connect.
 	sendParams string
-	messages   chan chat.Message
-	errors     chan error
+	// cookies, when non-nil and valid, are attached to fetchInitialData so
+	// YouTube renders the authenticated chat view that includes the send
+	// endpoint — without them sendParams stays empty and posting is impossible.
+	cookies  *LoginCookies
+	messages chan chat.Message
+	errors   chan error
+}
+
+// SetCookies attaches login cookies so the initial page render is fetched
+// as the logged-in user. Must be called before Connect.
+func (c *InnerTubeClient) SetCookies(cookies LoginCookies) {
+	if cookies.Valid() {
+		c.cookies = &cookies
+	}
 }
 
 // SendParams returns the send-message endpoint params extracted from the
@@ -76,6 +88,9 @@ func (c *InnerTubeClient) fetchInitialData(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+	if c.cookies != nil {
+		req.Header.Set("Cookie", c.cookies.cookieHeader())
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

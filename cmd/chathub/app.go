@@ -391,12 +391,21 @@ func (a *App) connectSendClient() {
 	if a.send != nil {
 		a.send.Disconnect()
 	}
-	if len(a.cfg.Channels) == 0 {
+	// Filter to Twitch-only channels — YouTube/other-platform entries in
+	// cfg.Channels would otherwise poison the IRC JOIN list and silently
+	// break sending to every channel.
+	var twitchChans []string
+	for _, raw := range a.cfg.Channels {
+		if parseChannelRef(raw).Platform == "twitch" {
+			twitchChans = append(twitchChans, parseChannelRef(raw).Name)
+		}
+	}
+	if len(twitchChans) == 0 {
+		a.send = nil
 		a.mu.Unlock()
 		return
 	}
-	primary := a.cfg.Channels[0]
-	channels := append([]string{}, a.cfg.Channels...)
+	primary := twitchChans[0]
 	send := twitch.NewIRCClient(a.cfg.Username, a.cfg.AccessToken, primary)
 	a.send = send
 	a.mu.Unlock()
@@ -409,7 +418,7 @@ func (a *App) connectSendClient() {
 	// Join remaining channels after a short delay (need to be connected first)
 	go func() {
 		time.Sleep(2 * time.Second)
-		for _, ch := range channels[1:] {
+		for _, ch := range twitchChans[1:] {
 			send.Join(ch)
 		}
 	}()
@@ -938,6 +947,13 @@ func (a *App) startYouTubeWatcher(handle string) {
 			chatCancel = cc
 			a.mu.Unlock()
 			ytClient := youtube.NewInnerTubeClient(info.VideoID)
+			// Attach cookies (best-effort) so the initial page render
+			// includes the sendLiveChatMessageEndpoint — otherwise
+			// SendParams() stays empty and posting fails with a
+			// misleading "sub-only" error.
+			if creds, err := youtube.LoadLoginCookies(); err == nil && creds.Valid() {
+				ytClient.SetCookies(creds)
+			}
 			a.mu.Lock()
 			a.ytClients[tabKey] = ytClient
 			a.mu.Unlock()
