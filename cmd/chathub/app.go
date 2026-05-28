@@ -16,6 +16,7 @@ import (
 	"github.com/miwi/streamerchat/internal/selfupdate"
 	"github.com/miwi/streamerchat/internal/twitch"
 	"github.com/miwi/streamerchat/internal/version"
+	"github.com/miwi/streamerchat/internal/youtube"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -90,6 +91,39 @@ func hubConfigPath() string {
 	return filepath.Join(home, ".config", "chathub", "config.json")
 }
 
+// ChannelRef is the parsed form of an entry in HubConfig.Channels. The
+// stored format is a plain string for backwards compatibility:
+//   - "miwitv"          -> Twitch channel "miwitv"
+//   - "yt:@DEmiwitv"    -> YouTube channel handle "@DEmiwitv"
+//   - "yt:UCxxxxxxxxxx" -> YouTube channel by UC… ID
+// Twitch is the default platform when no prefix is present.
+type ChannelRef struct {
+	Platform string // "twitch" | "youtube"
+	Name     string // login (twitch) or handle/UC-id (youtube)
+}
+
+func parseChannelRef(s string) ChannelRef {
+	s = strings.TrimSpace(s)
+	if i := strings.Index(s, ":"); i > 0 && i < 6 {
+		prefix := strings.ToLower(s[:i])
+		rest := strings.TrimPrefix(strings.TrimSpace(s[i+1:]), "#")
+		switch prefix {
+		case "yt", "youtube":
+			return ChannelRef{Platform: "youtube", Name: rest}
+		case "tw", "twitch":
+			return ChannelRef{Platform: "twitch", Name: strings.ToLower(rest)}
+		}
+	}
+	return ChannelRef{Platform: "twitch", Name: strings.ToLower(strings.TrimPrefix(s, "#"))}
+}
+
+func (c ChannelRef) String() string {
+	if c.Platform == "youtube" {
+		return "yt:" + c.Name
+	}
+	return c.Name
+}
+
 type App struct {
 	ctx    context.Context
 	cfg    *HubConfig
@@ -104,6 +138,11 @@ type App struct {
 	channelEmotesLoaded map[string]bool
 	channelIDCache      map[string]string
 	liveStatus          map[string]bool
+
+	// YouTube watchers, keyed by channel handle / UC-id. Each watcher
+	// runs a LiveDetector + (when live) an InnerTube chat poller. The
+	// cancel func tears down both.
+	ytWatchers map[string]context.CancelFunc
 }
 
 func NewApp() *App {
@@ -111,6 +150,7 @@ func NewApp() *App {
 		channelEmotesLoaded: make(map[string]bool),
 		channelIDCache:      make(map[string]string),
 		liveStatus:          make(map[string]bool),
+		ytWatchers:          make(map[string]context.CancelFunc),
 	}
 }
 
@@ -184,9 +224,15 @@ func (a *App) startup(ctx context.Context) {
 
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		for _, ch := range a.cfg.Channels {
-			a.irc.JoinChannel(ch)
-			go a.loadChannelEmotes(ch)
+		for _, raw := range a.cfg.Channels {
+			ref := parseChannelRef(raw)
+			switch ref.Platform {
+			case "youtube":
+				a.startYouTubeWatcher(ref.Name)
+			default:
+				a.irc.JoinChannel(ref.Name)
+				go a.loadChannelEmotes(ref.Name)
+			}
 		}
 	}()
 
@@ -760,31 +806,179 @@ func (a *App) resolveChannelID(channel string) string {
 
 // === Frontend-bound methods ===
 
+// AddChannel adds a channel to the watched list. Accepts either:
+//   - "name"            (twitch, legacy)
+//   - "yt:@handle"      (youtube via handle)
+//   - explicit platform via the 2-arg AddChannelOn method
 func (a *App) AddChannel(channel string) string {
-	channel = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(channel), "#"))
-	if channel == "" {
+	ref := parseChannelRef(channel)
+	if ref.Name == "" {
 		return "empty channel"
 	}
+	stored := ref.String()
 	for _, c := range a.cfg.Channels {
-		if c == channel {
+		if c == stored {
 			return ""
 		}
 	}
-	a.cfg.Channels = append(a.cfg.Channels, channel)
+	a.cfg.Channels = append(a.cfg.Channels, stored)
 	a.cfg.Save()
-	a.irc.JoinChannel(channel)
-	// Also join via authenticated sender if logged in
-	a.mu.Lock()
-	sender := a.send
-	a.mu.Unlock()
-	if sender != nil {
-		sender.Join(channel)
-	}
-	go a.loadChannelEmotes(channel)
-	// Fire an immediate live check so the user doesn't have to wait up to
-	// 60s for the next liveStatusLoop tick.
-	go a.checkAndEmitLive(channel)
+	a.startChannelWatcher(ref)
 	return ""
+}
+
+// AddChannelOn is the explicit 2-arg variant called from the platform-aware
+// add-channel modal. platform is "twitch" or "youtube".
+func (a *App) AddChannelOn(platform, name string) string {
+	if name == "" {
+		return "empty channel"
+	}
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	if platform != "youtube" && platform != "twitch" {
+		platform = "twitch"
+	}
+	ref := ChannelRef{Platform: platform, Name: strings.TrimSpace(strings.TrimPrefix(name, "#"))}
+	if platform == "twitch" {
+		ref.Name = strings.ToLower(ref.Name)
+	}
+	stored := ref.String()
+	for _, c := range a.cfg.Channels {
+		if c == stored {
+			return ""
+		}
+	}
+	a.cfg.Channels = append(a.cfg.Channels, stored)
+	a.cfg.Save()
+	a.startChannelWatcher(ref)
+	return ""
+}
+
+// startChannelWatcher wires up the platform-specific subscriptions for a
+// newly added channel ref (Twitch IRC join, YouTube live-detect, etc.).
+func (a *App) startChannelWatcher(ref ChannelRef) {
+	switch ref.Platform {
+	case "youtube":
+		go a.startYouTubeWatcher(ref.Name)
+	default:
+		a.irc.JoinChannel(ref.Name)
+		a.mu.Lock()
+		sender := a.send
+		a.mu.Unlock()
+		if sender != nil {
+			sender.Join(ref.Name)
+		}
+		go a.loadChannelEmotes(ref.Name)
+		go a.checkAndEmitLive(ref.Name)
+	}
+}
+
+// startYouTubeWatcher spawns a LiveDetector for `handle` (the YT @handle
+// or UC… id). When the channel goes live it spins up an InnerTube chat
+// poller; when it goes offline it tears the poller down. Idempotent —
+// calling again with the same handle is a no-op.
+func (a *App) startYouTubeWatcher(handle string) {
+	a.mu.Lock()
+	if _, exists := a.ytWatchers[handle]; exists {
+		a.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.ytWatchers[handle] = cancel
+	a.mu.Unlock()
+
+	// Tab key on the frontend side. Matches the stored ref so add / live
+	// status / chat events all line up.
+	tabKey := "yt:" + handle
+
+	var chatCancel context.CancelFunc
+	emitLive := func(live bool) {
+		runtime.EventsEmit(a.ctx, "liveStatus", map[string]interface{}{
+			"channel": tabKey,
+			"live":    live,
+		})
+	}
+
+	detector := youtube.NewLiveDetector(
+		handle,
+		func(info youtube.LiveStreamInfo) {
+			log.Printf("[YT] %s live: %s (video=%s)", handle, info.Title, info.VideoID)
+			emitLive(true)
+			a.emitMessage(tabKey, chat.Message{
+				Platform:  chat.PlatformYouTube,
+				Type:      chat.MessageTypeSystem,
+				Channel:   tabKey,
+				Timestamp: time.Now(),
+				Text:      fmt.Sprintf("YouTube stream detected: %s", info.Title),
+			})
+			// Wire up an InnerTube chat reader for this stream.
+			chatCtx, cc := context.WithCancel(ctx)
+			a.mu.Lock()
+			if chatCancel != nil {
+				chatCancel()
+			}
+			chatCancel = cc
+			a.mu.Unlock()
+			ytClient := youtube.NewInnerTubeClient(info.VideoID)
+			go func() {
+				for {
+					select {
+					case <-chatCtx.Done():
+						return
+					case msg := <-ytClient.Messages():
+						msg.Channel = tabKey
+						a.emitMessage(tabKey, msg)
+					case e := <-ytClient.Errors():
+						log.Printf("[YT] %s: %v", handle, e)
+					}
+				}
+			}()
+			go func() {
+				for attempt := 0; attempt < 5; attempt++ {
+					if chatCtx.Err() != nil {
+						return
+					}
+					if err := ytClient.Connect(chatCtx); err != nil {
+						select {
+						case <-chatCtx.Done():
+							return
+						case <-time.After(5 * time.Second):
+						}
+						continue
+					}
+					return
+				}
+			}()
+		},
+		func() {
+			log.Printf("[YT] %s went offline", handle)
+			emitLive(false)
+			a.mu.Lock()
+			if chatCancel != nil {
+				chatCancel()
+				chatCancel = nil
+			}
+			a.mu.Unlock()
+			a.emitMessage(tabKey, chat.Message{
+				Platform:  chat.PlatformYouTube,
+				Type:      chat.MessageTypeSystem,
+				Channel:   tabKey,
+				Timestamp: time.Now(),
+				Text:      "YouTube stream ended",
+			})
+		},
+	)
+	go detector.Start(ctx)
+}
+
+// stopYouTubeWatcher tears down a previously-started watcher.
+func (a *App) stopYouTubeWatcher(handle string) {
+	a.mu.Lock()
+	cancel := a.ytWatchers[handle]
+	delete(a.ytWatchers, handle)
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // checkAndEmitLive runs a single Helix live check for `channel` and emits a
@@ -804,20 +998,44 @@ func (a *App) checkAndEmitLive(channel string) {
 }
 
 func (a *App) RemoveChannel(channel string) {
-	channel = strings.ToLower(strings.TrimPrefix(channel, "#"))
+	ref := parseChannelRef(channel)
+	stored := ref.String()
 	newList := make([]string, 0, len(a.cfg.Channels))
 	for _, c := range a.cfg.Channels {
-		if c != channel {
+		if c != stored && c != channel {
 			newList = append(newList, c)
 		}
 	}
 	a.cfg.Channels = newList
 	a.cfg.Save()
-	a.irc.PartChannel(channel)
+	switch ref.Platform {
+	case "youtube":
+		a.stopYouTubeWatcher(ref.Name)
+	default:
+		a.irc.PartChannel(ref.Name)
+	}
 }
 
+// GetChannels returns the raw stored entries (so existing autocompletes /
+// reorder still work) plus a parallel structured list for the platform-aware
+// UI in the frontend.
 func (a *App) GetChannels() []string {
 	return a.cfg.Channels
+}
+
+// GetChannelsDetailed returns each tracked channel with its platform so the
+// frontend can render the right pill / route the right send target.
+func (a *App) GetChannelsDetailed() []map[string]string {
+	out := make([]map[string]string, 0, len(a.cfg.Channels))
+	for _, c := range a.cfg.Channels {
+		ref := parseChannelRef(c)
+		out = append(out, map[string]string{
+			"raw":      c,
+			"platform": ref.Platform,
+			"name":     ref.Name,
+		})
+	}
+	return out
 }
 
 // SetChannelOrder accepts a reordered list of channel names (must contain the

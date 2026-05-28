@@ -332,6 +332,32 @@ html, body {
 .msg.join-part { color: #555; font-style: italic; font-size: 12px; padding: 1px 0; }
 body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
 
+/* Platform picker in the add-channel modal */
+.add-platform-row {
+  display: flex;
+  gap: 12px;
+  padding: 10px 14px 4px;
+}
+.platform-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+/* Platform pill on tabs */
+.tab .platform-pill {
+  font-size: 9px;
+  font-weight: bold;
+  padding: 0 4px;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+  margin-right: 2px;
+}
+.tab .platform-pill.tw { background: #9146ff; color: #fff; }
+.tab .platform-pill.yt { background: #ff0000; color: #fff; }
+
 .mention-popup {
   position: fixed;
   z-index: 1000;

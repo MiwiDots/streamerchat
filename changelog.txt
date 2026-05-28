@@ -1,3 +1,25 @@
+2026-05-28 11:00 - v0.3.0-alpha: ChatHub — experimental YouTube read support
+  - Channels can now be Twitch OR YouTube. Storage stays []string but
+    YouTube entries get a "yt:" prefix (e.g. "yt:@DEmiwitv"); legacy
+    plain-string entries are still treated as Twitch so config files
+    survive an upgrade.
+  - new ChannelRef type, parseChannelRef helper, AddChannelOn(platform,
+    name) bound method. AddChannel still works as the legacy entry.
+  - Add-channel modal: radio buttons to pick Twitch / YouTube before
+    typing the name / handle.
+  - Boot iterates all stored refs and dispatches by platform: Twitch
+    JoinChannel as before, YouTube spins up a LiveDetector + InnerTube
+    chat poller per channel. Multiple YT channels run in parallel
+    (own context.CancelFunc each).
+  - Tabs get a TW/YT pill prefix; YT pill is red, TW is brand purple.
+  - Stream meta banner is Helix-driven so it stays hidden on YT tabs.
+  - Send: Twitch still works. YouTube send shows a "coming in next
+    release" status — needs Google OAuth + YouTube Data API
+    (LiveChatMessages.insert), tracked as v0.3.1.
+  - Shipped as a PRE-RELEASE so the auto-updater does NOT pull it
+    automatically. Grab the .exe manually from the release page to
+    try.
+
 2026-05-27 13:25 - v0.2.27: ChatHub — i18n for chatter-list strings + stream meta
   - Recent additions (chatter list modal, section titles, restriction note,
     search placeholder, offline label, button hover title) all shipped with

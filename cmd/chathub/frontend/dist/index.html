@@ -59,7 +59,17 @@
       <span data-i18n="addChannel">Add Channel</span>
       <span class="modal-close" data-close="add">✕</span>
     </div>
-    <input class="modal-input" type="text" id="channelInput" data-i18n-placeholder="channelPlaceholder" placeholder="twitch channel name (no #)" autocomplete="off">
+    <div class="add-platform-row">
+      <label class="platform-pick">
+        <input type="radio" name="addPlatform" value="twitch" checked>
+        <span>Twitch</span>
+      </label>
+      <label class="platform-pick">
+        <input type="radio" name="addPlatform" value="youtube">
+        <span>YouTube</span>
+      </label>
+    </div>
+    <input class="modal-input" type="text" id="channelInput" data-i18n-placeholder="channelPlaceholder" placeholder="channel name (no #) — or @handle for YouTube" autocomplete="off">
     <div class="modal-btns">
       <button class="btn" data-close="add" data-i18n="cancel">Cancel</button>
       <button class="btn btn-primary" id="addChannelBtn" data-i18n="add">Add</button>

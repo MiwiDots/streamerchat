@@ -162,15 +162,34 @@ function setupTabDrag(tab, channel) {
   });
 }
 
+// Parse a stored channel key like "yt:@DEmiwitv" or plain "miwitv" into
+// { platform, displayName } so the tab/UI can render the right pill and
+// strip the prefix. Matches the Go-side parseChannelRef semantics.
+function parseChannelKey(key) {
+  const i = (key || '').indexOf(':');
+  if (i > 0 && i < 6) {
+    const prefix = key.slice(0, i).toLowerCase();
+    if (prefix === 'yt' || prefix === 'youtube') {
+      return { platform: 'youtube', displayName: key.slice(i + 1) };
+    }
+    if (prefix === 'tw' || prefix === 'twitch') {
+      return { platform: 'twitch', displayName: key.slice(i + 1) };
+    }
+  }
+  return { platform: 'twitch', displayName: key };
+}
+
 function addChannelTab(channel) {
   if (channels.has(channel)) return;
+  const meta = parseChannelKey(channel);
 
   const chatViewEl = el('div', { class: 'chat-view', 'data-channel': channel, style: 'display:none' });
   chatArea.appendChild(chatViewEl);
 
   const tab = el('div', { class: 'tab', 'data-channel': channel, draggable: 'true' });
   const liveDotEl = el('span', { class: 'live-dot hidden', title: 'Live' });
-  const nameEl = el('span', { class: 'channel-name' }, '#' + channel);
+  const pillEl = el('span', { class: 'platform-pill ' + (meta.platform === 'youtube' ? 'yt' : 'tw') }, meta.platform === 'youtube' ? 'YT' : 'TW');
+  const nameEl = el('span', { class: 'channel-name' }, (meta.platform === 'youtube' ? '' : '#') + meta.displayName);
   const unreadEl = el('span', { class: 'unread hidden' }, '0');
   const closeBtn = el('span', { class: 'tab-close', title: 'Close' }, '✕');
   closeBtn.onclick = (e) => {
@@ -179,6 +198,7 @@ function addChannelTab(channel) {
     removeChannelTab(channel);
   };
   tab.appendChild(liveDotEl);
+  tab.appendChild(pillEl);
   tab.appendChild(nameEl);
   tab.appendChild(unreadEl);
   tab.appendChild(closeBtn);
@@ -286,6 +306,12 @@ async function refreshStreamMeta() {
   if (streamMetaTimer) { clearInterval(streamMetaTimer); streamMetaTimer = null; }
   const ch = activeChannel;
   if (!ch) { streamMetaEl.classList.add('hidden'); return; }
+  // The stream-meta bar is Helix-driven (Twitch only). For non-Twitch
+  // tabs (YouTube etc.) just hide it — they don't have the same metadata.
+  if (parseChannelKey(ch).platform !== 'twitch') {
+    streamMetaEl.classList.add('hidden');
+    return;
+  }
   try {
     const info = await window.go.main.App.GetStreamInfo(ch);
     if (activeChannel === ch) applyStreamMeta(ch, info);
@@ -884,12 +910,18 @@ document.getElementById('testSoundBtn').onclick = () => {
 document.querySelectorAll('[data-close="add"]').forEach(el => el.onclick = closeAddModal);
 document.querySelectorAll('[data-close="settings"]').forEach(el => el.onclick = closeSettings);
 addChannelBtn.onclick = async () => {
-  const name = channelInput.value.trim().toLowerCase().replace(/^#/, '');
-  if (!name) return;
+  const rawName = channelInput.value.trim().replace(/^#/, '');
+  if (!rawName) return;
+  const platformInput = document.querySelector('input[name="addPlatform"]:checked');
+  const platform = platformInput ? platformInput.value : 'twitch';
+  // Twitch logins are case-insensitive, YouTube handles preserve case.
+  const name = platform === 'twitch' ? rawName.toLowerCase() : rawName;
+  // Stored key matches the Go-side ref string: "yt:@handle" or plain "miwitv".
+  const tabKey = platform === 'youtube' ? 'yt:' + name : name;
   try {
-    const err = await window.go.main.App.AddChannel(name);
+    const err = await window.go.main.App.AddChannelOn(platform, name);
     if (err) { alert(err); return; }
-    addChannelTab(name);
+    addChannelTab(tabKey);
     closeAddModal();
   } catch (e) { console.error(e); }
 };
@@ -1253,9 +1285,16 @@ msgInput.addEventListener('keydown', async (e) => {
   if (mentionState) return;
   if (e.key === 'Enter' && activeChannel && msgInput.value.trim()) {
     const text = msgInput.value.trim();
+    const meta = parseChannelKey(activeChannel);
+    if (meta.platform !== 'twitch') {
+      // YouTube send is in v0.3.1 (needs Google OAuth + YouTube Data API).
+      statusText.textContent = 'Send for ' + meta.platform + ' is not wired up yet — coming in the next release.';
+      return;
+    }
     msgInput.value = '';
     try {
-      const err = await window.go.main.App.SendMessage(activeChannel, text);
+      // Backend SendMessage expects the Twitch channel name (no prefix).
+      const err = await window.go.main.App.SendMessage(meta.displayName, text);
       if (err) statusText.textContent = 'Send error: ' + err;
     } catch (ex) { console.error(ex); }
   }
