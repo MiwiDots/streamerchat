@@ -5,169 +5,108 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
-
-	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
-// LaunchLoginFlow spawns a headed Edge/Chrome window in an isolated user
-// profile, sends the user to Google's ServiceLogin (which redirects to
-// YouTube after successful auth), and polls the CDP cookie store every
-// couple of seconds until the SAPISID cookie appears — which is our proxy
-// for "the user is now logged in". At that point we snapshot all the
-// session cookies we need, kill the browser, wipe the temporary profile
-// and return.
+// LaunchLoginFlow spawns the user's preferred Chromium-family browser
+// (Edge / Chrome / Brave) in an isolated temporary user-data-dir, opens
+// the Google ServiceLogin URL, and polls the browser's cookie store on
+// disk every few seconds. The instant the SAPISID cookie shows up we
+// snapshot the session, kill the browser, wipe the temp profile and
+// return.
 //
-// The flow times out after `timeout` (typically a few minutes). The caller
-// is expected to surface a settings-modal-level status while it runs and
-// to persist the returned LoginCookies via SaveLoginCookies on success.
+// We intentionally do NOT drive the browser via CDP/chromedp. Google
+// detects automation-controlled browsers and refuses to sign you in
+// ("Couldn't sign you in / This browser or app may not be secure").
+// Without CDP we're indistinguishable from a normal browser launch.
 func LaunchLoginFlow(parent context.Context, timeout time.Duration) (LoginCookies, error) {
 	exes := findChromiumBinaries()
 	if len(exes) == 0 {
 		return LoginCookies{}, fmt.Errorf("no Chromium-family browser found (need Edge, Chrome, or Brave)")
 	}
+	exe := exes[0]
+	log.Printf("[YT-LOGIN] launching browser: %s", exe)
 
-	// Try each browser in turn — Edge first, then Chrome, then Brave.
-	// chromedp's error when a browser fails to start is generic ("chrome
-	// failed to start") so without the per-attempt log the user has no
-	// way to know what was actually tried.
-	var lastErr error
-	for _, exe := range exes {
-		log.Printf("[YT-LOGIN] trying browser: %s", exe)
-		creds, err := tryLoginWithBrowser(parent, exe, timeout)
-		if err == nil {
-			return creds, nil
-		}
-		log.Printf("[YT-LOGIN] %s failed: %v", exe, err)
-		lastErr = err
-	}
-	return LoginCookies{}, fmt.Errorf("all candidate browsers failed; last error: %w", lastErr)
-}
-
-func tryLoginWithBrowser(parent context.Context, exe string, timeout time.Duration) (LoginCookies, error) {
 	tmpProfile, err := os.MkdirTemp("", "chathub-yt-login-*")
 	if err != nil {
 		return LoginCookies{}, fmt.Errorf("temp profile: %w", err)
 	}
 	defer os.RemoveAll(tmpProfile)
 
+	const loginURL = "https://accounts.google.com/ServiceLogin?service=youtube&continue=" +
+		"https%3A%2F%2Fwww.youtube.com%2F"
+
+	args := []string{
+		"--user-data-dir=" + tmpProfile,
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--disable-sync",
+		"--disable-extensions",
+		"--new-window",
+		loginURL,
+	}
+	cmd := exec.Command(exe, args...)
+	if err := cmd.Start(); err != nil {
+		return LoginCookies{}, fmt.Errorf("spawn browser: %w", err)
+	}
+	defer func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	opts := []chromedp.ExecAllocatorOption{
-		chromedp.ExecPath(exe),
-		chromedp.UserDataDir(tmpProfile),
-		chromedp.Flag("headless", false),
-		chromedp.Flag("disable-extensions", true),
-		chromedp.Flag("disable-default-apps", true),
-		chromedp.Flag("disable-sync", true),
-		chromedp.Flag("no-first-run", true),
-		chromedp.Flag("no-default-browser-check", true),
-		// Single-process model so the parent CDP attach is reliable; the
-		// "browser process" + "renderer" are the same OS process.
-		chromedp.WindowSize(480, 720),
-	}
-
-	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, opts...)
-	defer allocCancel()
-
-	taskCtx, taskCancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
-	defer taskCancel()
-
-	// Navigate to the canonical Google login URL that hands the user off
-	// to YouTube after success. After the redirect chain settles the
-	// browser ends up on www.youtube.com with all relevant cookies set.
-	const loginURL = "https://accounts.google.com/ServiceLogin?service=youtube&continue=" +
-		"https%3A%2F%2Fwww.youtube.com%2F"
-	if err := chromedp.Run(taskCtx, chromedp.Navigate(loginURL)); err != nil {
-		return LoginCookies{}, fmt.Errorf("navigate: %w", err)
-	}
-	log.Printf("[YT-LOGIN] browser window open at %s", loginURL)
-
-	// Poll cookies every 2s. Bail when we see SAPISID for .google.com or
-	// .youtube.com (both should appear simultaneously once login completes).
-	ticker := time.NewTicker(2 * time.Second)
+	// Cookie file lives under <tmpProfile>/Default/Network/Cookies after
+	// the user lands on a Google page and the browser writes its first
+	// session cookies.
+	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
+	// Give the browser a head start before the first poll — opening a
+	// fresh profile + loading the login page takes a couple of seconds
+	// and reading an empty/half-initialised SQLite db spams errors.
+	select {
+	case <-ctx.Done():
+		return LoginCookies{}, fmt.Errorf("login flow cancelled before browser came up")
+	case <-time.After(4 * time.Second):
+	}
 	for {
+		cookies, err := readBrowserProfileCookies(tmpProfile)
+		if err == nil {
+			creds := buildLoginCookies(cookies)
+			if creds.Valid() {
+				log.Printf("[YT-LOGIN] captured SAPISID (%d-byte) — closing browser", len(creds.SAPISID))
+				return creds, nil
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return LoginCookies{}, fmt.Errorf("login flow timed out / cancelled: %w", ctx.Err())
 		case <-ticker.C:
 		}
-		var cookies []*network.Cookie
-		err := chromedp.Run(taskCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-			res, err := network.GetCookies().Do(ctx)
-			if err != nil {
-				return err
-			}
-			cookies = res
-			return nil
-		}))
-		if err != nil {
-			// If the user closed the window manually the context errors out;
-			// treat that as cancellation.
-			if ctx.Err() != nil {
-				return LoginCookies{}, fmt.Errorf("login window closed before SAPISID appeared")
-			}
-			log.Printf("[YT-LOGIN] cookie fetch error (will retry): %v", err)
-			continue
-		}
-		if creds, ok := extractLoginCookies(cookies); ok {
-			log.Printf("[YT-LOGIN] success — captured %d-byte SAPISID", len(creds.SAPISID))
-			// Best-effort: close the browser nicely. The defers handle the
-			// hard kill if this errors.
-			_ = chromedp.Run(taskCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-				return chromedp.Stop().Do(ctx)
-			}))
-			return creds, nil
-		}
 	}
 }
 
-// extractLoginCookies walks the raw CDP cookie list, picks the ones we
-// need for SAPISIDHASH auth, and returns them in our LoginCookies shape.
-// Returns ok=false until SAPISID is present (the bare minimum).
-func extractLoginCookies(cookies []*network.Cookie) (LoginCookies, bool) {
-	var c LoginCookies
-	for _, k := range cookies {
-		// Cookies live on .google.com or .youtube.com depending on which
-		// host set them; we accept either domain.
-		host := strings.TrimPrefix(k.Domain, ".")
-		if !strings.HasSuffix(host, "google.com") && !strings.HasSuffix(host, "youtube.com") {
-			continue
-		}
-		switch k.Name {
-		case "SAPISID":
-			c.SAPISID = k.Value
-		case "SID":
-			if c.SID == "" {
-				c.SID = k.Value
-			}
-		case "HSID":
-			c.HSID = k.Value
-		case "SSID":
-			c.SSID = k.Value
-		case "APISID":
-			c.APISID = k.Value
-		case "__Secure-3PSID":
-			c.Secure3PSID = k.Value
-		case "__Secure-3PAPISID":
-			c.Secure3PAPISID = k.Value
-		case "__Secure-1PSID":
-			c.Secure1PSID = k.Value
-		case "__Secure-1PAPISID":
-			c.Secure1PAPISID = k.Value
-		case "LOGIN_INFO":
-			c.LoginInfo = k.Value
-		case "VISITOR_INFO1_LIVE":
-			c.VisitorInfo1Live = k.Value
-		}
+// buildLoginCookies turns a name->value map (any cookies harvested from
+// .google.com or .youtube.com) into our LoginCookies struct.
+func buildLoginCookies(m map[string]string) LoginCookies {
+	return LoginCookies{
+		SAPISID:          m["SAPISID"],
+		SID:              m["SID"],
+		HSID:             m["HSID"],
+		SSID:             m["SSID"],
+		APISID:           m["APISID"],
+		Secure3PSID:      m["__Secure-3PSID"],
+		Secure3PAPISID:   m["__Secure-3PAPISID"],
+		Secure1PSID:      m["__Secure-1PSID"],
+		Secure1PAPISID:   m["__Secure-1PAPISID"],
+		LoginInfo:        m["LOGIN_INFO"],
+		VisitorInfo1Live: m["VISITOR_INFO1_LIVE"],
 	}
-	return c, c.Valid()
 }
 
 // findChromiumBinaries returns every Chromium-family browser we can drive
@@ -191,23 +130,26 @@ func chromiumCandidates() []string {
 	switch runtime.GOOS {
 	case "windows":
 		candidates = []string{
-			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
-			filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
+			// Prefer Chrome first: Chrome users tend to have all their
+			// existing logins there and it avoids Edge's "this is a work
+			// account" enterprise gating that some users hit.
 			filepath.Join(os.Getenv("ProgramFiles"), "Google", "Chrome", "Application", "chrome.exe"),
 			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Google", "Chrome", "Application", "chrome.exe"),
 			filepath.Join(os.Getenv("LocalAppData"), "Google", "Chrome", "Application", "chrome.exe"),
+			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+			filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
 			filepath.Join(os.Getenv("ProgramFiles"), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
 		}
 	case "darwin":
 		candidates = []string{
-			"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 			"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
 		}
 	default: // linux
 		candidates = []string{
-			"/usr/bin/microsoft-edge",
 			"/usr/bin/google-chrome",
+			"/usr/bin/microsoft-edge",
 			"/usr/bin/chromium",
 			"/usr/bin/brave-browser",
 		}

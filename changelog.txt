@@ -1,3 +1,21 @@
+2026-05-28 17:00 - v0.3.3-alpha: kill chromedp, read cookies directly from disk
+  - Google blocks automation-controlled browsers ("Couldn't sign you in /
+    This browser or app may not be secure") regardless of which flags we
+    set. chromedp was always going to be a dead end for this flow.
+  - Architecture change: spawn the browser via plain os/exec (no CDP, no
+    automation flags, looks exactly like a user double-clicking the
+    shortcut). User logs in normally. We poll the browser's own SQLite
+    cookie database under the temp profile every 3s and decrypt values
+    via Windows DPAPI + AES-256-GCM with the master key from Local State.
+  - New internal/youtube/cookie_read_windows.go: SQLite read +
+    CryptUnprotectData + AES-GCM decrypt. Pure Go (modernc.org/sqlite +
+    golang.org/x/sys/windows). Stub returns clear error on non-Windows.
+  - Cookie polling waits 4s after spawn so the browser has time to
+    create the empty SQLite + write its first session row.
+  - Preferred browser order on Windows is now Chrome → Edge → Brave
+    (user pushed back: he uses Chrome). Falls back through the list if
+    the first install isn't there.
+
 2026-05-28 16:30 - v0.3.2-alpha: tabbed settings + browser fallback for YT login
   - Settings modal was scrolling forever once Twitch + YouTube + Updates +
     Debug sections piled up. Refactored into 6 tabs (General /
