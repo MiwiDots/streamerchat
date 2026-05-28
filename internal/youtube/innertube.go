@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/miwi/streamerchat/internal/chat"
@@ -72,7 +73,7 @@ func (c *InnerTubeClient) Errors() <-chan error {
 
 // Connect fetches the initial page and starts polling.
 func (c *InnerTubeClient) Connect(ctx context.Context) error {
-	if err := c.fetchInitialData(ctx); err != nil {
+	if err := c.fetchInitialData(ctx, false); err != nil {
 		return fmt.Errorf("fetch initial data: %w", err)
 	}
 
@@ -80,7 +81,11 @@ func (c *InnerTubeClient) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (c *InnerTubeClient) fetchInitialData(ctx context.Context) error {
+// fetchInitialData loads the live_chat page, extracts the continuation
+// token + sendParams, and (unless silent) emits a "connected" system
+// message. The silent variant is used by the poll loop to refresh a
+// stale continuation token without spamming a re-connect line into chat.
+func (c *InnerTubeClient) fetchInitialData(ctx context.Context, silent bool) error {
 	url := fmt.Sprintf("https://www.youtube.com/live_chat?is_popout=1&v=%s", c.videoID)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -133,16 +138,24 @@ func (c *InnerTubeClient) fetchInitialData(ctx context.Context) error {
 	// or chat may be sub-only — the read path still works).
 	c.sendParams = extractSendParams(initialData)
 
-	c.messages <- chat.Message{
-		Platform:  chat.PlatformYouTube,
-		Type:      chat.MessageTypeSystem,
-		Timestamp: time.Now(),
-		Text:      fmt.Sprintf("Connected to live chat (video: %s)", c.videoID),
+	if !silent {
+		c.messages <- chat.Message{
+			Platform:  chat.PlatformYouTube,
+			Type:      chat.MessageTypeSystem,
+			Timestamp: time.Now(),
+			Text:      fmt.Sprintf("Connected to live chat (video: %s)", c.videoID),
+		}
 	}
 	return nil
 }
 
 func (c *InnerTubeClient) pollLoop(ctx context.Context) {
+	// Consecutive "no liveChatContinuation" failures. After a threshold we
+	// refetch initial data because the continuation token YouTube gave us
+	// has gone stale and every poll silently fails — that's the
+	// "Chat hört nach einer Weile auf" symptom.
+	emptyStreak := 0
+	const emptyStreakThreshold = 3
 	for {
 		select {
 		case <-ctx.Done():
@@ -152,6 +165,16 @@ func (c *InnerTubeClient) pollLoop(ctx context.Context) {
 
 		timeoutMs, err := c.fetchMessages(ctx)
 		if err != nil {
+			if strings.Contains(err.Error(), "no liveChatContinuation") {
+				emptyStreak++
+				if emptyStreak >= emptyStreakThreshold {
+					if refreshErr := c.fetchInitialData(ctx, true); refreshErr != nil {
+						c.errors <- fmt.Errorf("refresh continuation: %w", refreshErr)
+					} else {
+						emptyStreak = 0
+					}
+				}
+			}
 			c.errors <- fmt.Errorf("poll: %w", err)
 			// Back off on error
 			timeoutMs = 10000

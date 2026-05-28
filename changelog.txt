@@ -1,3 +1,17 @@
+2026-05-28 20:30 - v0.3.8-alpha: auto-scroll + YT poll recovery
+  - appendAndScroll measured "is the user at the bottom?" AFTER appending
+    the new message, so a tall multi-line line bumped scrollHeight past
+    the 50px tolerance and the auto-stick-to-bottom check dropped the
+    user out of follow-mode. Snapshot the position BEFORE appending, and
+    re-stick on the next animation frame so late-loading badges/emotes
+    don't leave the view one image short.
+  - InnerTube poll loop: when fetchMessages returns "no
+    liveChatContinuation" three times in a row the saved token has gone
+    stale and every subsequent poll fails silently — that's the
+    "Chat hört nach einer Weile auf" symptom. Now refetches initial data
+    in-place (silent mode, no extra system message) to grab a fresh
+    continuation, then resumes polling.
+
 2026-05-28 19:00 - v0.3.7-alpha: stop liveStatusLoop from clobbering YT tabs
   - The Twitch live poller iterated cfg.Channels without filtering, so
     every 60s it called Helix /streams with a "yt:@..." login, got a

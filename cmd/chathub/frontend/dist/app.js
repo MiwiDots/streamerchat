@@ -624,13 +624,24 @@ function formatJoinPartLine(names, isJoin) {
 }
 
 function appendAndScroll(state, div) {
+  // Capture "was user at the bottom?" BEFORE inserting the new message —
+  // otherwise a tall multi-line message bumps scrollHeight by more than
+  // the 50px tolerance and the auto-scroll check thinks the user scrolled
+  // up, so we stop following. Generous tolerance (120px) also gives
+  // images and emotes that load late a chance to count as "at bottom".
+  const wasAtBottom = state.chatViewEl.scrollHeight - state.chatViewEl.scrollTop - state.chatViewEl.clientHeight < 120;
   state.chatViewEl.appendChild(div);
   while (state.chatViewEl.childElementCount > MAX_MESSAGES_PER_CHANNEL) {
     state.chatViewEl.removeChild(state.chatViewEl.firstChild);
   }
-  if (state.chatViewEl.style.display !== 'none') {
-    const atBottom = state.chatViewEl.scrollHeight - state.chatViewEl.scrollTop - state.chatViewEl.clientHeight < 50;
-    if (atBottom) state.chatViewEl.scrollTop = state.chatViewEl.scrollHeight;
+  if (state.chatViewEl.style.display !== 'none' && wasAtBottom) {
+    state.chatViewEl.scrollTop = state.chatViewEl.scrollHeight;
+    // Late-loading images (badges, emotes) can grow the message after
+    // append. Re-stick to the bottom once more on the next frame so the
+    // user isn't left one image-height short.
+    requestAnimationFrame(() => {
+      state.chatViewEl.scrollTop = state.chatViewEl.scrollHeight;
+    });
   }
 }
 
