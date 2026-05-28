@@ -156,12 +156,19 @@ type App struct {
 }
 
 func NewApp() *App {
+	// HistoryWriter is initialized HERE rather than later in startup() so
+	// it's never nil by the time the Wails bindings are reachable. The
+	// frontend's setupEvents() pulls GetInitialState → GetHistory on every
+	// configured channel within milliseconds of the runtime being ready,
+	// and previously that all raced past the startup-time assignment and
+	// returned nil — leaving the chat view permanently empty on restart.
 	return &App{
 		channelEmotesLoaded: make(map[string]bool),
 		channelIDCache:      make(map[string]string),
 		liveStatus:          make(map[string]bool),
 		ytWatchers:          make(map[string]context.CancelFunc),
 		ytClients:           make(map[string]*youtube.InnerTubeClient),
+		history:             NewHistoryWriter(),
 	}
 }
 
@@ -214,7 +221,8 @@ func (a *App) startup(ctx context.Context) {
 	// and nothing gets flagged as a bot.
 	a.botDetector = twitch.NewBotDetector()
 
-	a.history = NewHistoryWriter()
+	// a.history was already initialized in NewApp(). Just log the dir so
+	// the startup banner mentions where messages persist.
 	log.Printf("[HISTORY] log dir: %s", a.history.HistoryDir())
 
 	a.irc = twitch.NewMultiIRCClient()

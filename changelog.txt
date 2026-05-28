@@ -1,3 +1,20 @@
+2026-05-29 01:20 - v0.3.16-alpha: fix history-nil race
+  - The v0.3.15 diagnostics caught the actual bug: the frontend's
+    setupEvents() pulls GetInitialState the moment the Wails runtime
+    is up, which fans out into 22× GetHistory calls — all within the
+    same millisecond startup() began. a.history was assigned LATER in
+    startup(), so every one of those calls hit "a.history nil" and
+    returned no messages. The chat view stayed empty even though
+    miwitv.jsonl etc. on disk had thousands of lines.
+  - Moved history := NewHistoryWriter() into the NewApp() constructor.
+    Now the writer is set the moment the App struct exists, which is
+    before Wails wires up any binding, so the race window is gone.
+
+2026-05-29 01:15 - v0.3.15-alpha: extra history diagnostics
+  - Added [HISTORY] GetHistory called log + console.log in
+    loadHistoryForChannel so we could prove whether the frontend was
+    even firing the call. Confirmed it was — racing with init.
+
 2026-05-29 01:00 - v0.3.14-alpha: selfupdate channels (stable/beta/alpha)
   - selfupdate.LatestForChannel picks the newest release matching the
     chosen stream:
