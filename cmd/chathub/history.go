@@ -30,6 +30,22 @@ func NewHistoryWriter() *HistoryWriter {
 	return &HistoryWriter{files: make(map[string]*os.File), dir: dir}
 }
 
+// safeFilename maps a channel key to a filesystem-legal filename. Twitch
+// channels like "miwitv" pass through unchanged; YouTube tab keys like
+// "yt:@DEmiwitv" contain a colon which is reserved on Windows (NTFS
+// streams), so the file open silently fails and Append/Load drop
+// everything on the floor. Replace the small set of reserved chars
+// (Windows is the strict one — Mac/Linux only object to "/") with "_".
+func safeFilename(channel string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '<', '>', ':', '"', '/', '\\', '|', '?', '*':
+			return '_'
+		}
+		return r
+	}, channel)
+}
+
 // Append writes a chat message JSON line for the given channel.
 func (hw *HistoryWriter) Append(channel string, msg map[string]interface{}) {
 	hw.mu.Lock()
@@ -37,7 +53,7 @@ func (hw *HistoryWriter) Append(channel string, msg map[string]interface{}) {
 
 	f, ok := hw.files[channel]
 	if !ok {
-		path := filepath.Join(hw.dir, channel+".jsonl")
+		path := filepath.Join(hw.dir, safeFilename(channel)+".jsonl")
 		var err error
 		f, err = os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
@@ -68,9 +84,10 @@ func (hw *HistoryWriter) Close() {
 
 // Load reads the last N messages from a channel's history file.
 func (hw *HistoryWriter) Load(channel string, limit int) []map[string]interface{} {
-	path := filepath.Join(hw.dir, channel+".jsonl")
+	path := filepath.Join(hw.dir, safeFilename(channel)+".jsonl")
 	f, err := os.Open(path)
 	if err != nil {
+		log.Printf("[HISTORY] load %s: %v", path, err)
 		return nil
 	}
 	defer f.Close()
@@ -101,6 +118,7 @@ func (hw *HistoryWriter) Load(channel string, limit int) []map[string]interface{
 		m["historical"] = true
 		out = append(out, m)
 	}
+	log.Printf("[HISTORY] load %s: %d lines returned (file had %d)", path, len(out), len(lines))
 	return out
 }
 
@@ -127,7 +145,7 @@ func (hw *HistoryWriter) Clear(channel string) error {
 		delete(hw.files, channel)
 	}
 	hw.mu.Unlock()
-	return os.Remove(filepath.Join(hw.dir, channel+".jsonl"))
+	return os.Remove(filepath.Join(hw.dir, safeFilename(channel)+".jsonl"))
 }
 
 // HistoryDir returns the directory where logs are stored.

@@ -1,3 +1,16 @@
+2026-05-29 00:30 - v0.3.13-alpha: chat history filename sanitization
+  - YouTube tab keys (e.g. "yt:@DEmiwitv") were passed through to
+    history.Append/Load as-is. On Windows the colon is reserved (NTFS
+    stream separator) so os.OpenFile failed silently — meaning YT chat
+    was never persisted, and on restart Load returned nil with no
+    visible error. Now every channel key passes through safeFilename
+    which maps the reserved set (&lt;&gt;:"/\\|?*) to "_". Twitch channels
+    like "miwitv" pass through unchanged so existing miwitv.jsonl
+    files keep loading.
+  - [HISTORY] load now logs the path and line count, so if Twitch
+    history is still missing we can see whether the file was opened
+    and how many lines came back.
+
 2026-05-28 22:30 - v0.3.12-alpha: migrate Twitch send to Helix
   - Twitch officially flags IRC as "historically" supported in their
     docs and the preferred path is now "EventSub + Twitch API". The
