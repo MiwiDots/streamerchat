@@ -57,6 +57,22 @@ const updateStatusEl = document.getElementById('updateStatus');
 const updateApplyRow = document.getElementById('updateApplyRow');
 const applyUpdateBtn = document.getElementById('applyUpdateBtn');
 const releaseUrlEl = document.getElementById('releaseUrl');
+const updateChannelSelect = document.getElementById('updateChannelSelect');
+if (updateChannelSelect) {
+  // Hydrate from backend on settings open and persist on change. Empty
+  // string from a fresh install collapses to "stable" on the Go side.
+  (async () => {
+    try {
+      const cur = await window.go.main.App.GetUpdateChannel();
+      if (cur) updateChannelSelect.value = cur;
+    } catch (_) {}
+  })();
+  updateChannelSelect.addEventListener('change', async () => {
+    try {
+      await window.go.main.App.SetUpdateChannel(updateChannelSelect.value);
+    } catch (_) {}
+  });
+}
 let pendingUpdateUrl = '';
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');

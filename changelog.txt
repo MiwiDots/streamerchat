@@ -1,3 +1,20 @@
+2026-05-29 01:00 - v0.3.14-alpha: selfupdate channels (stable/beta/alpha)
+  - selfupdate.LatestForChannel picks the newest release matching the
+    chosen stream:
+      stable → /releases/latest (prereleases excluded by definition)
+      beta   → newest release whose tag doesn't contain "-alpha"
+      alpha  → newest release at all, including prereleases
+    A beta-channel user with no betas published yet falls back to the
+    latest stable so the channel can't accidentally pin them on an
+    older version.
+  - HubConfig (chathub) and UIConfig (streamerchat-gui) gained an
+    UpdateChannel field; GetUpdateChannel + SetUpdateChannel are
+    exposed to the frontend.
+  - chathub settings → Updates section now has a "Update channel"
+    dropdown so the user picks once and "Check for updates" follows
+    that stream. Future alpha releases get pulled by the existing
+    Apply path — no more manual download dance.
+
 2026-05-29 00:30 - v0.3.13-alpha: chat history filename sanitization
   - YouTube tab keys (e.g. "yt:@DEmiwitv") were passed through to
     history.Append/Load as-is. On Windows the colon is reserved (NTFS

@@ -553,7 +553,11 @@ func (a *App) CheckUpdate() map[string]interface{} {
 		"current":   version.Version,
 		"available": false,
 	}
-	rel, err := selfupdate.Latest(version.RepoOwner, version.RepoName)
+	channel := a.cfg.UI.UpdateChannel
+	if channel == "" {
+		channel = "stable"
+	}
+	rel, err := selfupdate.LatestForChannel(version.RepoOwner, version.RepoName, channel)
 	if err != nil {
 		out["error"] = err.Error()
 		return out
@@ -561,9 +565,32 @@ func (a *App) CheckUpdate() map[string]interface{} {
 	out["latest"] = rel.TagName
 	out["notes"] = rel.Body
 	out["releaseUrl"] = rel.HTMLURL
+	out["channel"] = channel
 	out["available"] = selfupdate.IsNewer(version.Version, rel.TagName)
 	out["downloadUrl"] = selfupdate.FindAsset(rel, "streamerchat-gui.exe")
 	return out
+}
+
+// GetUpdateChannel returns the saved channel for the settings UI.
+func (a *App) GetUpdateChannel() string {
+	if a.cfg.UI.UpdateChannel == "" {
+		return "stable"
+	}
+	return a.cfg.UI.UpdateChannel
+}
+
+// SetUpdateChannel persists the chosen update channel. Accepts "stable",
+// "beta", or "alpha"; everything else collapses to "stable".
+func (a *App) SetUpdateChannel(channel string) string {
+	c := strings.ToLower(strings.TrimSpace(channel))
+	if c != "stable" && c != "beta" && c != "alpha" {
+		c = "stable"
+	}
+	a.cfg.UI.UpdateChannel = c
+	if err := a.cfg.Save(); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 func (a *App) ApplyUpdate(url string) string {

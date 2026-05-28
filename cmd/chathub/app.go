@@ -40,6 +40,12 @@ type HubConfig struct {
 	// ShowTimestamps would silently invert for users who upgrade.
 	HideTimestamps bool `json:"hide_timestamps"`
 
+	// UpdateChannel selects which GitHub release stream the self-updater
+	// follows. Empty / "stable" → /releases/latest (skips prereleases).
+	// "beta" → newest release that isn't tagged -alpha. "alpha" → newest
+	// release at all (including -alpha prereleases).
+	UpdateChannel string `json:"update_channel"`
+
 	// Optional Twitch auth for sending messages
 	ClientID     string `json:"client_id"`
 	AccessToken  string `json:"access_token"`
@@ -1367,7 +1373,11 @@ func (a *App) CheckUpdate() map[string]interface{} {
 		"current":   version.Version,
 		"available": false,
 	}
-	rel, err := selfupdate.Latest(version.RepoOwner, version.RepoName)
+	channel := a.cfg.UpdateChannel
+	if channel == "" {
+		channel = "stable"
+	}
+	rel, err := selfupdate.LatestForChannel(version.RepoOwner, version.RepoName, channel)
 	if err != nil {
 		out["error"] = err.Error()
 		return out
@@ -1375,9 +1385,33 @@ func (a *App) CheckUpdate() map[string]interface{} {
 	out["latest"] = rel.TagName
 	out["notes"] = rel.Body
 	out["releaseUrl"] = rel.HTMLURL
+	out["channel"] = channel
 	out["available"] = selfupdate.IsNewer(version.Version, rel.TagName)
 	out["downloadUrl"] = selfupdate.FindAsset(rel, "chathub.exe")
 	return out
+}
+
+// GetUpdateChannel returns the saved channel for the settings UI.
+func (a *App) GetUpdateChannel() string {
+	if a.cfg.UpdateChannel == "" {
+		return "stable"
+	}
+	return a.cfg.UpdateChannel
+}
+
+// SetUpdateChannel persists the chosen update channel. Accepts "stable",
+// "beta", or "alpha" — other values are coerced to "stable" so a typo
+// can't silently disable updates.
+func (a *App) SetUpdateChannel(channel string) string {
+	c := strings.ToLower(strings.TrimSpace(channel))
+	if c != "stable" && c != "beta" && c != "alpha" {
+		c = "stable"
+	}
+	a.cfg.UpdateChannel = c
+	if err := a.cfg.Save(); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // ApplyUpdate downloads the new exe, swaps it in-place, and relaunches.

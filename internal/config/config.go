@@ -42,6 +42,7 @@ type UIConfig struct {
 	ChatSoundEnabled bool   `json:"chat_sound_enabled"`
 	ChatSoundFile    string `json:"chat_sound_file"` // absolute path to a .wav, empty = use built-in beep
 	ChatSoundVolume  int    `json:"chat_sound_volume"` // 0-100
+	UpdateChannel    string `json:"update_channel"`    // "stable" (default), "beta", or "alpha"
 }
 
 // DefaultConfig returns a config with sensible defaults.

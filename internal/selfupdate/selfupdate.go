@@ -42,8 +42,75 @@ type Release struct {
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // Latest returns the latest published release for owner/repo. Pre-releases
-// are excluded by the /releases/latest endpoint.
+// are excluded by the /releases/latest endpoint. Equivalent to
+// LatestForChannel(owner, repo, "stable") and kept for compatibility.
 func Latest(owner, repo string) (*Release, error) {
+	return LatestForChannel(owner, repo, "stable")
+}
+
+// listedRelease is the subset of /releases JSON we need when picking from
+// the full list — the only extra field over Release is Prerelease, which
+// the /releases/latest endpoint doesn't expose because it's never set
+// for what it returns.
+type listedRelease struct {
+	Release
+	Prerelease bool `json:"prerelease"`
+}
+
+// LatestForChannel picks the newest release that matches the given
+// channel:
+//   - "stable": only non-prerelease tags (this is what /releases/latest
+//     returns by definition)
+//   - "beta": skip tags containing "-alpha" — stable + "-beta" releases
+//     qualify. Falls back to stable if no beta-or-newer exists.
+//   - "alpha": newest release published, including any prerelease
+//
+// Tags published on GitHub are ordered newest-first by /releases so the
+// first match wins.
+func LatestForChannel(owner, repo, channel string) (*Release, error) {
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	if channel == "" {
+		channel = "stable"
+	}
+	if channel == "stable" {
+		return fetchLatestStable(owner, repo)
+	}
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=30", owner, repo)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("github releases status %d", resp.StatusCode)
+	}
+	var list []listedRelease
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, err
+	}
+	for _, r := range list {
+		tag := strings.ToLower(r.TagName)
+		isAlpha := strings.Contains(tag, "-alpha")
+		switch channel {
+		case "alpha":
+			return &r.Release, nil
+		case "beta":
+			if !isAlpha {
+				return &r.Release, nil
+			}
+		}
+	}
+	// Beta with no beta-or-stable in the recent list: fall back to stable.
+	return fetchLatestStable(owner, repo)
+}
+
+func fetchLatestStable(owner, repo string) (*Release, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
