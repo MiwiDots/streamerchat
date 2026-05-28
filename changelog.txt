@@ -1,3 +1,16 @@
+2026-05-28 18:00 - v0.3.5-alpha: fix "data passed to Set was too big" on Windows
+  - Windows Credential Manager caps each entry's CredentialBlob at
+    2560 bytes. A real YouTube session blob (with Secure-3PSID +
+    Secure-1PSID + the rest) easily clears 4KB — keyring.Set returned
+    "data passed to Set was too big" and the YT login flow failed at
+    the very last step.
+  - credstore now has a platform-specific backend:
+      windows: DPAPI (CryptProtectData, current-user scope) +
+               %APPDATA%/chathub/creds/<service>.bin
+      darwin/linux: OS keyring (Keychain / Secret Service, no size limit)
+  - Same crypto guarantee on Windows as Credential Manager (which uses
+    DPAPI internally), no 2560-byte ceiling.
+
 2026-05-28 17:30 - v0.3.4-alpha: YT auto-refresh + Twitch tokens to OS keyring
   - new internal/credstore: shared keyring wrapper. Service constants
     (chathub-twitch, chathub-youtube, chathub-kick) so the call sites

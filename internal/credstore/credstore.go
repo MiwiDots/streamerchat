@@ -10,11 +10,7 @@
 // you'll forget to delete it on logout.
 package credstore
 
-import (
-	"errors"
-
-	"github.com/zalando/go-keyring"
-)
+import "errors"
 
 // Service is a small enum-ish wrapper so call sites use named constants
 // rather than free strings. Add new entries here when adding a new
@@ -22,39 +18,27 @@ import (
 type Service string
 
 const (
-	Twitch       Service = "chathub-twitch"
-	YouTube      Service = "chathub-youtube"
-	Kick         Service = "chathub-kick"
-	defaultAcct          = "default"
+	Twitch  Service = "chathub-twitch"
+	YouTube Service = "chathub-youtube"
+	Kick    Service = "chathub-kick"
 )
+
+// defaultAcct is the keyring "account" name used on macOS / Linux.
+// Windows uses files instead so doesn't reference this — the //go:build !windows
+// guard on credstore_other.go gates its use.
+const defaultAcct = "default"
 
 // ErrNotFound is returned by Get when no entry exists. Callers that just
 // want a clean "logged out" branch can errors.Is(err, ErrNotFound).
 var ErrNotFound = errors.New("credstore: entry not found")
 
-// Get reads the secret blob for `svc`. Returns ErrNotFound if nothing has
-// been stored yet for that service.
-func Get(svc Service) (string, error) {
-	v, err := keyring.Get(string(svc), defaultAcct)
-	if err != nil {
-		if errors.Is(err, keyring.ErrNotFound) {
-			return "", ErrNotFound
-		}
-		return "", err
-	}
-	return v, nil
-}
+// Get reads the secret blob for `svc`. Platform-specific implementation
+// (Windows: DPAPI + file under %APPDATA%/chathub/creds; macOS/Linux: OS
+// keyring). Returns ErrNotFound when nothing has been stored yet.
+func Get(svc Service) (string, error) { return get(svc) }
 
 // Set writes (or overwrites) the secret blob for `svc`.
-func Set(svc Service, value string) error {
-	return keyring.Set(string(svc), defaultAcct, value)
-}
+func Set(svc Service, value string) error { return set(svc, value) }
 
 // Clear deletes the entry. Idempotent — missing entries are not an error.
-func Clear(svc Service) error {
-	err := keyring.Delete(string(svc), defaultAcct)
-	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
-		return err
-	}
-	return nil
-}
+func Clear(svc Service) error { return clear(svc) }
