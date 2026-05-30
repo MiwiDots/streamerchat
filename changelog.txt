@@ -1,3 +1,23 @@
+2026-05-31 19:45 - v0.3.23-alpha: scroll-follow sticky + font-size + gui i18n
+  - Scroll-follow no longer measures geometry on every append (which
+    broke under ctrl+wheel zoom and tall multi-line messages — the
+    classic "chat freezes until I scroll to the bottom manually"
+    bug). Replaced with a sticky boolean per chat view that flips
+    only from the user's own scroll input, plus a 40px slack window
+    so rounding/image-reflow can't kick us out of follow mode.
+  - Chat font size is now a real setting (Settings → General →
+    Chat font size, range 10–28 px, default 14). Backend persists
+    it; CSS var --chat-font-size drives every .msg so the whole
+    chat rescales atomically. Ctrl + / Ctrl - / Ctrl 0 shortcuts
+    work as expected, and Ctrl+mousewheel maps onto our slider
+    instead of WebView2's native zoom — which was the original
+    cause of the scroll-freeze regression.
+  - streamerchat-gui got i18n: English + German bundles, Language
+    dropdown in Settings → General, hydrated from the new
+    cfg.UI.Locale field. The settings modal is fully translated;
+    chat content + mod actions stay english for now.
+  - Both apps share the new font-size + sticky-scroll behaviour.
+
 2026-05-29 02:45 - v0.3.22 (stable): rollup of the v0.3.x alpha line
   Headline changes since v0.2.27 (last stable):
   - Twitch send via Helix POST /chat/messages instead of raw-IRC

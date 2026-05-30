@@ -225,6 +225,7 @@ html, body {
 .msg {
   padding: 1px 0;
   word-wrap: break-word;
+  font-size: var(--chat-font-size, 14px);
 }
 .msg:hover { background: rgba(145, 70, 255, 0.06); }
 

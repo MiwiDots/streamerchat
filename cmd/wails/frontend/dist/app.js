@@ -341,13 +341,29 @@ async function renderMessage(msg) {
   trimAndScroll();
 }
 
+// Sticky follow state: we don't re-measure scroll geometry on every
+// append (which breaks under ctrl+wheel zoom and tall multi-line
+// messages). Instead we set true/false from the user's own scroll
+// input, with 40px slack so rounding / image reflow doesn't kick us
+// out of follow mode by accident.
+let followingBottom = true;
+chatEl.addEventListener('scroll', () => {
+  const nearBottom = chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 40;
+  followingBottom = nearBottom;
+});
+
 function trimAndScroll() {
   while (chatEl.childElementCount > MAX_MESSAGES) {
     chatEl.removeChild(chatEl.firstChild);
   }
-  // Auto-scroll if already at bottom
-  const atBottom = chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 50;
-  if (atBottom) chatEl.scrollTop = chatEl.scrollHeight;
+  if (followingBottom) {
+    chatEl.scrollTop = chatEl.scrollHeight;
+    // Late-loading images / emotes can push the bottom out by a pixel
+    // after we just landed there. Re-stick on the next frame.
+    requestAnimationFrame(() => {
+      if (followingBottom) chatEl.scrollTop = chatEl.scrollHeight;
+    });
+  }
 }
 
 // === Modal ===
@@ -643,6 +659,76 @@ document.querySelectorAll('.settings-tab-btn').forEach(btn => {
     document.querySelectorAll('.settings-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === key));
   });
 });
+
+// === i18n: hydrate locale from backend, apply on change ===
+(async () => {
+  try {
+    const loc = await window.go.main.App.GetLocale();
+    if (loc) i18n.setLocale(loc);
+  } catch (_) {}
+  i18n.applyI18n();
+})();
+const localeSelect = document.getElementById('localeSelect');
+if (localeSelect) {
+  (async () => {
+    try {
+      const cur = await window.go.main.App.GetLocale();
+      if (cur) localeSelect.value = cur;
+    } catch (_) {}
+  })();
+  localeSelect.addEventListener('change', async () => {
+    const loc = localeSelect.value;
+    i18n.setLocale(loc);
+    try { await window.go.main.App.SetLocale(loc); } catch (_) {}
+  });
+}
+
+// === Font-size: slider + Ctrl+/-/0 + Ctrl+wheel ===
+let chatFontSize = 14;
+function applyFontSize(px) {
+  chatFontSize = Math.max(10, Math.min(28, px | 0));
+  document.documentElement.style.setProperty('--chat-font-size', chatFontSize + 'px');
+  const lbl = document.getElementById('fontSizeLabel');
+  if (lbl) lbl.textContent = chatFontSize + ' px';
+  const range = document.getElementById('fontSizeRange');
+  if (range) range.value = String(chatFontSize);
+}
+(async () => {
+  try {
+    const px = await window.go.main.App.GetFontSize();
+    applyFontSize(px || 14);
+  } catch (_) { applyFontSize(14); }
+})();
+async function persistFontSize() {
+  try { await window.go.main.App.SetFontSize(chatFontSize); } catch (_) {}
+}
+const fontSizeRange = document.getElementById('fontSizeRange');
+if (fontSizeRange) {
+  fontSizeRange.addEventListener('input', () => applyFontSize(+fontSizeRange.value));
+  fontSizeRange.addEventListener('change', persistFontSize);
+}
+document.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.key === '+' || e.key === '=') {
+    e.preventDefault();
+    applyFontSize(chatFontSize + 1);
+    persistFontSize();
+  } else if (e.key === '-' || e.key === '_') {
+    e.preventDefault();
+    applyFontSize(chatFontSize - 1);
+    persistFontSize();
+  } else if (e.key === '0') {
+    e.preventDefault();
+    applyFontSize(14);
+    persistFontSize();
+  }
+});
+document.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  applyFontSize(chatFontSize + (e.deltaY < 0 ? 1 : -1));
+  persistFontSize();
+}, { passive: false });
 
 // === join/part visibility toggle ===
 let showJoinPart = true;

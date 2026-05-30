@@ -593,6 +593,52 @@ func (a *App) SetUpdateChannel(channel string) string {
 	return ""
 }
 
+// GetFontSize returns the chat font size in pixels (10–28), defaulting to 14.
+func (a *App) GetFontSize() int {
+	if a.cfg.UI.FontSize < 10 || a.cfg.UI.FontSize > 28 {
+		return 14
+	}
+	return a.cfg.UI.FontSize
+}
+
+// SetFontSize persists the chat font size, clamped to [10, 28].
+func (a *App) SetFontSize(px int) string {
+	if px < 10 {
+		px = 10
+	}
+	if px > 28 {
+		px = 28
+	}
+	a.cfg.UI.FontSize = px
+	if err := a.cfg.Save(); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// GetLocale returns the active UI locale ("en" or "de"), defaulting "en".
+func (a *App) GetLocale() string {
+	l := strings.ToLower(strings.TrimSpace(a.cfg.UI.Locale))
+	if l != "de" {
+		return "en"
+	}
+	return l
+}
+
+// SetLocale persists the chosen UI locale. Anything other than "de"
+// collapses to "en".
+func (a *App) SetLocale(loc string) string {
+	l := strings.ToLower(strings.TrimSpace(loc))
+	if l != "de" {
+		l = "en"
+	}
+	a.cfg.UI.Locale = l
+	if err := a.cfg.Save(); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 // GetShowJoinPart returns whether join/part messages should be rendered
 // in chat. Default is true for fresh installs and configs that don't
 // have the field — the legacy gui shipped this enabled.

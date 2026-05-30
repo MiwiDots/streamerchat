@@ -101,6 +101,14 @@
         </select>
       </div>
       <div class="settings-section">
+        <label data-i18n="fontSize">Chat font size</label>
+        <div class="settings-row">
+          <input type="range" id="fontSizeRange" min="10" max="28" step="1" style="flex:1;">
+          <span id="fontSizeLabel" style="font-size:12px;color:#888;width:48px;text-align:right;">14 px</span>
+        </div>
+        <p class="hint" style="font-size:11px;color:#888;margin-top:4px;" data-i18n="fontSizeHint">Tip: Ctrl + / Ctrl - / Ctrl 0 also work.</p>
+      </div>
+      <div class="settings-section">
         <label class="checkbox-row">
           <input type="checkbox" id="onlyLiveCheckbox">
           <span data-i18n="onlyLive">Only show channels that are currently live</span>

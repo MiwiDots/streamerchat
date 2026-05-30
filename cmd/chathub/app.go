@@ -46,6 +46,11 @@ type HubConfig struct {
 	// release at all (including -alpha prereleases).
 	UpdateChannel string `json:"update_channel"`
 
+	// FontSize is the user-chosen chat font size in pixels (10–22).
+	// Zero / unset = 14 (the historic default). Applied as a CSS var
+	// on :root so all chat messages scale together.
+	FontSize int `json:"font_size"`
+
 	// Optional Twitch auth for sending messages
 	ClientID     string `json:"client_id"`
 	AccessToken  string `json:"access_token"`
@@ -1348,6 +1353,7 @@ func (a *App) GetInitialState() map[string]interface{} {
 		"locale":       a.cfg.Locale,
 		"notifSound":   a.cfg.NotifSound,
 		"showTimestamps": !a.cfg.HideTimestamps,
+		"fontSize":       a.GetFontSize(),
 	}
 }
 
@@ -1399,6 +1405,29 @@ func (a *App) CheckUpdate() map[string]interface{} {
 	out["available"] = selfupdate.IsNewer(version.Version, rel.TagName)
 	out["downloadUrl"] = selfupdate.FindAsset(rel, "chathub.exe")
 	return out
+}
+
+// GetFontSize returns the saved chat font size (px), defaulting to 14.
+func (a *App) GetFontSize() int {
+	if a.cfg.FontSize < 10 || a.cfg.FontSize > 28 {
+		return 14
+	}
+	return a.cfg.FontSize
+}
+
+// SetFontSize persists the chat font size. Clamped to [10, 28].
+func (a *App) SetFontSize(px int) string {
+	if px < 10 {
+		px = 10
+	}
+	if px > 28 {
+		px = 28
+	}
+	a.cfg.FontSize = px
+	if err := a.cfg.Save(); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // GetUpdateChannel returns the saved channel for the settings UI.

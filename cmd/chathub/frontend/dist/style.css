@@ -301,6 +301,10 @@ html, body {
 .msg {
   padding: 1px 0;
   word-wrap: break-word;
+  /* Chat message font-size is driven by --chat-font-size on :root so
+     the slider in Settings → General + Ctrl+/Ctrl-/Ctrl0 shortcuts
+     can rescale everything at once. */
+  font-size: var(--chat-font-size, 14px);
 }
 .msg:hover { background: rgba(145,70,255,0.06); }
 .msg.highlight { background: rgba(255,215,0,0.1); border-left: 3px solid #ffd700; padding-left: 4px; }

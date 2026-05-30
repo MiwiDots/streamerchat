@@ -641,24 +641,47 @@ function formatJoinPartLine(names, isJoin) {
   return i18n.t(isJoin ? 'userJoined' : 'userParted', { name: list });
 }
 
+// followingBottom is a sticky boolean stored as a property on the
+// chat-view element. We update it from user scroll events only — never
+// re-measure on append. This survives ctrl+wheel zoom (which changes
+// scrollHeight without any user intent to leave follow mode) and the
+// case where a tall multi-line message would push the bottom out of
+// the 120px tolerance window. Default: true (follow until the user
+// scrolls up themselves).
+function isFollowingBottom(chatViewEl) {
+  return chatViewEl._followingBottom !== false;
+}
+function setFollowingBottom(chatViewEl, v) {
+  chatViewEl._followingBottom = !!v;
+}
+function attachScrollFollow(chatViewEl) {
+  if (chatViewEl._followAttached) return;
+  chatViewEl._followAttached = true;
+  chatViewEl._followingBottom = true;
+  chatViewEl.addEventListener('scroll', () => {
+    // 40px slack so a rounding error / image reflow doesn't flip us
+    // out of follow mode by accident.
+    const nearBottom = chatViewEl.scrollHeight - chatViewEl.scrollTop - chatViewEl.clientHeight < 40;
+    chatViewEl._followingBottom = nearBottom;
+  });
+}
+
 function appendAndScroll(state, div) {
-  // Capture "was user at the bottom?" BEFORE inserting the new message —
-  // otherwise a tall multi-line message bumps scrollHeight by more than
-  // the 50px tolerance and the auto-scroll check thinks the user scrolled
-  // up, so we stop following. Generous tolerance (120px) also gives
-  // images and emotes that load late a chance to count as "at bottom".
-  const wasAtBottom = state.chatViewEl.scrollHeight - state.chatViewEl.scrollTop - state.chatViewEl.clientHeight < 120;
+  attachScrollFollow(state.chatViewEl);
+  const following = isFollowingBottom(state.chatViewEl);
   state.chatViewEl.appendChild(div);
   while (state.chatViewEl.childElementCount > MAX_MESSAGES_PER_CHANNEL) {
     state.chatViewEl.removeChild(state.chatViewEl.firstChild);
   }
-  if (state.chatViewEl.style.display !== 'none' && wasAtBottom) {
+  if (state.chatViewEl.style.display !== 'none' && following) {
     state.chatViewEl.scrollTop = state.chatViewEl.scrollHeight;
     // Late-loading images (badges, emotes) can grow the message after
-    // append. Re-stick to the bottom once more on the next frame so the
-    // user isn't left one image-height short.
+    // append. Re-stick to the bottom once more on the next frame so
+    // the user isn't left one image-height short.
     requestAnimationFrame(() => {
-      state.chatViewEl.scrollTop = state.chatViewEl.scrollHeight;
+      if (isFollowingBottom(state.chatViewEl)) {
+        state.chatViewEl.scrollTop = state.chatViewEl.scrollHeight;
+      }
     });
   }
 }
@@ -849,6 +872,60 @@ if (applyUpdateBtn) {
     }
   });
 }
+
+// === Font-size: slider + Ctrl+/-/0 shortcuts ===
+let chatFontSize = 14;
+function applyFontSize(px) {
+  chatFontSize = Math.max(10, Math.min(28, px | 0));
+  document.documentElement.style.setProperty('--chat-font-size', chatFontSize + 'px');
+  const lbl = document.getElementById('fontSizeLabel');
+  if (lbl) lbl.textContent = chatFontSize + ' px';
+  const range = document.getElementById('fontSizeRange');
+  if (range) range.value = String(chatFontSize);
+}
+async function loadFontSize() {
+  try {
+    const px = await window.go.main.App.GetFontSize();
+    applyFontSize(px || 14);
+  } catch (_) { applyFontSize(14); }
+}
+async function persistFontSize() {
+  try { await window.go.main.App.SetFontSize(chatFontSize); } catch (_) {}
+}
+loadFontSize();
+const fontSizeRange = document.getElementById('fontSizeRange');
+if (fontSizeRange) {
+  fontSizeRange.addEventListener('input', () => applyFontSize(+fontSizeRange.value));
+  fontSizeRange.addEventListener('change', persistFontSize);
+}
+// Ctrl + (=/+), Ctrl - , Ctrl 0 — intercept BEFORE the browser zoom kicks
+// in, otherwise WebView2's own zoom would change layout geometry and
+// break the scroll-follow heuristics (which is what we just fixed by
+// switching to a sticky boolean, but better to also keep zoom off).
+document.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.key === '+' || e.key === '=') {
+    e.preventDefault();
+    applyFontSize(chatFontSize + 1);
+    persistFontSize();
+  } else if (e.key === '-' || e.key === '_') {
+    e.preventDefault();
+    applyFontSize(chatFontSize - 1);
+    persistFontSize();
+  } else if (e.key === '0') {
+    e.preventDefault();
+    applyFontSize(14);
+    persistFontSize();
+  }
+});
+// Also intercept Ctrl+wheel so it doesn't zoom-blow the layout. We map
+// it onto our own slider instead.
+document.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  applyFontSize(chatFontSize + (e.deltaY < 0 ? 1 : -1));
+  persistFontSize();
+}, { passive: false });
 
 // Locale change: apply immediately so the user sees the effect, persist to config.
 if (localeSelect) {

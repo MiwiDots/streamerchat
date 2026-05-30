@@ -83,6 +83,8 @@ const STRINGS = {
     updateChecking: 'Checking…',
     updateFailed: 'Update failed: {error}',
     updateUnsupported: 'Auto-update is only available on Windows. Download manually from the release page.',
+    fontSize: 'Chat font size',
+    fontSizeHint: 'Tip: Ctrl + / Ctrl - / Ctrl 0 also work.',
   },
   de: {
     emptyAdd: 'Klicke auf <strong>+</strong> um einen Twitch-Channel hinzuzufügen',
@@ -166,6 +168,8 @@ const STRINGS = {
     updateChecking: 'Suche…',
     updateFailed: 'Update fehlgeschlagen: {error}',
     updateUnsupported: 'Auto-Update gibt es nur unter Windows. Bitte manuell von der Release-Seite herunterladen.',
+    fontSize: 'Schriftgröße im Chat',
+    fontSizeHint: 'Tipp: Strg + / Strg - / Strg 0 funktionieren auch.',
   },
 };
 
