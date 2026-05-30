@@ -1,3 +1,25 @@
+2026-05-31 20:30 - v0.3.24 (stable): 7TV paints + badges
+  - New internal/sevenTV package: single WebSocket connection to
+    wss://events.7tv.io/v3, subscribes to entitlement.* per Twitch
+    broadcaster id, parses paint/badge entitlements off the wire and
+    pushes them down to the frontend as Wails "sevenTVCosmetic"
+    events. Per-channel HostID subscription happens lazily in
+    resolveChannelID once we know a channel's Twitch user id; the
+    streamer-gui app subscribes the broadcaster's own channel once
+    auth validates.
+  - Paint definitions (gradients, solid colors, drop shadows) are
+    fetched in bulk from https://7tv.io/v3/cosmetics every 30 minutes
+    and converted to CSS rules — linear/radial gradients become
+    background + -webkit-background-clip:text, solids stay as
+    plain color, paint shadows turn into text-shadow.
+  - Both apps' chat-message render path now looks up the sender's
+    Twitch user_id in the cosmetic map: if a paint is present, the
+    username span gets the gradient/animated paint instead of the
+    flat Twitch color; if a badge is present, it renders as a small
+    image right before the username with the badge's tooltip.
+  - Falls back gracefully — users without a 7TV subscription render
+    exactly as before, no extra network hits per message.
+
 2026-05-31 19:55 - v0.3.23 (stable): scroll-follow sticky + font-size + gui i18n
   - Scroll-follow no longer measures geometry on every append (which
     broke under ctrl+wheel zoom and tall multi-line messages — the

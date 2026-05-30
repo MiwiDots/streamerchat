@@ -102,6 +102,11 @@ function el(tag, attrs, ...children) {
   return e;
 }
 
+// 7TV cosmetics indexed by Twitch user_id. Populated from the
+// "sevenTVCosmetic" Wails event the backend emits whenever the
+// EventAPI WebSocket learns about a paint or badge entitlement.
+const sevenTVByUser = new Map();
+
 // === Channel tabs ===
 async function loadHistoryForChannel(channel) {
   console.log('[history] loading for', channel);
@@ -571,11 +576,22 @@ async function renderMessage(msg) {
 
   const name = msg.displayName || msg.username;
   const color = msg.color || '#ffffff';
-  const usernameEl = el('span', { class: 'username', style: 'color:' + color }, name);
+  // 7TV paid users may have a paint applied to their username — a CSS
+  // gradient/background-clip recipe sent over the EventAPI WebSocket.
+  // Falls back to plain Twitch color when the user has nothing custom.
+  const stv = msg.userId ? sevenTVByUser.get(msg.userId) : null;
+  const usernameStyle = stv && stv.paintCSS ? stv.paintCSS : ('color:' + color);
+  const usernameEl = el('span', { class: 'username', style: usernameStyle }, name);
   usernameEl.addEventListener('click', (e) => {
     e.stopPropagation();
     openUserCard(msg.channel, msg.username, msg.userId);
   });
+  // 7TV badge (paid cosmetic) renders right before the username so the
+  // user can see who's a 7TV subscriber.
+  if (stv && stv.badgeURL) {
+    const b = el('img', { class: 'badge-img stv-badge', src: stv.badgeURL, title: stv.badgeName || '7TV' });
+    div.appendChild(b);
+  }
   div.appendChild(usernameEl);
   div.appendChild(document.createTextNode(': '));
 
@@ -1503,6 +1519,19 @@ function setupEvents() {
 
   window.runtime.EventsOn('liveStatus', (data) => {
     setLiveStatus(data.channel, !!data.live);
+  });
+
+  // 7TV cosmetic updates: backend pushes one of these per affected
+  // Twitch user_id whenever a paint/badge entitlement is created or
+  // updated for a channel we're watching. We keep a flat map so the
+  // chat-render path can look up cosmetics by sender in O(1).
+  window.runtime.EventsOn('sevenTVCosmetic', (c) => {
+    if (!c || !c.userID) return;
+    sevenTVByUser.set(c.userID, {
+      paintCSS: c.paintCSS || '',
+      badgeURL: c.badgeURL || '',
+      badgeName: c.badgeName || '',
+    });
   });
 
   window.runtime.EventsOn('authExpired', () => {

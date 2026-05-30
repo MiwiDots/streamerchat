@@ -14,6 +14,7 @@ import (
 
 	"github.com/miwi/streamerchat/internal/chat"
 	"github.com/miwi/streamerchat/internal/selfupdate"
+	"github.com/miwi/streamerchat/internal/sevenTV"
 	"github.com/miwi/streamerchat/internal/twitch"
 	"github.com/miwi/streamerchat/internal/version"
 	"github.com/miwi/streamerchat/internal/youtube"
@@ -158,6 +159,12 @@ type App struct {
 	// pull the live stream's SendParams when the user posts. Keyed
 	// by the same tab key ("yt:<handle>") emitMessage uses.
 	ytClients map[string]*youtube.InnerTubeClient
+
+	// 7TV cosmetics: a single WebSocket connection subscribes to
+	// entitlement.* events for every Twitch channel we know the
+	// broadcaster id of, and pushes paint/badge updates down to the
+	// frontend so chat messages can render them.
+	stv *sevenTV.Client
 }
 
 func NewApp() *App {
@@ -277,6 +284,18 @@ func (a *App) startup(ctx context.Context) {
 	if a.cfg.AccessToken != "" && a.cfg.Username != "" {
 		go a.validateAndConnect()
 	}
+
+	// 7TV cosmetics: one WS connection, channels subscribed lazily as
+	// we resolve their broadcaster ids in resolveChannelID().
+	a.stv = sevenTV.NewClient(ctx, func(c sevenTV.Cosmetic) {
+		runtime.EventsEmit(a.ctx, "sevenTVCosmetic", map[string]interface{}{
+			"userID":    c.UserID,
+			"paintCSS":  c.PaintCSS,
+			"badgeURL":  c.BadgeURL,
+			"badgeName": c.BadgeName,
+		})
+	})
+	a.stv.Start()
 
 	// Live status poller (every 60s)
 	go a.liveStatusLoop()
@@ -864,7 +883,14 @@ func (a *App) resolveChannelID(channel string) string {
 	id := data.Data[0].ID
 	a.mu.Lock()
 	a.channelIDCache[channel] = id
+	stv := a.stv
 	a.mu.Unlock()
+	// Subscribe to 7TV cosmetics for this channel the moment we know
+	// its broadcaster id. stv may be nil if startup is still wiring;
+	// AddChannel queues the host id either way.
+	if stv != nil {
+		stv.AddChannel(id)
+	}
 	return id
 }
 

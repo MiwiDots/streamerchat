@@ -14,6 +14,7 @@ import (
 	"github.com/miwi/streamerchat/internal/chat"
 	"github.com/miwi/streamerchat/internal/config"
 	"github.com/miwi/streamerchat/internal/selfupdate"
+	"github.com/miwi/streamerchat/internal/sevenTV"
 	"github.com/miwi/streamerchat/internal/twitch"
 	"github.com/miwi/streamerchat/internal/version"
 	"github.com/miwi/streamerchat/internal/youtube"
@@ -40,6 +41,11 @@ type App struct {
 	badges      *twitch.BadgeRegistry
 
 	ytChatCancel context.CancelFunc
+
+	// 7TV cosmetics over EventAPI: subscribes to entitlement events for
+	// this streamer's Twitch channel so paint/badge updates can be
+	// pushed to the frontend and applied to chat messages.
+	stv *sevenTV.Client
 }
 
 func NewApp() *App {
@@ -168,6 +174,21 @@ func (a *App) bootSequence() {
 	}
 
 	a.helixClient, _ = twitch.NewHelixClient(a.cfg.Twitch.ClientID, a.cfg.Twitch.AccessToken, a.cfg.Twitch.BotUserID, a.cfg.Twitch.BotUserID)
+
+	// 7TV cosmetics: spin the EventAPI client once we know the
+	// broadcaster id (single-channel app, so this fires once).
+	if a.stv == nil && a.cfg.Twitch.BotUserID != "" {
+		a.stv = sevenTV.NewClient(a.ctx, func(c sevenTV.Cosmetic) {
+			runtime.EventsEmit(a.ctx, "sevenTVCosmetic", map[string]interface{}{
+				"userID":    c.UserID,
+				"paintCSS":  c.PaintCSS,
+				"badgeURL":  c.BadgeURL,
+				"badgeName": c.BadgeName,
+			})
+		})
+		a.stv.Start()
+		a.stv.AddChannel(a.cfg.Twitch.BotUserID)
+	}
 
 	// Load badges now that auth is valid (was previously a race against bootSequence).
 	a.loadBadges()

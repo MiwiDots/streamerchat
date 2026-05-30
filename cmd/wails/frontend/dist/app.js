@@ -318,7 +318,15 @@ async function renderMessage(msg) {
 
   const name = msg.displayName || msg.username;
   const color = msg.color || '#ffffff';
-  const usernameEl = el('span', { class: 'username', style: 'color:' + color }, name);
+  // 7TV paid users may have a paint (gradient/animated color) applied
+  // to their username, or a 7TV badge. Look the sender up in the map
+  // the EventAPI WS populates; fall back to plain Twitch color.
+  const stv = msg.userId ? sevenTVByUser.get(msg.userId) : null;
+  const usernameStyle = stv && stv.paintCSS ? stv.paintCSS : ('color:' + color);
+  const usernameEl = el('span', { class: 'username', style: usernameStyle }, name);
+  if (stv && stv.badgeURL) {
+    div.appendChild(el('img', { class: 'badge-img stv-badge', src: stv.badgeURL, title: stv.badgeName || '7TV' }));
+  }
   usernameEl.onclick = () => {
     const u = users.get(userKey(msg.platform, msg.username)) || {
       userId: msg.userId, username: msg.username, displayName: msg.displayName,
@@ -502,6 +510,18 @@ function setupEvents() {
     }
   });
 
+  // 7TV cosmetic entitlements pushed from the EventAPI WebSocket on
+  // the backend. Each event affects one Twitch user_id; we store the
+  // paint CSS + badge URL flatly so renderMessage can look them up.
+  window.runtime.EventsOn('sevenTVCosmetic', (c) => {
+    if (!c || !c.userID) return;
+    sevenTVByUser.set(c.userID, {
+      paintCSS: c.paintCSS || '',
+      badgeURL: c.badgeURL || '',
+      badgeName: c.badgeName || '',
+    });
+  });
+
   window.runtime.EventsOn('joinPart', (jp) => {
     const key = userKey(jp.platform, jp.username);
     if (jp.isJoin) {
@@ -650,6 +670,11 @@ const settingsModalBg = document.getElementById('settingsModalBg');
 const settingsClose = document.getElementById('settingsClose');
 const settingsDone = document.getElementById('settingsDone');
 const settingsVersion = document.getElementById('settingsVersion');
+
+// 7TV paint/badge cosmetics keyed by Twitch user_id. Populated by the
+// "sevenTVCosmetic" Wails event the backend emits when its EventAPI
+// WebSocket learns about a paint/badge entitlement.
+const sevenTVByUser = new Map();
 
 // === Settings tabs ===
 document.querySelectorAll('.settings-tab-btn').forEach(btn => {
