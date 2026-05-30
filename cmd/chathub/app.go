@@ -1442,6 +1442,18 @@ func (a *App) CheckUpdate() map[string]interface{} {
 	return out
 }
 
+// LookupSevenTV triggers a 7TV cosmetic fetch for a Twitch user id.
+// Called by the frontend when the user-card modal opens, so paints/
+// badges show up even for users we haven't yet seen chat from. The
+// backend dedupes per user — a no-op for users we've already looked
+// up — and emits the result via the "sevenTVCosmetic" Wails event
+// the frontend already subscribes to.
+func (a *App) LookupSevenTV(twitchUserID string) {
+	if a.stv != nil && twitchUserID != "" {
+		a.stv.LookupUser(twitchUserID)
+	}
+}
+
 // GetFontSize returns the saved chat font size (px), defaulting to 14.
 func (a *App) GetFontSize() int {
 	if a.cfg.FontSize < 10 || a.cfg.FontSize > 28 {

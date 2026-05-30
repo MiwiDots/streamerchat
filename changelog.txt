@@ -1,3 +1,12 @@
+2026-05-31 23:20 - v0.3.30 (stable): user card shows 7TV paint + badge
+  - openUserCard in chathub now also applies the 7TV cosmetic for
+    the opened user: paint CSS replaces the flat Twitch color on the
+    big username line, and a 7TV badge image renders right next to
+    it when present. A new LookupSevenTV backend method is called
+    when the card opens so cosmetics show up even for users we
+    haven't seen chat from yet (e.g. clicking a name from history).
+    Backend dedupes per user so repeated card opens cost nothing.
+
 2026-05-31 23:00 - v0.3.29 (stable): 7TV rewritten on v4 GraphQL
   - The v0.3.28 log finally let me see what was actually happening:
     WebSocket subscribes were ack'd but produced zero entitlement

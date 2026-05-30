@@ -396,6 +396,8 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
 .uc-avatar { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; }
 .uc-head-text { display: flex; flex-direction: column; gap: 2px; }
 .uc-name { font-size: 18px; font-weight: bold; }
+.uc-name-row { display: flex; align-items: center; gap: 6px; }
+.uc-stv-badge { height: 22px; width: 22px; vertical-align: middle; }
 .uc-meta { font-size: 11px; color: #888; }
 .uc-facts { padding: 10px 14px; display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid #2a2a35; }
 .uc-fact { font-size: 13px; color: #ccc; }

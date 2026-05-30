@@ -1250,10 +1250,25 @@ async function openUserCard(channel, username, userId) {
   const avatar = data && data.avatar;
   const userId2 = (data && data.userId) || (local && local.userId) || '';
 
+  // Kick off a 7TV lookup for users we've never seen chat from yet
+  // (e.g. opening the card for a username from history). The backend
+  // dedupes by user id; the event handler at the top of this script
+  // populates sevenTVByUser when the response arrives.
+  if (userId2) {
+    try { window.go.main.App.LookupSevenTV(userId2); } catch (_) {}
+  }
+  const stv = userId2 ? sevenTVByUser.get(userId2) : null;
+  const nameStyle = stv && stv.paintCSS ? stv.paintCSS : ('color:' + color);
+
   const header = el('div', { class: 'uc-header' });
   if (avatar) header.appendChild(el('img', { class: 'uc-avatar', src: avatar, alt: '' }));
   const headerText = el('div', { class: 'uc-head-text' });
-  headerText.appendChild(el('div', { class: 'uc-name', style: 'color:' + color }, displayName));
+  const nameRow = el('div', { class: 'uc-name-row' });
+  if (stv && stv.badgeURL) {
+    nameRow.appendChild(el('img', { class: 'uc-stv-badge', src: stv.badgeURL, title: stv.badgeName || '7TV' }));
+  }
+  nameRow.appendChild(el('span', { class: 'uc-name', style: nameStyle }, displayName));
+  headerText.appendChild(nameRow);
   if (userId2) headerText.appendChild(el('div', { class: 'uc-meta' }, 'ID: ' + userId2));
   header.appendChild(headerText);
   userCardEl.replaceChildren(header);
