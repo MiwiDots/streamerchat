@@ -461,6 +461,11 @@ func (a *App) emitChat(msg chat.Message) {
 	if a.ctx == nil {
 		return
 	}
+	// 7TV per-user lookup — see chathub's emitMessage for rationale.
+	// Stv client dedupes by user id so a chat burst is harmless.
+	if a.stv != nil && msg.Platform == chat.PlatformTwitch && msg.UserID != "" {
+		a.stv.LookupUser(msg.UserID)
+	}
 	runtime.EventsEmit(a.ctx, "chat", a.chatToMap(msg))
 }
 

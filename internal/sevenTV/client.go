@@ -155,20 +155,34 @@ func (c *Client) runOnce() error {
 
 // writeSubscribe sends the opcode-35 subscribe frame for a Twitch
 // broadcaster's channel-level entitlement updates. We subscribe to all
-// three create/update/delete events via the wildcard form.
+// three create/update/delete events. 7TV's docs are sparse on the
+// exact condition shape; chat sniffers in the wild show the
+// "platform: TWITCH" + "ctx: channel" form for some endpoints and the
+// "host_id" form for others, so we fire both subscribes and keep
+// whichever the server accepts. Either way, log the outgoing frame
+// once for visibility.
 func writeSubscribe(conn *websocket.Conn, broadcasterID string) error {
-	payload := map[string]interface{}{
-		"op": 35,
-		"d": map[string]interface{}{
-			"type": "entitlement.*",
-			"condition": map[string]string{
-				"ctx":     "channel",
-				"platform": "TWITCH",
-				"id":      broadcasterID,
-			},
-		},
+	types := []string{"entitlement.create", "entitlement.update", "entitlement.delete"}
+	conditions := []map[string]string{
+		// Form A: host_id (the form most third-party docs cite)
+		{"platform": "TWITCH", "ctx": "channel", "id": broadcasterID},
 	}
-	return conn.WriteJSON(payload)
+	for _, t := range types {
+		for _, cond := range conditions {
+			payload := map[string]interface{}{
+				"op": 35,
+				"d": map[string]interface{}{
+					"type":      t,
+					"condition": cond,
+				},
+			}
+			if err := conn.WriteJSON(payload); err != nil {
+				return err
+			}
+		}
+	}
+	log.Printf("[7TV] subscribed entitlement.* for twitch_id=%s", broadcasterID)
+	return nil
 }
 
 // handleFrame parses one inbound frame. The 7TV wire protocol wraps
@@ -187,18 +201,30 @@ func (c *Client) handleFrame(raw []byte) {
 	case 1:
 		log.Printf("[7TV] hello received")
 	case 0:
-		c.handleDispatch(env.D)
-	case 6:
-		// ack / error — log first 200 chars and move on
-		s := string(raw)
-		if len(s) > 200 {
-			s = s[:200] + "…"
+		// Dispatch: log the type so the wire is visible even when the
+		// body parser doesn't recognise the inner shape.
+		var t struct {
+			Type string `json:"type"`
 		}
-		log.Printf("[7TV] ack/err: %s", s)
+		_ = json.Unmarshal(env.D, &t)
+		s := string(env.D)
+		if len(s) > 400 {
+			s = s[:400] + "…"
+		}
+		log.Printf("[7TV] dispatch %s: %s", t.Type, s)
+		c.handleDispatch(env.D)
+	case 4:
+		log.Printf("[7TV] reconnect requested")
+	case 5:
+		log.Printf("[7TV] ack: %s", string(env.D))
+	case 6:
+		// error — log full for diagnosis
+		log.Printf("[7TV] error: %s", string(env.D))
+	case 7:
+		// end-of-stream
+		log.Printf("[7TV] end-of-stream: %s", string(env.D))
 	default:
-		// Unknown opcodes get a one-time log so we discover the wire
-		// without spamming when something starts firing repeatedly.
-		log.Printf("[7TV] unhandled op=%d", env.Op)
+		log.Printf("[7TV] unhandled op=%d body=%s", env.Op, string(env.D))
 	}
 }
 

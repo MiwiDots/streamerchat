@@ -704,6 +704,15 @@ func (a *App) emitMessage(channel string, msg chat.Message) {
 			a.history.Append(channel, m)
 		}
 	}
+	// 7TV cosmetics lookup: kick off a one-shot HTTP fetch for any
+	// Twitch user we haven't queried yet so paint/badge entitlements
+	// land even when the EventAPI WebSocket doesn't push them. The
+	// stv client dedupes per-user so a chat burst doesn't fire many
+	// requests, and the result emits the same "sevenTVCosmetic" event
+	// the WS path uses.
+	if a.stv != nil && msg.Platform == chat.PlatformTwitch && msg.UserID != "" {
+		a.stv.LookupUser(msg.UserID)
+	}
 	runtime.EventsEmit(a.ctx, "chat", m)
 }
 

@@ -1,3 +1,17 @@
+2026-05-31 22:20 - v0.3.28 (stable): 7TV per-user HTTP fallback + diag logs
+  - 7TV cosmetics weren't showing on most usernames. The EventAPI
+    WebSocket subscribe condition shape isn't well documented, so
+    even when we connected the entitlement.* dispatches may have
+    been ignored. Added a parallel /v3/users/twitch/<id> per-user
+    fetch that fires the moment we see a Twitch chat message from a
+    user we haven't queried yet. The HTTP endpoint's schema is
+    stable so paint+badge data lands reliably. Backend dedupes per
+    user-id so a chat burst doesn't fire many requests.
+  - Verbose 7TV diagnostic logs: each dispatch is logged with type +
+    first 400 chars of body so we can see exactly what 7TV pushes
+    over the wire and harden the parser. Subscribe frames also log
+    once per channel.
+
 2026-05-31 22:00 - v0.3.27 (stable): Tab autocomplete for slash commands
   - Chat input in streamerchat-gui intercepts Tab when the line
     starts with "/" and there's no space yet. Pressing Tab cycles
