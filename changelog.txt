@@ -1,4 +1,4 @@
-2026-05-31 19:45 - v0.3.23-alpha: scroll-follow sticky + font-size + gui i18n
+2026-05-31 19:55 - v0.3.23 (stable): scroll-follow sticky + font-size + gui i18n
   - Scroll-follow no longer measures geometry on every append (which
     broke under ctrl+wheel zoom and tall multi-line messages — the
     classic "chat freezes until I scroll to the bottom manually"
