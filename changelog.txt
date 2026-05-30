@@ -1,3 +1,17 @@
+2026-05-31 23:50 - v0.3.31 (stable): 7TV retry transient errors
+  - Probing 7TV's GraphQL endpoint live revealed it occasionally
+    returns 502/504 even for known-good users (e.g. TheLimitGER's
+    "Nightclub" paint + 7TV Subscriber - 2 Years badge are there).
+    v0.3.30 cached every lookup as "done" regardless of HTTP status,
+    so a single transient outage at session start permanently broke
+    cosmetics for affected users until app restart.
+  - LookupUser now caches only on success (200 + decoded) or on
+    "user not on 7TV". 5xx, network errors, and JSON decode
+    failures leave the user unmarked so the next chat message
+    triggers a fresh attempt. Also pick the highest-resolution badge
+    image variant the response provides (typically 4x_static.webp)
+    so badges look sharp on HiDPI.
+
 2026-05-31 23:20 - v0.3.30 (stable): user card shows 7TV paint + badge
   - openUserCard in chathub now also applies the 7TV cosmetic for
     the opened user: paint CSS replaces the flat Twitch color on the

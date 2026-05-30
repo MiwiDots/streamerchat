@@ -74,10 +74,11 @@ func (c *Client) Start() {}
 func (c *Client) AddChannel(broadcasterID string) {}
 
 // LookupUser fires a one-shot GraphQL query for the given Twitch
-// user id. Deduped across concurrent calls + repeated calls; the
-// first result is cached forever (or until the process restarts) so
-// we never pay more than one request per user. Emits a Cosmetic via
-// onCosmetic if the user has an active paint OR badge.
+// user id. Deduped across concurrent calls + repeated successful
+// lookups; transient 7TV outages (502 / 504 / network errors) are
+// NOT cached as "done" so the next chat message from the same user
+// retries. Emits a Cosmetic via onCosmetic if the user has an
+// active paint OR badge.
 func (c *Client) LookupUser(twitchUserID string) {
 	if twitchUserID == "" {
 		return
@@ -91,13 +92,16 @@ func (c *Client) LookupUser(twitchUserID string) {
 	c.mu.Unlock()
 
 	go func() {
-		defer func() {
-			c.mu.Lock()
-			delete(c.pending, twitchUserID)
+		ok := c.fetch(twitchUserID)
+		c.mu.Lock()
+		delete(c.pending, twitchUserID)
+		// Only cache as "done" if the call actually completed
+		// (200 + JSON decoded). 502s leave it unmarked so a later
+		// chat message retries naturally.
+		if ok {
 			c.cached[twitchUserID] = true
-			c.mu.Unlock()
-		}()
-		c.fetch(twitchUserID)
+		}
+		c.mu.Unlock()
 	}()
 }
 
@@ -192,47 +196,55 @@ type badgeObj struct {
 	} `json:"images"`
 }
 
-func (c *Client) fetch(twitchUserID string) {
+// fetch returns true if the call ended in a state the caller should
+// treat as "done — don't retry": got 200 + decoded the response (even
+// if the user has no cosmetics). false for 5xx, network errors, or
+// decode failures — these are likely transient and worth retrying on
+// the next chat message from the same user.
+func (c *Client) fetch(twitchUserID string) bool {
 	body, err := json.Marshal(gqlReq{
 		Query:     gqlQuery,
 		Variables: map[string]string{"pid": twitchUserID},
 	})
 	if err != nil {
-		return
+		return false
 	}
 	req, err := http.NewRequestWithContext(c.ctx, "POST", gqlURL, bytes.NewReader(body))
 	if err != nil {
-		return
+		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "ChatHub/0.3 (+https://github.com/MiwiDots/streamerchat)")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		log.Printf("[7TV] gql %s: %v", twitchUserID, err)
-		return
+		// Network error — try again later.
+		return false
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 	if resp.StatusCode != 200 {
-		// Don't log 502/504 — 7TV's API is occasionally flaky and
-		// each chat message would otherwise spam the log. Just give
-		// up; cached[] still prevents retries.
-		return
+		// 502 / 504 etc.; log once at debug level so we know
+		// something is up but don't cache as done.
+		log.Printf("[7TV] gql %s: status %d", twitchUserID, resp.StatusCode)
+		return false
 	}
 
 	var parsed gqlResp
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		log.Printf("[7TV] gql decode %s: %v", twitchUserID, err)
-		return
+		return false
 	}
 	if len(parsed.Errors) > 0 {
 		log.Printf("[7TV] gql %s errors: %s", twitchUserID, parsed.Errors[0].Message)
-		return
+		// Treat as "done" — this is the schema saying our query is
+		// wrong, retrying won't help.
+		return true
 	}
 	user := parsed.Data.Users.UserByConnection
 	if user == nil {
-		return // not on 7TV
+		// User isn't on 7TV. Cache so we don't retry forever.
+		return true
 	}
 
 	cos := Cosmetic{UserID: twitchUserID}
@@ -240,15 +252,18 @@ func (c *Client) fetch(twitchUserID string) {
 		cos.PaintCSS = paintToCSS(p)
 	}
 	if b := user.Style.ActiveBadge; b != nil && len(b.Images) > 0 {
-		cos.BadgeURL = b.Images[0].URL
+		// Pick the highest-resolution image we got. The list is
+		// usually [1x, 2x, 3x, 4x]; we want crispness on HiDPI.
+		cos.BadgeURL = b.Images[len(b.Images)-1].URL
 		cos.BadgeName = b.Name
 	}
-	if cos.PaintCSS == "" && cos.BadgeURL == "" {
-		return
+	if cos.PaintCSS != "" || cos.BadgeURL != "" {
+		log.Printf("[7TV] %s paint=%q badge=%q", twitchUserID, cos.PaintCSS != "", cos.BadgeURL != "")
+		if c.onCosmetic != nil {
+			c.onCosmetic(cos)
+		}
 	}
-	if c.onCosmetic != nil {
-		c.onCosmetic(cos)
-	}
+	return true
 }
 
 // paintToCSS turns 7TV's PaintLayer list into a style attribute. Each
