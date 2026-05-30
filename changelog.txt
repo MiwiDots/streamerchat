@@ -1,3 +1,15 @@
+2026-05-31 22:00 - v0.3.27 (stable): Tab autocomplete for slash commands
+  - Chat input in streamerchat-gui intercepts Tab when the line
+    starts with "/" and there's no space yet. Pressing Tab cycles
+    through every command whose name starts with the typed prefix:
+    /v Tab → /vip → /unvip (Shift+Tab walks backwards). Any other
+    keypress resets the cycle so the next /v Tab restarts from a
+    fresh prefix.
+  - Command list mirrors internal/twitch/slash.go so it stays in
+    sync with what the backend actually accepts. Synonyms (/so for
+    /shoutout, /subs for /subscribers) are included so they
+    autocomplete too.
+
 2026-05-31 21:40 - v0.3.26 (stable): proper app icons
   - New ChatHub icon: three overlapping chat bubbles in Twitch
     purple / YouTube red / Kick green with a central white hub dot,

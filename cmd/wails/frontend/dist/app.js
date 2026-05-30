@@ -455,7 +455,48 @@ function updateInputLabel() {
   inputLabelEl.style.color = target === 'YouTube' ? '#ff0000' : '#9146ff';
 }
 
+// Mirrors the command set in internal/twitch/slash.go. Order matters
+// for Tab cycling — listed alphabetically so /v Tab gives /vip first
+// then /vipoff alias, etc. /help and command synonyms (/so, /subs)
+// are included so they autocomplete too.
+const SLASH_COMMANDS = [
+  '/announce', '/announceblue', '/announcegreen', '/announceorange', '/announcepurple',
+  '/ban', '/clear',
+  '/emoteonly', '/emoteonlyoff',
+  '/followers', '/followersoff',
+  '/help',
+  '/mod',
+  '/raid', '/shoutout', '/so',
+  '/slow', '/slowoff',
+  '/subs', '/subscribers', '/subscribersoff', '/subsoff',
+  '/timeout',
+  '/unban', '/unmod', '/unraid', '/untimeout', '/unvip',
+  '/vip',
+];
+let slashTabState = null; // {prefix, matches, index} while cycling
+
 inputEl.addEventListener('keydown', async (e) => {
+  if (e.key === 'Tab' && inputEl.value.startsWith('/') && !inputEl.value.includes(' ')) {
+    e.preventDefault();
+    // Re-evaluate matches whenever the typed prefix changes, but keep
+    // the cycle position when the user just hits Tab again with the
+    // same prefix (so /v Tab Tab Tab walks /vip → /unvip → ...).
+    const typed = inputEl.value.toLowerCase();
+    if (!slashTabState || slashTabState.prefix !== typed) {
+      const stripped = typed.slice(1); // drop the leading "/"
+      const matches = SLASH_COMMANDS.filter(c => c.slice(1).startsWith(stripped));
+      if (matches.length === 0) return;
+      slashTabState = { prefix: typed, matches, index: 0 };
+    } else {
+      slashTabState.index = (slashTabState.index + (e.shiftKey ? -1 : 1) + slashTabState.matches.length) % slashTabState.matches.length;
+    }
+    inputEl.value = slashTabState.matches[slashTabState.index] + ' ';
+    return;
+  }
+  // Anything other than Tab resets the cycle so the next /v Tab starts
+  // fresh from the new typed prefix.
+  if (e.key !== 'Tab' && e.key !== 'Shift') slashTabState = null;
+
   if (e.key === 'Enter') {
     const text = inputEl.value.trim();
     if (text) {
