@@ -1,294 +1,247 @@
-// Package sevenTV provides a minimal client for the 7TV EventAPI v3.
-// We subscribe to entitlement.* events per Twitch broadcaster so we
-// learn which chatters have a paint / badge applied, then push those
-// cosmetics down to the frontend so chat messages can render them.
+// Package sevenTV resolves 7TV paint/badge cosmetics for Twitch chat
+// users via 7TV's v4 GraphQL endpoint at https://7tv.io/v4/gql.
 //
-// Endpoint: wss://events.7tv.io/v3
-// Subscribe payload (opcode 35):
+// The legacy v3 REST endpoints (/v3/users/twitch/<id>, /v3/cosmetics)
+// are deprecated and return 404 / 502, and the EventAPI WebSocket
+// subscribes succeed but never produce real entitlement dispatches —
+// 7TV pushes subscriber-count telemetry instead. The browser
+// extension itself moved to v4 GraphQL, so we follow.
 //
-//	{"op":35,"d":{"type":"entitlement.*","condition":{"host_id":"<twitch_broadcaster_id>"}}}
-//
-// The exact entitlement payload shape isn't well documented; we log
-// the raw frames at first so the wire format can be inspected and the
-// parser hardened iteratively.
+// Architecture: a single Client maintains an on-cosmetic callback,
+// a per-user dedupe map, and emits Cosmetic structs whenever a chat
+// message arrives from a user we haven't queried yet.
 package sevenTV
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
-const wsURL = "wss://events.7tv.io/v3"
+// gqlURL is 7TV's v4 GraphQL endpoint.
+const gqlURL = "https://7tv.io/v4/gql"
 
-// Cosmetic is a flattened paint/badge entry the frontend can render.
-// One per affected user_id. For a "solid" paint it's just the color
-// hex; for a gradient/animated paint the CSS string carries the full
-// background+webkit-background-clip recipe.
+// Cosmetic is one paint/badge entry the frontend can render against
+// a Twitch user_id. PaintCSS is a "style" attribute snippet
+// (e.g. "background:linear-gradient(...);-webkit-background-clip:text;color:transparent")
+// — empty when the user has no paint. BadgeURL is empty when no badge.
 type Cosmetic struct {
-	UserID    string `json:"userID"`    // Twitch user id this applies to
-	PaintCSS  string `json:"paintCSS"`  // CSS to apply to the username span
-	BadgeURL  string `json:"badgeURL"`  // small badge image to draw next to the name
-	BadgeName string `json:"badgeName"` // tooltip for the badge
+	UserID    string `json:"userID"`
+	PaintCSS  string `json:"paintCSS"`
+	BadgeURL  string `json:"badgeURL"`
+	BadgeName string `json:"badgeName"`
 }
 
-// Client is a single WebSocket connection that fans out subscriptions
-// per Twitch channel. It runs an internal reconnect loop. Cosmetics
-// learned from the wire are pushed via OnCosmetic.
+// Client is a lightweight wrapper around the GraphQL endpoint with
+// dedupe and a single callback fan-out. AddChannel is kept as a
+// no-op so the existing callsites compile without churn — under the
+// new model, cosmetics are fetched lazily per chat sender.
 type Client struct {
-	ctx context.Context
+	ctx        context.Context
+	httpClient *http.Client
+	onCosmetic func(Cosmetic)
 
-	mu          sync.Mutex
-	hostIDs     map[string]bool // pending + already-subscribed broadcaster ids
-	conn        *websocket.Conn
-	onCosmetic  func(c Cosmetic)
-	paintCache  map[string]string // paint id -> css
-	badgeCache  map[string]badge  // badge id -> info
-	cosmeticsAt time.Time
+	mu      sync.Mutex
+	pending map[string]bool // twitch user id -> in-flight
+	cached  map[string]bool // twitch user id -> already emitted (or learned: nothing)
 }
 
-type badge struct {
-	URL  string
-	Name string
-}
-
-// NewClient builds an idle client. Call Start to spin up the WS loop.
+// NewClient builds a ready-to-use client. Start is also a no-op for
+// the same compat reason as AddChannel.
 func NewClient(ctx context.Context, onCosmetic func(Cosmetic)) *Client {
 	return &Client{
 		ctx:        ctx,
-		hostIDs:    make(map[string]bool),
+		httpClient: &http.Client{Timeout: 12 * time.Second},
 		onCosmetic: onCosmetic,
-		paintCache: make(map[string]string),
-		badgeCache: make(map[string]badge),
+		pending:    make(map[string]bool),
+		cached:     make(map[string]bool),
 	}
 }
 
-// AddChannel queues a subscription for `broadcasterID`. Safe to call
-// before or after Start; pending hosts are flushed on each (re)connect.
-func (c *Client) AddChannel(broadcasterID string) {
-	if broadcasterID == "" {
+// Start is a no-op kept for API compatibility with the old WS-based
+// client. Cosmetic fetches happen on demand via LookupUser.
+func (c *Client) Start() {}
+
+// AddChannel is a no-op kept for API compatibility. The new model
+// fetches cosmetics per-user as chat messages arrive, so there's
+// nothing channel-scoped to subscribe to.
+func (c *Client) AddChannel(broadcasterID string) {}
+
+// LookupUser fires a one-shot GraphQL query for the given Twitch
+// user id. Deduped across concurrent calls + repeated calls; the
+// first result is cached forever (or until the process restarts) so
+// we never pay more than one request per user. Emits a Cosmetic via
+// onCosmetic if the user has an active paint OR badge.
+func (c *Client) LookupUser(twitchUserID string) {
+	if twitchUserID == "" {
 		return
 	}
 	c.mu.Lock()
-	already := c.hostIDs[broadcasterID]
-	c.hostIDs[broadcasterID] = true
-	conn := c.conn
-	c.mu.Unlock()
-	if already || conn == nil {
+	if c.cached[twitchUserID] || c.pending[twitchUserID] {
+		c.mu.Unlock()
 		return
 	}
-	if err := writeSubscribe(conn, broadcasterID); err != nil {
-		log.Printf("[7TV] subscribe %s: %v", broadcasterID, err)
-	}
-}
-
-// Start runs the connection loop in a goroutine and returns. The loop
-// reconnects with backoff on any error.
-func (c *Client) Start() {
-	go c.loop()
-}
-
-func (c *Client) loop() {
-	backoff := 2 * time.Second
-	for {
-		if c.ctx.Err() != nil {
-			return
-		}
-		if err := c.runOnce(); err != nil {
-			log.Printf("[7TV] connection: %v (backoff %s)", err, backoff)
-		}
-		select {
-		case <-c.ctx.Done():
-			return
-		case <-time.After(backoff):
-		}
-		if backoff < 30*time.Second {
-			backoff *= 2
-		}
-	}
-}
-
-func (c *Client) runOnce() error {
-	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second}
-	conn, _, err := dialer.DialContext(c.ctx, wsURL, http.Header{})
-	if err != nil {
-		return fmt.Errorf("dial: %w", err)
-	}
-	defer conn.Close()
-	log.Printf("[7TV] connected to %s", wsURL)
-
-	c.mu.Lock()
-	c.conn = conn
-	hostsSnapshot := make([]string, 0, len(c.hostIDs))
-	for id := range c.hostIDs {
-		hostsSnapshot = append(hostsSnapshot, id)
-	}
+	c.pending[twitchUserID] = true
 	c.mu.Unlock()
 
-	for _, id := range hostsSnapshot {
-		if err := writeSubscribe(conn, id); err != nil {
-			return fmt.Errorf("initial subscribe %s: %w", id, err)
-		}
-	}
-
-	for {
-		if c.ctx.Err() != nil {
-			return c.ctx.Err()
-		}
-		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		_, raw, err := conn.ReadMessage()
-		if err != nil {
+	go func() {
+		defer func() {
 			c.mu.Lock()
-			c.conn = nil
+			delete(c.pending, twitchUserID)
+			c.cached[twitchUserID] = true
 			c.mu.Unlock()
-			return fmt.Errorf("read: %w", err)
-		}
-		c.handleFrame(raw)
-	}
+		}()
+		c.fetch(twitchUserID)
+	}()
 }
 
-// writeSubscribe sends the opcode-35 subscribe frame for a Twitch
-// broadcaster's channel-level entitlement updates. We subscribe to all
-// three create/update/delete events. 7TV's docs are sparse on the
-// exact condition shape; chat sniffers in the wild show the
-// "platform: TWITCH" + "ctx: channel" form for some endpoints and the
-// "host_id" form for others, so we fire both subscribes and keep
-// whichever the server accepts. Either way, log the outgoing frame
-// once for visibility.
-func writeSubscribe(conn *websocket.Conn, broadcasterID string) error {
-	types := []string{"entitlement.create", "entitlement.update", "entitlement.delete"}
-	conditions := []map[string]string{
-		// Form A: host_id (the form most third-party docs cite)
-		{"platform": "TWITCH", "ctx": "channel", "id": broadcasterID},
-	}
-	for _, t := range types {
-		for _, cond := range conditions {
-			payload := map[string]interface{}{
-				"op": 35,
-				"d": map[string]interface{}{
-					"type":      t,
-					"condition": cond,
-				},
-			}
-			if err := conn.WriteJSON(payload); err != nil {
-				return err
-			}
-		}
-	}
-	log.Printf("[7TV] subscribed entitlement.* for twitch_id=%s", broadcasterID)
-	return nil
+// gqlQuery is the smallest query that returns everything we need to
+// render the cosmetic. Paint layers come as a discriminated union
+// (PaintLayerType) — for now we support SingleColor + Linear/Radial
+// gradients which cover the vast majority of paints in the wild.
+const gqlQuery = `query($pid:String!){
+  users{
+    userByConnection(platform:TWITCH, platformId:$pid){
+      id
+      style{
+        activePaint{
+          id name
+          data{
+            layers{
+              id opacity
+              ty{
+                __typename
+                ... on PaintLayerTypeSingleColor { color { hex } }
+                ... on PaintLayerTypeLinearGradient { angle repeating stops { at color { hex } } }
+                ... on PaintLayerTypeRadialGradient { shape repeating stops { at color { hex } } }
+              }
+            }
+          }
+        }
+        activeBadge{ id name images { url } }
+      }
+    }
+  }
+}`
+
+type gqlReq struct {
+	Query     string            `json:"query"`
+	Variables map[string]string `json:"variables"`
 }
 
-// handleFrame parses one inbound frame. The 7TV wire protocol wraps
-// every event in {op, t, d}. We only care about opcode 0 (dispatch);
-// opcode 1 (hello) is logged so connection state is visible.
-func (c *Client) handleFrame(raw []byte) {
-	var env struct {
-		Op int             `json:"op"`
-		D  json.RawMessage `json:"d"`
-	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		log.Printf("[7TV] decode frame: %v", err)
-		return
-	}
-	switch env.Op {
-	case 1:
-		log.Printf("[7TV] hello received")
-	case 0:
-		// Dispatch: log the type so the wire is visible even when the
-		// body parser doesn't recognise the inner shape.
-		var t struct {
-			Type string `json:"type"`
-		}
-		_ = json.Unmarshal(env.D, &t)
-		s := string(env.D)
-		if len(s) > 400 {
-			s = s[:400] + "…"
-		}
-		log.Printf("[7TV] dispatch %s: %s", t.Type, s)
-		c.handleDispatch(env.D)
-	case 4:
-		log.Printf("[7TV] reconnect requested")
-	case 5:
-		log.Printf("[7TV] ack: %s", string(env.D))
-	case 6:
-		// error — log full for diagnosis
-		log.Printf("[7TV] error: %s", string(env.D))
-	case 7:
-		// end-of-stream
-		log.Printf("[7TV] end-of-stream: %s", string(env.D))
-	default:
-		log.Printf("[7TV] unhandled op=%d body=%s", env.Op, string(env.D))
-	}
+type gqlResp struct {
+	Data struct {
+		Users struct {
+			UserByConnection *struct {
+				ID    string `json:"id"`
+				Style struct {
+					ActivePaint *paintObj `json:"activePaint"`
+					ActiveBadge *badgeObj `json:"activeBadge"`
+				} `json:"style"`
+			} `json:"userByConnection"`
+		} `json:"users"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
 }
 
-// handleDispatch parses an opcode-0 dispatch and walks the payload to
-// extract any user_id -> paint/badge mapping it carries. The exact
-// shape is somewhat undocumented; we log unknown variants at debug
-// level and ignore them.
-func (c *Client) handleDispatch(d json.RawMessage) {
-	var disp struct {
-		Type string          `json:"type"`
-		Body json.RawMessage `json:"body"`
-	}
-	if err := json.Unmarshal(d, &disp); err != nil {
-		log.Printf("[7TV] decode dispatch: %v", err)
+type paintObj struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Data struct {
+		Layers []paintLayer `json:"layers"`
+	} `json:"data"`
+}
+
+type paintLayer struct {
+	ID      string         `json:"id"`
+	Opacity float64        `json:"opacity"`
+	Ty      paintLayerType `json:"ty"`
+}
+
+type paintLayerType struct {
+	TypeName  string         `json:"__typename"`
+	Color     *paintColor    `json:"color,omitempty"`
+	Angle     int            `json:"angle"`
+	Repeating bool           `json:"repeating"`
+	Shape     string         `json:"shape,omitempty"`
+	Stops     []paintStop    `json:"stops,omitempty"`
+}
+
+type paintColor struct {
+	Hex string `json:"hex"`
+}
+
+type paintStop struct {
+	At    float64    `json:"at"`
+	Color paintColor `json:"color"`
+}
+
+type badgeObj struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Images []struct {
+		URL string `json:"url"`
+	} `json:"images"`
+}
+
+func (c *Client) fetch(twitchUserID string) {
+	body, err := json.Marshal(gqlReq{
+		Query:     gqlQuery,
+		Variables: map[string]string{"pid": twitchUserID},
+	})
+	if err != nil {
 		return
 	}
-	if disp.Type == "" {
+	req, err := http.NewRequestWithContext(c.ctx, "POST", gqlURL, bytes.NewReader(body))
+	if err != nil {
 		return
 	}
-	// Body shape (observed): {object: {kind, ref_id, user: {connections: [...]}}, ...}
-	var body struct {
-		Object struct {
-			Kind  string `json:"kind"` // "PAINT" or "BADGE"
-			RefID string `json:"ref_id"`
-			User  struct {
-				Connections []struct {
-					Platform string `json:"platform"`
-					ID       string `json:"id"`
-				} `json:"connections"`
-			} `json:"user"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(disp.Body, &body); err != nil {
-		// Fall back to logging the first 200 chars so we can study
-		// alternative shapes without breaking the loop.
-		s := string(disp.Body)
-		if len(s) > 200 {
-			s = s[:200] + "…"
-		}
-		log.Printf("[7TV] %s body shape unknown: %s", disp.Type, s)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "ChatHub/0.3 (+https://github.com/MiwiDots/streamerchat)")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		log.Printf("[7TV] gql %s: %v", twitchUserID, err)
 		return
 	}
-	var twitchID string
-	for _, conn := range body.Object.User.Connections {
-		if conn.Platform == "TWITCH" {
-			twitchID = conn.ID
-			break
-		}
-	}
-	if twitchID == "" || body.Object.RefID == "" {
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if resp.StatusCode != 200 {
+		// Don't log 502/504 — 7TV's API is occasionally flaky and
+		// each chat message would otherwise spam the log. Just give
+		// up; cached[] still prevents retries.
 		return
 	}
 
-	cos := Cosmetic{UserID: twitchID}
-	switch body.Object.Kind {
-	case "PAINT":
-		if css, ok := c.lookupPaint(body.Object.RefID); ok {
-			cos.PaintCSS = css
-		}
-	case "BADGE":
-		if b, ok := c.lookupBadge(body.Object.RefID); ok {
-			cos.BadgeURL = b.URL
-			cos.BadgeName = b.Name
-		}
+	var parsed gqlResp
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		log.Printf("[7TV] gql decode %s: %v", twitchUserID, err)
+		return
+	}
+	if len(parsed.Errors) > 0 {
+		log.Printf("[7TV] gql %s errors: %s", twitchUserID, parsed.Errors[0].Message)
+		return
+	}
+	user := parsed.Data.Users.UserByConnection
+	if user == nil {
+		return // not on 7TV
+	}
+
+	cos := Cosmetic{UserID: twitchUserID}
+	if p := user.Style.ActivePaint; p != nil {
+		cos.PaintCSS = paintToCSS(p)
+	}
+	if b := user.Style.ActiveBadge; b != nil && len(b.Images) > 0 {
+		cos.BadgeURL = b.Images[0].URL
+		cos.BadgeName = b.Name
 	}
 	if cos.PaintCSS == "" && cos.BadgeURL == "" {
 		return
@@ -296,4 +249,112 @@ func (c *Client) handleDispatch(d json.RawMessage) {
 	if c.onCosmetic != nil {
 		c.onCosmetic(cos)
 	}
+}
+
+// paintToCSS turns 7TV's PaintLayer list into a style attribute. Each
+// layer becomes one background entry; multiple layers stack via
+// comma-separated values. For text-paints we also set
+// -webkit-background-clip:text + color:transparent so the gradient
+// paints the username glyphs rather than a rectangle behind them.
+// A single solid-color layer is special-cased to a plain `color:`
+// rule because background-clip on a single solid would render the
+// same as just setting color — but cheaper.
+func paintToCSS(p *paintObj) string {
+	if p == nil || len(p.Data.Layers) == 0 {
+		return ""
+	}
+	if len(p.Data.Layers) == 1 && p.Data.Layers[0].Ty.TypeName == "PaintLayerTypeSingleColor" {
+		c := p.Data.Layers[0].Ty.Color
+		if c != nil && c.Hex != "" {
+			return "color:" + normalizeHex(c.Hex)
+		}
+	}
+	var backgrounds []string
+	for _, layer := range p.Data.Layers {
+		bg := layerBackground(layer)
+		if bg != "" {
+			backgrounds = append(backgrounds, bg)
+		}
+	}
+	if len(backgrounds) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"background:%s;-webkit-background-clip:text;background-clip:text;color:transparent",
+		joinComma(backgrounds),
+	)
+}
+
+func layerBackground(l paintLayer) string {
+	switch l.Ty.TypeName {
+	case "PaintLayerTypeSingleColor":
+		if l.Ty.Color == nil {
+			return ""
+		}
+		return normalizeHex(l.Ty.Color.Hex)
+	case "PaintLayerTypeLinearGradient":
+		stops := stopsToCSS(l.Ty.Stops)
+		if stops == "" {
+			return ""
+		}
+		kind := "linear-gradient"
+		if l.Ty.Repeating {
+			kind = "repeating-linear-gradient"
+		}
+		angle := l.Ty.Angle
+		if angle == 0 {
+			angle = 90
+		}
+		return fmt.Sprintf("%s(%ddeg,%s)", kind, angle, stops)
+	case "PaintLayerTypeRadialGradient":
+		stops := stopsToCSS(l.Ty.Stops)
+		if stops == "" {
+			return ""
+		}
+		kind := "radial-gradient"
+		if l.Ty.Repeating {
+			kind = "repeating-radial-gradient"
+		}
+		shape := "ellipse"
+		if l.Ty.Shape != "" {
+			shape = l.Ty.Shape
+		}
+		return fmt.Sprintf("%s(%s,%s)", kind, shape, stops)
+	}
+	return ""
+}
+
+func stopsToCSS(stops []paintStop) string {
+	if len(stops) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(stops))
+	for _, s := range stops {
+		parts = append(parts, fmt.Sprintf("%s %d%%", normalizeHex(s.Color.Hex), int(s.At*100+0.5)))
+	}
+	return joinComma(parts)
+}
+
+// normalizeHex ensures we always emit a CSS-valid color. 7TV returns
+// hex without the leading "#"; some legacy entries also include an
+// alpha byte (rrggbbaa) which is fine for modern browsers.
+func normalizeHex(hex string) string {
+	if hex == "" {
+		return "transparent"
+	}
+	if hex[0] == '#' {
+		return hex
+	}
+	return "#" + hex
+}
+
+func joinComma(parts []string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += ","
+		}
+		out += p
+	}
+	return out
 }

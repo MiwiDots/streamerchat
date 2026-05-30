@@ -1,3 +1,22 @@
+2026-05-31 23:00 - v0.3.29 (stable): 7TV rewritten on v4 GraphQL
+  - The v0.3.28 log finally let me see what was actually happening:
+    WebSocket subscribes were ack'd but produced zero entitlement
+    dispatches (only subscriber-count telemetry frames), /v3/cosmetics
+    returns 404 "route not found", and /v3/users/twitch/<id> returns
+    502 Gateway Timeout. 7TV deprecated v3 REST and the new browser
+    extension talks v4 GraphQL instead — so we follow.
+  - internal/sevenTV is rewritten: WebSocket and bulk cosmetics are
+    gone. Now there's one POST to https://7tv.io/v4/gql per Twitch
+    user on first chat message, using the userByConnection query
+    that returns activePaint{data{layers{ty}}} and activeBadge
+    directly in one round-trip. Layers come as a discriminated union
+    (SingleColor / LinearGradient / RadialGradient) and we render
+    them as stacked CSS backgrounds with -webkit-background-clip:text
+    so the gradient paints the username glyphs.
+  - Per-user dedupe is unchanged: once we fetch a user we cache the
+    result for the process lifetime, so a 30-message chat burst is
+    still 1 HTTP call. 502s during 7TV outages no longer log noise.
+
 2026-05-31 22:20 - v0.3.28 (stable): 7TV per-user HTTP fallback + diag logs
   - 7TV cosmetics weren't showing on most usernames. The EventAPI
     WebSocket subscribe condition shape isn't well documented, so
