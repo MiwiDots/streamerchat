@@ -1,3 +1,16 @@
+2026-05-31 21:40 - v0.3.26 (stable): proper app icons
+  - New ChatHub icon: three overlapping chat bubbles in Twitch
+    purple / YouTube red / Kick green with a central white hub dot,
+    representing the multi-platform chat aggregator concept.
+  - New StreamerChat icon: a single large purple chat bubble with
+    three message lines and a red "live" recording dot in the
+    upper-right corner.
+  - Designed as SVG (sources in assets/icons/) and rendered through
+    librsvg → 1024x1024 appicon.png, multi-resolution Windows .ico,
+    and Mac .iconset → .icns for both apps. The .app bundles'
+    Resources/iconfile.icns is updated too so Finder + the Dock pick
+    up the new artwork on launch.
+
 2026-05-31 21:15 - v0.3.25 (stable): slash commands in streamerchat-gui
   - New internal/twitch/slash.go: parses Twitch-style /commands and
     routes them through the matching Helix endpoint. Twitch

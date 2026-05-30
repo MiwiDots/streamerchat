@@ -1,0 +1,54 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#241638"/>
+      <stop offset="100%" stop-color="#0a0612"/>
+    </radialGradient>
+    <linearGradient id="bubble" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#b88aff"/>
+      <stop offset="50%" stop-color="#9146ff"/>
+      <stop offset="100%" stop-color="#6a28d4"/>
+    </linearGradient>
+    <radialGradient id="live" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff5050"/>
+      <stop offset="100%" stop-color="#cc0000"/>
+    </radialGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="28" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="liveGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="20"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- background plate with rounded corners -->
+  <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220" fill="url(#bg)"/>
+  <!-- subtle inner glow ring -->
+  <circle cx="512" cy="512" r="430" fill="none" stroke="#9146ff" stroke-width="3" opacity="0.15"/>
+
+  <!-- Large chat bubble centered -->
+  <g filter="url(#glow)" transform="translate(180 220)">
+    <path d="M0,120 Q0,0 140,0 L520,0 Q660,0 660,120 L660,380 Q660,500 520,500 L290,500 L160,620 L200,500 Q0,500 0,380 Z"
+          fill="url(#bubble)"/>
+  </g>
+
+  <!-- Three message lines inside the bubble (varying length) -->
+  <rect x="280" y="310" width="380" height="30" rx="15" fill="#ffffff" opacity="0.85"/>
+  <rect x="280" y="380" width="300" height="30" rx="15" fill="#ffffff" opacity="0.65"/>
+  <rect x="280" y="450" width="420" height="30" rx="15" fill="#ffffff" opacity="0.45"/>
+
+  <!-- LIVE dot top-right of bubble with glow -->
+  <g filter="url(#liveGlow)">
+    <circle cx="780" cy="240" r="60" fill="url(#live)"/>
+  </g>
+  <circle cx="780" cy="240" r="32" fill="#ffffff" opacity="0.95"/>
+  <circle cx="780" cy="240" r="20" fill="#ff3030"/>
+</svg>
