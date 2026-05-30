@@ -969,13 +969,38 @@ func (a *App) LookupBadge(channel, setID, version string) string {
 	return a.badges.Lookup(a.cfg.Twitch.BotUserID, setID, version)
 }
 
-// SendMessage sends a chat message to Twitch IRC.
-// Twitch does not echo PRIVMSGs back to the sending connection, so we also
-// emit a synthetic local-echo event so the user sees their own message.
+// SendMessage sends a chat message to Twitch IRC, OR routes a /command
+// through the matching Helix endpoint. Twitch deprecated raw IRC mod
+// commands (PRIVMSG #ch :/ban foo) in early 2023 — they all go via
+// Helix now (ban/unban/mod/vip/clear/slow/announce/raid/shoutout/…).
+//
+// Twitch does not echo PRIVMSGs back to the sending connection, so on
+// the regular-message path we also emit a synthetic local-echo event
+// so the user sees their own message.
 func (a *App) SendMessage(text string) {
 	if text == "" {
 		return
 	}
+
+	// Slash command? Route through Helix and surface the response as a
+	// system message in chat. The IRC connection stays untouched.
+	if strings.HasPrefix(text, "/") {
+		a.mu.Lock()
+		h := a.helixClient
+		a.mu.Unlock()
+		status, handled := twitch.HandleSlashCommand(h, text)
+		if handled {
+			a.emitChat(chat.Message{
+				Platform:  chat.PlatformTwitch,
+				Type:      chat.MessageTypeSystem,
+				Channel:   a.cfg.Twitch.Channel,
+				Timestamp: time.Now(),
+				Text:      status,
+			})
+			return
+		}
+	}
+
 	a.mu.Lock()
 	c := a.ircClient
 	a.mu.Unlock()

@@ -1,3 +1,20 @@
+2026-05-31 21:15 - v0.3.25 (stable): slash commands in streamerchat-gui
+  - New internal/twitch/slash.go: parses Twitch-style /commands and
+    routes them through the matching Helix endpoint. Twitch
+    deprecated raw IRC mod commands (PRIVMSG #ch :/ban foo) in early
+    2023; all of these now go through Helix.
+  - Supported: /mod /unmod /vip /unvip /ban /unban /timeout
+    /untimeout /clear /slow /slowoff /followers /followersoff
+    /subscribers /subscribersoff /emoteonly /emoteonlyoff /announce
+    /announceblue /announcegreen /announceorange /announcepurple
+    /raid /unraid /shoutout (/so), plus /help to list them.
+  - Username arguments are resolved to numeric Twitch user ids via
+    Helix /users on the fly. Duration arguments accept plain seconds
+    ("60"), "5m", "1h", "1d".
+  - Status (success or error string) is rendered as a system message
+    in the chat view so the user sees what happened without leaving
+    the chat input.
+
 2026-05-31 20:30 - v0.3.24 (stable): 7TV paints + badges
   - New internal/sevenTV package: single WebSocket connection to
     wss://events.7tv.io/v3, subscribes to entitlement.* per Twitch

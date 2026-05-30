@@ -246,6 +246,125 @@ func (h *HelixClient) GetVIPs() ([]string, error) {
 	return vips, nil
 }
 
+// ResolveLogin turns a Twitch username (no leading @ or #) into its
+// numeric user id. Many slash commands take a target user by login;
+// the Helix moderation/VIP endpoints all want the id, so we resolve
+// here once per call.
+func (h *HelixClient) ResolveLogin(login string) (string, error) {
+	resp, err := h.client.GetUsers(&helix.UsersParams{
+		Logins: []string{login},
+	})
+	if err != nil {
+		return "", err
+	}
+	if resp.ErrorMessage != "" {
+		return "", fmt.Errorf("%s", resp.ErrorMessage)
+	}
+	if len(resp.Data.Users) == 0 {
+		return "", fmt.Errorf("user %q not found", login)
+	}
+	return resp.Data.Users[0].ID, nil
+}
+
+// AddMod adds a moderator to the broadcaster's channel.
+func (h *HelixClient) AddMod(userID string) error {
+	_, err := h.client.AddChannelModerator(&helix.AddChannelModeratorParams{
+		BroadcasterID: h.broadcasterID,
+		UserID:        userID,
+	})
+	if err != nil {
+		return fmt.Errorf("add mod: %w", err)
+	}
+	return nil
+}
+
+// RemoveMod removes a moderator from the broadcaster's channel.
+func (h *HelixClient) RemoveMod(userID string) error {
+	_, err := h.client.RemoveChannelModerator(&helix.RemoveChannelModeratorParams{
+		BroadcasterID: h.broadcasterID,
+		UserID:        userID,
+	})
+	if err != nil {
+		return fmt.Errorf("remove mod: %w", err)
+	}
+	return nil
+}
+
+// AddVIP grants a user the VIP role.
+func (h *HelixClient) AddVIP(userID string) error {
+	_, err := h.client.AddChannelVip(&helix.AddChannelVipParams{
+		BroadcasterID: h.broadcasterID,
+		UserID:        userID,
+	})
+	if err != nil {
+		return fmt.Errorf("add vip: %w", err)
+	}
+	return nil
+}
+
+// RemoveVIP revokes the VIP role.
+func (h *HelixClient) RemoveVIP(userID string) error {
+	_, err := h.client.RemoveChannelVip(&helix.RemoveChannelVipParams{
+		BroadcasterID: h.broadcasterID,
+		UserID:        userID,
+	})
+	if err != nil {
+		return fmt.Errorf("remove vip: %w", err)
+	}
+	return nil
+}
+
+// SendAnnouncement posts an announcement in chat. color may be one of
+// "primary" (default channel color), "blue", "green", "orange", "purple".
+func (h *HelixClient) SendAnnouncement(message, color string) error {
+	_, err := h.client.SendChatAnnouncement(&helix.SendChatAnnouncementParams{
+		BroadcasterID: h.broadcasterID,
+		ModeratorID:   h.moderatorID,
+		Message:       message,
+		Color:         color,
+	})
+	if err != nil {
+		return fmt.Errorf("announce: %w", err)
+	}
+	return nil
+}
+
+// SendShoutout fires a /shoutout to the given user in the broadcaster's chat.
+func (h *HelixClient) SendShoutout(toBroadcasterID string) error {
+	_, err := h.client.SendShoutout(&helix.SendShoutoutParams{
+		FromBroadcasterID: h.broadcasterID,
+		ToBroadcasterID:   toBroadcasterID,
+		ModeratorID:       h.moderatorID,
+	})
+	if err != nil {
+		return fmt.Errorf("shoutout: %w", err)
+	}
+	return nil
+}
+
+// StartRaid initiates a raid from this channel to toBroadcasterID.
+func (h *HelixClient) StartRaid(toBroadcasterID string) error {
+	_, err := h.client.StartRaid(&helix.StartRaidParams{
+		FromBroadcasterID: h.broadcasterID,
+		ToBroadcasterID:   toBroadcasterID,
+	})
+	if err != nil {
+		return fmt.Errorf("raid: %w", err)
+	}
+	return nil
+}
+
+// CancelRaid cancels a pending raid started from this channel.
+func (h *HelixClient) CancelRaid() error {
+	_, err := h.client.CancelRaid(&helix.CancelRaidParams{
+		BroadcasterID: h.broadcasterID,
+	})
+	if err != nil {
+		return fmt.Errorf("unraid: %w", err)
+	}
+	return nil
+}
+
 // GetChannelName resolves a room/user ID to a login name.
 func (h *HelixClient) GetChannelName(userID string) (string, error) {
 	resp, err := h.client.GetUsers(&helix.UsersParams{
