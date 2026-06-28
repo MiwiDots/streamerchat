@@ -870,6 +870,161 @@ async function openSettings() {
   }
 }
 function closeSettings() { settingsModalBg.classList.add('hidden'); }
+
+// === Account profiles ===
+// Lists every saved Twitch+YouTube account context, lets the user
+// switch via the titlebar dropdown or manage them in Settings →
+// Accounts. Backend sends a "profileSwitched" event on switch which
+// clears chat / user list and triggers a fresh ready event.
+const profileBtnEl = document.getElementById('profileBtn');
+const profileBtnNameEl = document.getElementById('profileBtnName');
+const profileMenuEl = document.getElementById('profileMenu');
+const profilesListEl = document.getElementById('profilesList');
+const addProfileBtn = document.getElementById('addProfileBtn');
+const newProfileNameEl = document.getElementById('newProfileName');
+
+let cachedProfiles = [];
+
+async function refreshProfiles() {
+  try {
+    cachedProfiles = await window.go.main.App.ListProfiles() || [];
+  } catch (_) { cachedProfiles = []; }
+  // Titlebar button text
+  const active = cachedProfiles.find(p => p.active);
+  if (active && profileBtnNameEl) {
+    profileBtnNameEl.textContent = active.name + (active.username ? ` (${active.username})` : '');
+  }
+  // Settings list (re-rendered each open)
+  if (profilesListEl) renderProfilesList();
+}
+
+function renderProfilesList() {
+  if (!profilesListEl) return;
+  profilesListEl.replaceChildren();
+  for (const p of cachedProfiles) {
+    const row = el('div', { class: 'profile-row' + (p.active ? ' active' : '') });
+    const info = el('div', { style: 'flex:1;display:flex;flex-direction:column;' });
+    info.appendChild(el('span', { class: 'profile-name' }, p.name));
+    if (p.username) info.appendChild(el('span', { class: 'profile-meta' }, '@' + p.username));
+    else info.appendChild(el('span', { class: 'profile-meta' }, '(not logged in)'));
+    row.appendChild(info);
+    if (!p.active) {
+      const switchBtn = el('button', { class: 'btn' }, 'Switch');
+      switchBtn.addEventListener('click', () => switchToProfile(p.id));
+      row.appendChild(switchBtn);
+    }
+    const renameBtn = el('button', { class: 'btn' }, '✎');
+    renameBtn.title = 'Rename';
+    renameBtn.addEventListener('click', () => {
+      const newName = prompt('Rename profile:', p.name);
+      if (newName && newName.trim() && newName !== p.name) {
+        window.go.main.App.RenameProfile(p.id, newName.trim()).then(refreshProfiles);
+      }
+    });
+    row.appendChild(renameBtn);
+    if (cachedProfiles.length > 1 && !p.active) {
+      const removeBtn = el('button', { class: 'btn' }, '✕');
+      removeBtn.title = 'Remove';
+      removeBtn.addEventListener('click', () => {
+        if (confirm(`Remove profile "${p.name}"? This deletes its saved tokens.`)) {
+          window.go.main.App.RemoveProfile(p.id).then(refreshProfiles);
+        }
+      });
+      row.appendChild(removeBtn);
+    }
+    profilesListEl.appendChild(row);
+  }
+}
+
+async function switchToProfile(id) {
+  try {
+    const err = await window.go.main.App.SwitchProfile(id);
+    if (err) { alert('Switch failed: ' + err); return; }
+  } catch (e) { alert('Switch failed: ' + e); }
+  // Backend emits "profileSwitched" which clears state — no need to do
+  // anything here on success.
+  closeProfileMenu();
+}
+
+function openProfileMenu() {
+  if (!profileMenuEl) return;
+  profileMenuEl.replaceChildren();
+  for (const p of cachedProfiles) {
+    const item = el('div', { class: 'pm-item' + (p.active ? ' active' : '') });
+    item.appendChild(el('span', {}, p.name));
+    if (p.username) item.appendChild(el('span', { class: 'pm-tag' }, '@' + p.username));
+    item.addEventListener('click', () => {
+      if (!p.active) switchToProfile(p.id);
+      else closeProfileMenu();
+    });
+    profileMenuEl.appendChild(item);
+  }
+  profileMenuEl.appendChild(el('div', { class: 'pm-sep' }));
+  const manage = el('div', { class: 'pm-item pm-add' }, '⚙  Manage accounts…');
+  manage.addEventListener('click', () => {
+    closeProfileMenu();
+    openSettings();
+    // Switch to accounts tab
+    document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === 'accounts'));
+    document.querySelectorAll('.settings-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === 'accounts'));
+  });
+  profileMenuEl.appendChild(manage);
+
+  // Position under the button
+  const rect = profileBtnEl.getBoundingClientRect();
+  profileMenuEl.style.top = (rect.bottom + 4) + 'px';
+  profileMenuEl.style.left = rect.left + 'px';
+  profileMenuEl.classList.remove('hidden');
+}
+function closeProfileMenu() { if (profileMenuEl) profileMenuEl.classList.add('hidden'); }
+
+if (profileBtnEl) {
+  profileBtnEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (profileMenuEl.classList.contains('hidden')) openProfileMenu();
+    else closeProfileMenu();
+  });
+}
+document.addEventListener('click', (e) => {
+  if (profileMenuEl && !profileMenuEl.classList.contains('hidden')) {
+    if (!profileMenuEl.contains(e.target) && e.target !== profileBtnEl) closeProfileMenu();
+  }
+});
+
+if (addProfileBtn) {
+  addProfileBtn.addEventListener('click', async () => {
+    const name = (newProfileNameEl && newProfileNameEl.value || '').trim();
+    if (!name) return;
+    try {
+      const id = await window.go.main.App.AddProfile(name);
+      newProfileNameEl.value = '';
+      await refreshProfiles();
+      if (id && confirm(`Switch to "${name}" now? You'll need to log in to Twitch in the new profile.`)) {
+        await switchToProfile(id);
+      }
+    } catch (e) { alert('Add failed: ' + e); }
+  });
+}
+
+// Clear chat + user list when backend signals a profile switch is in
+// progress. The fresh "ready" event arrives moments later from the
+// new profile's bootSequence.
+function setupProfileSwitchedListener() {
+  if (!window.runtime || !window.runtime.EventsOn) {
+    setTimeout(setupProfileSwitchedListener, 100);
+    return;
+  }
+  window.runtime.EventsOn('profileSwitched', () => {
+    chatEl.replaceChildren();
+    users.clear();
+    refreshUserList();
+    refreshProfiles();
+  });
+}
+setupProfileSwitchedListener();
+// Initial hydrate (delayed so wails runtime is up).
+setTimeout(refreshProfiles, 200);
+
 if (settingsBtn) settingsBtn.addEventListener('click', openSettings);
 if (settingsClose) settingsClose.addEventListener('click', closeSettings);
 if (settingsDone) settingsDone.addEventListener('click', closeSettings);

@@ -46,6 +46,12 @@ type App struct {
 	// this streamer's Twitch channel so paint/badge updates can be
 	// pushed to the frontend and applied to chat messages.
 	stv *sevenTV.Client
+
+	// supervisorsStarted gates the eternal IRC supervisor + token
+	// refresh loop to one launch per app process. Profile switches
+	// trigger reconnects via ircClient.Disconnect() rather than
+	// spawning fresh supervisors.
+	supervisorsStarted bool
 }
 
 func NewApp() *App {
@@ -193,8 +199,17 @@ func (a *App) bootSequence() {
 	// Load badges now that auth is valid (was previously a race against bootSequence).
 	a.loadBadges()
 
-	go a.runIRCSupervisor()
-	go a.tokenRefreshLoop()
+	// Eternal goroutines — must NOT be re-started on profile switch
+	// or we'll leak supervisors. The IRC supervisor reads cfg.Twitch
+	// on every reconnect, so swapping the active profile + calling
+	// ircClient.Disconnect() is enough to make it pick up new creds.
+	a.mu.Lock()
+	if !a.supervisorsStarted {
+		a.supervisorsStarted = true
+		go a.runIRCSupervisor()
+		go a.tokenRefreshLoop()
+	}
+	a.mu.Unlock()
 
 	if a.helixClient != nil {
 		go a.loadChattersAndRoles()
@@ -212,6 +227,137 @@ func (a *App) bootSequence() {
 		"youtube":        a.cfg.YouTube.ChannelHandle != "" || a.cfg.YouTube.VideoID != "",
 		"showTimestamps": a.cfg.UI.ShowTimestamps,
 	})
+}
+
+// === Multi-account profiles ===
+//
+// Each profile is a self-contained Twitch+YouTube account context.
+// The active profile's credentials are mirrored into cfg.Twitch /
+// cfg.YouTube so the rest of the app code doesn't have to know about
+// profiles. SwitchProfile teardowns the active connections + reboots
+// the auth/connection sequence so the new profile takes over.
+
+// profileSummary is the shape sent down to the frontend dropdown.
+type profileSummary struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Username string `json:"username"` // last validated Twitch login (cosmetic)
+	Active   bool   `json:"active"`
+}
+
+// ListProfiles returns every saved account profile + which one is
+// active. Username is the last known Twitch login for that profile
+// — empty if the slot has never been logged in.
+func (a *App) ListProfiles() []profileSummary {
+	out := make([]profileSummary, 0, len(a.cfg.Profiles))
+	for _, p := range a.cfg.Profiles {
+		out = append(out, profileSummary{
+			ID:       p.ID,
+			Name:     p.Name,
+			Username: p.Twitch.Username,
+			Active:   p.ID == a.cfg.ActiveProfileID,
+		})
+	}
+	return out
+}
+
+// AddProfile creates an empty profile with the given display name +
+// inherits the build-time default Twitch client id so the new slot
+// can immediately run the device-code flow when the user clicks
+// Login. Returns the new profile id.
+func (a *App) AddProfile(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "Account"
+	}
+	p := a.cfg.AddProfile(name)
+	// New profiles inherit the client id so login works out of the
+	// box. Tokens stay empty until the user runs the device flow.
+	for i := range a.cfg.Profiles {
+		if a.cfg.Profiles[i].ID == p.ID {
+			a.cfg.Profiles[i].Twitch.ClientID = defaultClientID
+			break
+		}
+	}
+	_ = a.cfg.Save()
+	return p.ID
+}
+
+// RemoveProfile drops a profile. Can't remove the active one — the
+// frontend should switch first. Always keeps ≥1 profile alive.
+func (a *App) RemoveProfile(id string) string {
+	if err := a.cfg.RemoveProfile(id); err != nil {
+		return err.Error()
+	}
+	_ = a.cfg.Save()
+	return ""
+}
+
+// RenameProfile updates a profile's display name. ID stays so the
+// profile-scoped storage (future per-profile YT keyring etc.) is
+// unaffected.
+func (a *App) RenameProfile(id, newName string) string {
+	if err := a.cfg.RenameProfile(id, strings.TrimSpace(newName)); err != nil {
+		return err.Error()
+	}
+	_ = a.cfg.Save()
+	return ""
+}
+
+// SwitchProfile flips the active account, persists, and tears down
+// the current Twitch+YT connections so the IRC supervisor reconnects
+// with the new credentials. The frontend gets a "profileSwitched"
+// event so it can clear chat view + user list + badge cache.
+func (a *App) SwitchProfile(id string) string {
+	if id == a.cfg.ActiveProfileID {
+		return ""
+	}
+	if err := a.cfg.SwitchProfile(id); err != nil {
+		return err.Error()
+	}
+	_ = a.cfg.Save()
+
+	// Tear down old connections. The supervisor's Connect() returns
+	// from Disconnect() and the next reconnect picks up the new
+	// cfg.Twitch.*. YT gets re-detected from the new profile's
+	// channel handle.
+	a.mu.Lock()
+	if a.ircClient != nil {
+		a.ircClient.Disconnect()
+	}
+	if a.ytChatCancel != nil {
+		a.ytChatCancel()
+		a.ytChatCancel = nil
+	}
+	a.helixClient = nil
+	a.mu.Unlock()
+
+	// New 7TV client per profile would mean a new EventAPI WS — but
+	// the existing one is a single shared connection that fans out
+	// per-user lookups, so keeping it works fine across profile
+	// switches (per-user cache only grows).
+
+	// Notify the UI so it clears chat + user list before reconnect
+	// chatter starts streaming in.
+	runtime.EventsEmit(a.ctx, "profileSwitched", map[string]interface{}{
+		"id":   id,
+		"name": a.activeProfileName(),
+	})
+
+	// Re-run the auth + connection sequence in the background. The
+	// IRC supervisor is already running — bootSequence's gate stops
+	// us from spawning a duplicate.
+	go a.bootSequence()
+	return ""
+}
+
+func (a *App) activeProfileName() string {
+	for _, p := range a.cfg.Profiles {
+		if p.ID == a.cfg.ActiveProfileID {
+			return p.Name
+		}
+	}
+	return ""
 }
 
 func (a *App) runIRCSupervisor() {

@@ -14,6 +14,11 @@
       <span class="pill pill-tw">TW:●</span>
       <span class="pill pill-yt hidden" id="ytPill">YT:●</span>
     </span>
+    <button class="profile-btn" id="profileBtn" title="Account">
+      <span id="profileBtnName">Default</span>
+      <span class="profile-caret">▾</span>
+    </button>
+    <div class="profile-menu hidden" id="profileMenu"></div>
     <span class="titlebar-spacer"></span>
     <button class="win-btn" id="settingsBtn" title="Settings">&#9881;</button>
     <div class="window-controls">
@@ -73,6 +78,7 @@
     </div>
     <div class="settings-tabs">
       <button class="settings-tab-btn active" data-tab="general" data-i18n="general">General</button>
+      <button class="settings-tab-btn" data-tab="accounts" data-i18n="accounts">Accounts</button>
       <button class="settings-tab-btn" data-tab="sound" data-i18n="sound">Sound</button>
       <button class="settings-tab-btn" data-tab="twitch" data-i18n="twitch">Twitch</button>
       <button class="settings-tab-btn" data-tab="youtube" data-i18n="youtube">YouTube</button>
@@ -112,6 +118,18 @@
           <input type="checkbox" id="autostartCheckbox">
           <span data-i18n="autostart">Start StreamerChat automatically with Windows</span>
         </label>
+      </div>
+    </div>
+
+    <div class="settings-pane" data-pane="accounts">
+      <div class="settings-section">
+        <label data-i18n="accounts">Accounts</label>
+        <p class="hint" style="font-size:11px;color:#888;margin-top:0;margin-bottom:8px;" data-i18n="accountsHint">Each profile holds its own Twitch login + YouTube channel. Switch from the dropdown in the titlebar.</p>
+        <div id="profilesList" class="profiles-list"></div>
+        <div class="settings-row" style="margin-top:8px;">
+          <input class="modal-input" id="newProfileName" type="text" placeholder="e.g. Alt account" autocomplete="off" style="flex:1;">
+          <button class="btn btn-primary" id="addProfileBtn" data-i18n="addAccount">Add Account</button>
+        </div>
       </div>
     </div>
 

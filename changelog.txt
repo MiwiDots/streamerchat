@@ -1,3 +1,28 @@
+2026-06-01 00:30 - v0.4.0 (stable): multi-account profiles in streamerchat-gui
+  - Config now has a Profiles array + ActiveProfileID. Existing
+    single-account installs are migrated transparently on first
+    boot: the top-level Twitch+YouTube state is promoted into a
+    profile named "Default" and ActiveProfileID is set to "default".
+    Flat cfg.Twitch / cfg.YouTube fields stay populated by mirroring
+    from the active profile on Load/Save so the rest of the app
+    code is unchanged.
+  - Titlebar gained an account dropdown that lists every saved
+    profile + a "Manage accounts…" shortcut into Settings.
+  - Settings → new "Accounts" tab: list of profiles with Switch /
+    Rename / Remove actions, plus an inline "Add Account" input. New
+    accounts inherit the build-time Twitch client id so the
+    device-code Login flow in the Twitch tab works immediately for
+    the freshly-created slot.
+  - SwitchProfile teardowns the current IRC connection + YT chat
+    cancel context + helixClient pointer. The IRC supervisor's next
+    reconnect picks up the new profile's credentials automatically,
+    and bootSequence re-runs for token validation + 7TV channel
+    subscribe. The frontend gets a "profileSwitched" event so chat
+    view + user list are cleared before fresh chatter arrives.
+  - Bumped to 0.4.0 because the config schema gained Profiles /
+    ActiveProfileID; the migration is read-only-safe but the bump
+    signals the change to anyone diffing config files.
+
 2026-05-31 23:50 - v0.3.31 (stable): 7TV retry transient errors
   - Probing 7TV's GraphQL endpoint live revealed it occasionally
     returns 502/504 even for known-good users (e.g. TheLimitGER's

@@ -53,6 +53,67 @@ html, body {
 .win-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
 .win-btn.win-close:hover { background: #c42b1c; color: #fff; }
 
+/* Active account dropdown in the titlebar */
+.titlebar .profile-btn {
+  --wails-draggable: no-drag;
+  -webkit-app-region: no-drag;
+  background: rgba(145,70,255,0.18);
+  color: #d6b8ff;
+  border: 1px solid rgba(145,70,255,0.45);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.titlebar .profile-btn:hover { background: rgba(145,70,255,0.3); color: #fff; }
+.titlebar .profile-caret { font-size: 9px; opacity: 0.75; }
+
+.profile-menu {
+  position: fixed;
+  background: #1a1a2e;
+  border: 1px solid #9146ff;
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 180px;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 200;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+}
+.profile-menu .pm-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #ddd;
+}
+.profile-menu .pm-item:hover { background: rgba(145,70,255,0.2); }
+.profile-menu .pm-item.active { color: #9146ff; font-weight: bold; }
+.profile-menu .pm-tag { font-size: 10px; color: #777; margin-left: 8px; }
+.profile-menu .pm-sep { height: 1px; background: #2a2a35; margin: 4px 0; }
+.profile-menu .pm-add { color: #9146ff; }
+
+.profiles-list { display: flex; flex-direction: column; gap: 6px; }
+.profiles-list .profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 4px;
+}
+.profiles-list .profile-row.active { border-color: #9146ff; background: rgba(145,70,255,0.08); }
+.profiles-list .profile-name { flex: 1; color: #ddd; font-size: 13px; }
+.profiles-list .profile-meta { color: #888; font-size: 11px; }
+.profiles-list .profile-row .btn { padding: 3px 8px; font-size: 11px; }
+
 /* Update banner */
 .update-banner {
   display: flex;
