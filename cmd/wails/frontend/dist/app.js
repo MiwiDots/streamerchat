@@ -1310,13 +1310,17 @@ if (window.runtime && window.runtime.EventsOn) {
       setLoggedInUI(true, data.username);
     }
   });
-  // Backend emits 'authExpired' when boot validate + refresh both fail.
-  // Auto-open settings so the user knows what to do.
+  // Backend emits 'authExpired' when boot validate + refresh both
+  // fail OR when we switch to a profile that has no Twitch token yet.
+  // Auto-open settings and jump straight to the Twitch tab so the
+  // Login button is one click away — no hunting through tabs.
   window.runtime.EventsOn('authExpired', () => {
     setLoggedInUI(false, '');
     if (settingsModalBg && settingsModalBg.classList.contains('hidden')) {
       openSettings();
     }
+    document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === 'twitch'));
+    document.querySelectorAll('.settings-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === 'twitch'));
   });
 }
 

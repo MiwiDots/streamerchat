@@ -122,7 +122,8 @@ func (a *App) bootSequence() {
 	}
 
 	if a.cfg.Twitch.AccessToken == "" || a.cfg.Twitch.ClientID == "" {
-		a.emitSystem("Authentication required - please run the CLI version first to authenticate")
+		a.emitSystem("This profile has no Twitch token yet. Open Settings → Twitch and click Login to authenticate.")
+		runtime.EventsEmit(a.ctx, "authExpired", nil)
 		return
 	}
 
@@ -1016,14 +1017,20 @@ func (a *App) StartLogin() map[string]interface{} {
 		a.loadBadges()
 
 		// Tear down any existing IRC client so the supervisor reconnects
-		// with the fresh credentials, or starts cold if none was running.
+		// with the fresh credentials, or starts cold if none was
+		// running. Gate on supervisorsStarted (not on a.ircClient != nil)
+		// so we never spawn a duplicate supervisor after a profile
+		// switch — the old behaviour leaked goroutines on every login.
 		a.mu.Lock()
-		hadSupervisor := a.ircClient != nil
 		if a.ircClient != nil {
 			a.ircClient.Disconnect()
 		}
+		needStart := !a.supervisorsStarted
+		if needStart {
+			a.supervisorsStarted = true
+		}
 		a.mu.Unlock()
-		if !hadSupervisor {
+		if needStart {
 			go a.runIRCSupervisor()
 			go a.tokenRefreshLoop()
 		}
