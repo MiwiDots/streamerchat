@@ -1,3 +1,13 @@
+2026-06-01 01:10 - v0.4.2 (stable): Add Account button never silently no-ops
+  - "Add Account" used to do nothing when the name field was empty.
+    Now it auto-generates a name like "Account 2" if you click
+    without typing, so a single click always produces a profile.
+    Enter inside the input also submits.
+  - If the backend AddProfile call ever returns an empty id (which
+    shouldn't happen but used to fail silently), the UI now surfaces
+    "AddProfile returned no id — check log" so failures are visible
+    instead of mysterious nothing-happens.
+
 2026-06-01 00:50 - v0.4.1 (stable): smooth out the 2nd-account login flow
   - bootSequence used to say "please run the CLI version first to
     authenticate" when a profile had no token. The CLI requirement

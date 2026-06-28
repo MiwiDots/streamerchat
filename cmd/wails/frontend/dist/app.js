@@ -991,18 +991,38 @@ document.addEventListener('click', (e) => {
   }
 });
 
+async function submitNewProfile() {
+  let name = (newProfileNameEl && newProfileNameEl.value || '').trim();
+  if (!name) {
+    // Auto-pick a sensible default so an empty click still does
+    // something — much better UX than silently no-op'ing.
+    name = 'Account ' + (cachedProfiles.length + 1);
+  }
+  try {
+    const id = await window.go.main.App.AddProfile(name);
+    if (!id) {
+      alert('AddProfile returned no id — backend may be stuck. Check log.');
+      return;
+    }
+    if (newProfileNameEl) newProfileNameEl.value = '';
+    await refreshProfiles();
+    if (confirm(`Switch to "${name}" now? You'll need to log in to Twitch in the new profile.`)) {
+      await switchToProfile(id);
+    }
+  } catch (e) {
+    alert('Add failed: ' + e);
+  }
+}
+
 if (addProfileBtn) {
-  addProfileBtn.addEventListener('click', async () => {
-    const name = (newProfileNameEl && newProfileNameEl.value || '').trim();
-    if (!name) return;
-    try {
-      const id = await window.go.main.App.AddProfile(name);
-      newProfileNameEl.value = '';
-      await refreshProfiles();
-      if (id && confirm(`Switch to "${name}" now? You'll need to log in to Twitch in the new profile.`)) {
-        await switchToProfile(id);
-      }
-    } catch (e) { alert('Add failed: ' + e); }
+  addProfileBtn.addEventListener('click', submitNewProfile);
+}
+if (newProfileNameEl) {
+  newProfileNameEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitNewProfile();
+    }
   });
 }
 
