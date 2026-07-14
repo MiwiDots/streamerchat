@@ -46,6 +46,49 @@ function userKey(platform, username) {
   return platform + ':' + username.toLowerCase();
 }
 
+// readableColor boosts too-dark hex colors so usernames stay legible on
+// the dark chat background — same behavior as Twitch's built-in
+// "Readable Colors" filter. Converts hex → HSL, and if lightness is
+// below 40% it clamps up to 55%. Untouched otherwise so light colors
+// stay as the user picked them.
+function readableColor(hex) {
+  if (!hex || typeof hex !== 'string') return '#ffffff';
+  let m = hex.replace('#', '');
+  if (m.length === 3) m = m.split('').map(c => c + c).join('');
+  if (m.length !== 6) return hex;
+  const r = parseInt(m.slice(0, 2), 16) / 255;
+  const g = parseInt(m.slice(2, 4), 16) / 255;
+  const b = parseInt(m.slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  if (l >= 0.40) return hex;
+  const nl = 0.55;
+  const q = nl < 0.5 ? nl * (1 + s) : nl + s - nl * s;
+  const p = 2 * nl - q;
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1; if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  const nr = Math.round(hue2rgb(p, q, h + 1 / 3) * 255);
+  const ng = Math.round(hue2rgb(p, q, h) * 255);
+  const nb = Math.round(hue2rgb(p, q, h - 1 / 3) * 255);
+  return '#' + [nr, ng, nb].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
 function applyRoles(u) {
   const name = u.username.toLowerCase();
   if (name === roles.broadcaster.toLowerCase()) u.isBroadcaster = true;
@@ -317,7 +360,7 @@ async function renderMessage(msg) {
   }
 
   const name = msg.displayName || msg.username;
-  const color = msg.color || '#ffffff';
+  const color = readableColor(msg.color || '#ffffff');
   // 7TV paid users may have a paint (gradient/animated color) applied
   // to their username, or a 7TV badge. Look the sender up in the map
   // the EventAPI WS populates; fall back to plain Twitch color.
@@ -474,6 +517,36 @@ const SLASH_COMMANDS = [
   '/vip',
 ];
 let slashTabState = null; // {prefix, matches, index} while cycling
+let mentionTabState = null; // {tokenStart, prefix, matches, index} for @ Tab
+
+// currentMentionToken finds an @-prefixed word the cursor is on/after.
+// Returns {start, prefix} where prefix is the text after "@" up to the
+// cursor, or null if the cursor isn't in an @-token. Handles both the
+// case where the user is mid-typing (@mi|) and Tab-cycling after a
+// space isn't hit yet.
+function currentMentionToken() {
+  const val = inputEl.value;
+  const caret = inputEl.selectionStart || 0;
+  // Walk backwards from caret to find "@" or a space.
+  let i = caret - 1;
+  while (i >= 0 && val[i] !== ' ' && val[i] !== '@') i--;
+  if (i < 0 || val[i] !== '@') return null;
+  // Everything from the "@" to the caret is the prefix (excluding "@").
+  return { start: i, prefix: val.slice(i + 1, caret).toLowerCase() };
+}
+
+function mentionCandidates(prefix) {
+  const out = [];
+  for (const u of users.values()) {
+    if (u.platform !== 'twitch') continue;
+    if (u.isBot) continue;
+    const name = (u.displayName || u.username).toLowerCase();
+    if (name.startsWith(prefix) || u.username.toLowerCase().startsWith(prefix)) {
+      out.push(u.username);
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
 
 inputEl.addEventListener('keydown', async (e) => {
   if (e.key === 'Tab' && inputEl.value.startsWith('/') && !inputEl.value.includes(' ')) {
@@ -493,9 +566,35 @@ inputEl.addEventListener('keydown', async (e) => {
     inputEl.value = slashTabState.matches[slashTabState.index] + ' ';
     return;
   }
-  // Anything other than Tab resets the cycle so the next /v Tab starts
-  // fresh from the new typed prefix.
-  if (e.key !== 'Tab' && e.key !== 'Shift') slashTabState = null;
+  // @-mention Tab completion: like slash but for usernames in the
+  // current user list. Cursor position matters — a Tab in the middle
+  // of "hey @mi | rest" still cycles the @mi token in place.
+  if (e.key === 'Tab') {
+    const tok = currentMentionToken();
+    if (tok) {
+      e.preventDefault();
+      const key = tok.start + ':' + tok.prefix;
+      if (!mentionTabState || mentionTabState.key !== key) {
+        const matches = mentionCandidates(tok.prefix);
+        if (matches.length === 0) return;
+        mentionTabState = { key, start: tok.start, matches, index: 0 };
+      } else {
+        mentionTabState.index = (mentionTabState.index + (e.shiftKey ? -1 : 1) + mentionTabState.matches.length) % mentionTabState.matches.length;
+      }
+      const pick = mentionTabState.matches[mentionTabState.index];
+      const before = inputEl.value.slice(0, mentionTabState.start);
+      const caret = inputEl.selectionStart || 0;
+      const after = inputEl.value.slice(caret);
+      const insert = '@' + pick + ' ';
+      inputEl.value = before + insert + after;
+      const newCaret = before.length + insert.length;
+      inputEl.setSelectionRange(newCaret, newCaret);
+      return;
+    }
+  }
+  // Anything other than Tab resets both cycle states so the next Tab
+  // starts fresh from whatever prefix the caret is on.
+  if (e.key !== 'Tab' && e.key !== 'Shift') { slashTabState = null; mentionTabState = null; }
 
   if (e.key === 'Enter') {
     const text = inputEl.value.trim();
@@ -544,11 +643,56 @@ function setupEvents() {
 
   window.runtime.EventsOn('chat', (msg) => {
     renderMessage(msg);
-    if (msg.type === 'chat' && msg.username) {
+    // Stream Together: messages from a co-hosted channel show up in our
+    // stream with isSharedChat=true. Render them in chat (users want to
+    // see them), but DON'T add their author to our sidebar — that
+    // sidebar tracks who's in OUR channel, not the merged pool.
+    if (msg.type === 'chat' && msg.username && !msg.isSharedChat) {
       const changed = addOrUpdateUser(msg);
       if (changed) refreshUserList();
       playChatSound();
     }
+    // Ban/timeout: the target vanishes from chat — drop them from the
+    // sidebar too so it doesn't show ghost users. Twitch doesn't send
+    // an IRC PART for banned users, so without this they'd stick.
+    if ((msg.type === 'ban' || msg.type === 'timeout') && msg.targetUsername) {
+      const key = userKey(msg.platform || 'twitch', msg.targetUsername);
+      if (users.delete(key)) refreshUserList();
+    }
+  });
+
+  // Authoritative chatter list from Helix (polled every 60s by the
+  // backend). This is the ground truth for who's in the channel —
+  // anyone in our sidebar not in this list has left, so we prune.
+  // Role flags are preserved because the roles come from a separate
+  // event that populated `roles.*` sets.
+  window.runtime.EventsOn('chattersAuthoritative', (list) => {
+    const wantedKeys = new Set(list.map(c => userKey('twitch', c.username)));
+    let changed = false;
+    for (const key of Array.from(users.keys())) {
+      // Only prune Twitch users — Helix chatters endpoint knows
+      // nothing about YouTube viewers.
+      if (!key.startsWith('twitch:')) continue;
+      if (!wantedKeys.has(key)) {
+        users.delete(key);
+        changed = true;
+      }
+    }
+    for (const c of list) {
+      const key = userKey('twitch', c.username);
+      if (!users.has(key)) {
+        const u = {
+          userId: c.userId || '', username: c.username, displayName: c.username, platform: 'twitch',
+          isMod: false, isVIP: false, isSub: false, isBroadcaster: false, isBot: false,
+        };
+        applyRoles(u);
+        users.set(key, u);
+        changed = true;
+      } else if (c.userId) {
+        users.get(key).userId = c.userId;
+      }
+    }
+    if (changed) refreshUserList();
   });
 
   // 7TV cosmetic entitlements pushed from the EventAPI WebSocket on

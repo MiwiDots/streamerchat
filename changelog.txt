@@ -1,3 +1,33 @@
+2026-07-15 08:30 - v0.4.3 (stable): five UX fixes, updater UNCHANGED
+  Selfupdate code is intentionally untouched — it's exactly what
+  v0.4.2 shipped, so anyone on v0.4.2 can auto-update to this.
+
+  - Token refresh race across profile switches: tokenRefreshLoop
+    and the IRC-supervisor's on-disconnect refresh now snapshot
+    ActiveProfileID BEFORE the network call and discard the fresh
+    tokens if the user switched accounts while the refresh was in
+    flight. Previously Profile A's freshly-issued token could get
+    written into Profile B's slot on the next Save().
+  - Sidebar user list is now authoritative via Helix. A new 60s
+    background poll fetches the actual chatter list from Twitch
+    and REPLACES what the frontend shows — users who left,
+    got banned, or came in via Stream Together get pruned. This
+    is the same pattern Chatterino uses (IRC is realtime, Helix
+    is ground truth). Twitch IRC PART is unreliable so this was
+    the only way to make the list stop growing forever.
+  - Stream Together isolation: chat messages from a co-hosted
+    channel (msg.isSharedChat) are rendered in chat like before
+    but no longer add their authors to OUR sidebar — the sidebar
+    only tracks people in our channel, not the merged pool.
+  - Ban / timeout drops the target from the sidebar immediately
+    instead of leaving a ghost user.
+  - readableColor(): HSL boost for dark username colors below
+    40% lightness (matches Twitch's built-in "Readable Colors"
+    filter). Dark blue / near-black usernames get bumped to
+    55% lightness so they're visible on the dark background.
+  - Slash command Tab-cycle was already there; added @-mention
+    Tab-cycle alongside it. Cursor-aware, works mid-message.
+
 2026-06-01 01:10 - v0.4.2 (stable): Add Account button never silently no-ops
   - "Add Account" used to do nothing when the name field was empty.
     Now it auto-generates a name like "Account 2" if you click

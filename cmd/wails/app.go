@@ -408,10 +408,23 @@ func (a *App) runIRCSupervisor() {
 			strings.Contains(errStr, "invalid")
 
 		if isAuth && a.cfg.Twitch.RefreshToken != "" {
-			if token, refErr := twitch.RefreshAccessToken(a.cfg.Twitch.ClientID, a.cfg.Twitch.ClientSecret, a.cfg.Twitch.RefreshToken); refErr == nil {
-				a.cfg.Twitch.AccessToken = token.AccessToken
-				a.cfg.Twitch.RefreshToken = token.RefreshToken
-				a.cfg.Save()
+			// Same snapshot-and-verify pattern as tokenRefreshLoop:
+			// don't clobber the new profile's tokens if the user
+			// switched accounts while the refresh was in flight.
+			a.mu.Lock()
+			activeAtStart := a.cfg.ActiveProfileID
+			clientID := a.cfg.Twitch.ClientID
+			clientSecret := a.cfg.Twitch.ClientSecret
+			refreshToken := a.cfg.Twitch.RefreshToken
+			a.mu.Unlock()
+			if token, refErr := twitch.RefreshAccessToken(clientID, clientSecret, refreshToken); refErr == nil {
+				a.mu.Lock()
+				if a.cfg.ActiveProfileID == activeAtStart {
+					a.cfg.Twitch.AccessToken = token.AccessToken
+					a.cfg.Twitch.RefreshToken = token.RefreshToken
+					a.cfg.Save()
+				}
+				a.mu.Unlock()
 				backoff = 2 * time.Second
 				continue
 			}
@@ -460,6 +473,13 @@ func (a *App) forwardIRC(ctx context.Context, client *twitch.IRCClient) {
 
 // tokenRefreshLoop refreshes the access token every 30 minutes. See chathub
 // for the rationale (TTL can be <1h so a 60min cadence races).
+//
+// Profile-switch safety: snapshot ActiveProfileID + creds BEFORE the network
+// call. When the refresh completes, re-check under lock — if the user
+// switched accounts while we were waiting on Twitch, discard the new tokens
+// (they belong to the OLD profile; the flat cfg.Twitch now mirrors a
+// different account). Writing them anyway would leak Profile A's fresh token
+// into Profile B's slot on the next Save().
 func (a *App) tokenRefreshLoop() {
 	ticker := time.NewTicker(30 * time.Minute)
 	defer ticker.Stop()
@@ -469,25 +489,76 @@ func (a *App) tokenRefreshLoop() {
 			return
 		case <-ticker.C:
 		}
-		if a.cfg.Twitch.RefreshToken == "" {
+		a.mu.Lock()
+		activeAtStart := a.cfg.ActiveProfileID
+		clientID := a.cfg.Twitch.ClientID
+		clientSecret := a.cfg.Twitch.ClientSecret
+		refreshToken := a.cfg.Twitch.RefreshToken
+		a.mu.Unlock()
+		if refreshToken == "" {
 			continue
 		}
-		token, err := twitch.RefreshAccessToken(a.cfg.Twitch.ClientID, a.cfg.Twitch.ClientSecret, a.cfg.Twitch.RefreshToken)
+		token, err := twitch.RefreshAccessToken(clientID, clientSecret, refreshToken)
 		if err != nil {
 			log.Printf("[AUTH] Token refresh failed: %v", err)
+			continue
+		}
+		a.mu.Lock()
+		if a.cfg.ActiveProfileID != activeAtStart {
+			a.mu.Unlock()
+			log.Printf("[AUTH] Profile switched during refresh — discarding tokens for %s", activeAtStart)
 			continue
 		}
 		a.cfg.Twitch.AccessToken = token.AccessToken
 		a.cfg.Twitch.RefreshToken = token.RefreshToken
 		a.cfg.Save()
+		a.mu.Unlock()
 		log.Printf("[AUTH] Token refreshed")
 		// Reload badges with the fresh token in case the previous load failed.
 		a.loadBadges()
 	}
 }
 
+// loadChattersAndRoles bootstraps the sidebar user list + moderator/vip
+// state from Helix, then starts a background loop that keeps everything
+// authoritative. Chatters get refreshed every 60s so users who left get
+// pruned (Twitch IRC PART is unreliable — batched, delayed, sometimes
+// never fires) and Stream Together co-hosts / their chatters don't leak
+// into our sidebar. This is the pattern Chatterino uses: IRC is the
+// realtime feed, Helix is the ground truth.
 func (a *App) loadChattersAndRoles() {
-	chatters, _ := a.helixClient.GetChatters()
+	a.refreshChatters()
+	a.refreshRoles(true)
+
+	chattersTicker := time.NewTicker(60 * time.Second)
+	rolesTicker := time.NewTicker(5 * time.Minute)
+	defer chattersTicker.Stop()
+	defer rolesTicker.Stop()
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-chattersTicker.C:
+			a.refreshChatters()
+		case <-rolesTicker.C:
+			a.refreshRoles(false)
+		}
+	}
+}
+
+// refreshChatters fetches the authoritative chatter list and emits it as
+// "chattersAuthoritative" — the frontend REPLACES its user list with
+// exactly these users, dropping any that dropped off. This is what makes
+// stuck/banned/left users clear out.
+func (a *App) refreshChatters() {
+	if a.helixClient == nil {
+		return
+	}
+	chatters, err := a.helixClient.GetChatters()
+	if err != nil {
+		log.Printf("[CHATTERS] refresh failed: %v", err)
+		return
+	}
 	entries := make([]map[string]string, 0, len(chatters))
 	for _, c := range chatters {
 		entries = append(entries, map[string]string{
@@ -495,8 +566,13 @@ func (a *App) loadChattersAndRoles() {
 			"userId":   c.UserID,
 		})
 	}
-	runtime.EventsEmit(a.ctx, "chatters", entries)
+	runtime.EventsEmit(a.ctx, "chattersAuthoritative", entries)
+}
 
+func (a *App) refreshRoles(includeBots bool) {
+	if a.helixClient == nil {
+		return
+	}
 	roles := map[string]interface{}{
 		"broadcaster": a.cfg.Twitch.Channel,
 	}
@@ -506,33 +582,17 @@ func (a *App) loadChattersAndRoles() {
 	if vips, err := a.helixClient.GetVIPs(); err == nil {
 		roles["vips"] = vips
 	}
-	var botNames []string
-	for _, c := range chatters {
-		if a.botDetector.IsBot(c.UserLogin) {
-			botNames = append(botNames, c.UserLogin)
+	if includeBots {
+		chatters, _ := a.helixClient.GetChatters()
+		var botNames []string
+		for _, c := range chatters {
+			if a.botDetector.IsBot(c.UserLogin) {
+				botNames = append(botNames, c.UserLogin)
+			}
 		}
+		roles["bots"] = botNames
 	}
-	roles["bots"] = botNames
 	runtime.EventsEmit(a.ctx, "roles", roles)
-
-	// Refresh roles every 5 minutes
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-a.ctx.Done():
-			return
-		case <-ticker.C:
-		}
-		updated := map[string]interface{}{"broadcaster": a.cfg.Twitch.Channel}
-		if mods, err := a.helixClient.GetModerators(); err == nil {
-			updated["mods"] = mods
-		}
-		if vips, err := a.helixClient.GetVIPs(); err == nil {
-			updated["vips"] = vips
-		}
-		runtime.EventsEmit(a.ctx, "roles", updated)
-	}
 }
 
 func (a *App) startYouTubeChat(videoID string) {
@@ -714,6 +774,7 @@ func (a *App) chatToMap(msg chat.Message) map[string]interface{} {
 		"sourceChannel":   msg.SourceChannel,
 		"isSharedChat":    msg.IsSharedChat,
 		"superChatAmount": msg.SuperChatAmount,
+		"targetUsername":  msg.TargetUsername,
 	}
 }
 
