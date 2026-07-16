@@ -548,8 +548,18 @@ func (a *App) loadChattersAndRoles() {
 
 // refreshChatters fetches the authoritative chatter list and emits it as
 // "chattersAuthoritative" — the frontend REPLACES its user list with
-// exactly these users, dropping any that dropped off. This is what makes
-// stuck/banned/left users clear out.
+// exactly these users. This is what makes stuck/banned/left users
+// clear out.
+//
+// Two guardrails against wiping the list wrongly:
+//  1. On any error (401 missing scope, network fail, etc.) we return
+//     without emitting — frontend keeps what it has.
+//  2. On empty response we ALSO don't emit. Twitch returns an empty
+//     list for channels where the logged-in user isn't a moderator,
+//     or for channels the current profile can't authenticate against.
+//     If we emitted [] the frontend would wipe every user and the
+//     sidebar would go blank every 60s. The visible chatters we
+//     already have (from IRC join + chat messages) stay.
 func (a *App) refreshChatters() {
 	if a.helixClient == nil {
 		return
@@ -557,6 +567,13 @@ func (a *App) refreshChatters() {
 	chatters, err := a.helixClient.GetChatters()
 	if err != nil {
 		log.Printf("[CHATTERS] refresh failed: %v", err)
+		return
+	}
+	if len(chatters) == 0 {
+		// Treat "no chatters returned" as "endpoint unavailable for
+		// this profile" rather than "channel is empty" — the
+		// logged-in user is always in their own chat if the token
+		// works, so a legitimate response has ≥1 entry.
 		return
 	}
 	entries := make([]map[string]string, 0, len(chatters))

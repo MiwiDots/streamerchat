@@ -1,3 +1,19 @@
+2026-07-16 11:00 - v0.4.5 (stable): sidebar keeps users across chatters
+  refresh when Helix returns nothing. Updater still untouched.
+
+  - Symptom: on the second profile, user list vanished ~60s after
+    join. Root cause: v0.4.3's authoritative refresh REPLACED the
+    list even when the Helix chatters endpoint returned empty.
+    Twitch returns [] for channels where the current profile isn't
+    a moderator/broadcaster (401 → no data), so profile-B viewing
+    profile-A's channel would wipe on every poll.
+  - Fix: refreshChatters now bails out on empty responses. Since
+    the logged-in user is always in their own chat when the token
+    works, a real response has ≥1 entry. len(chatters) == 0 is
+    treated as "endpoint unavailable" and the frontend keeps what
+    IRC has been populating.
+  - Errors already skipped emit — this is the second guardrail.
+
 2026-07-16 10:00 - v0.4.4 (stable): readable-color boost is now YIQ-based
   and shipped in chathub too. Updater still untouched.
 
