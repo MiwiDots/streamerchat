@@ -47,18 +47,27 @@ function userKey(platform, username) {
 }
 
 // readableColor boosts too-dark hex colors so usernames stay legible on
-// the dark chat background — same behavior as Twitch's built-in
-// "Readable Colors" filter. Converts hex → HSL, and if lightness is
-// below 40% it clamps up to 55%. Untouched otherwise so light colors
-// stay as the user picked them.
+// the dark chat background — same behavior as Twitch's "Readable
+// Colors" filter. Uses PERCEIVED brightness (YIQ luminance) not raw
+// HSL lightness, because blue at "50% lightness" has very low
+// perceived luminance (0.114 weight) and looks pitch black. The naive
+// L-threshold approach missed pure blue entirely. Here we iterate HSL
+// L upward keeping hue+saturation until the resulting color hits the
+// perceived-brightness target.
 function readableColor(hex) {
   if (!hex || typeof hex !== 'string') return '#ffffff';
   let m = hex.replace('#', '');
   if (m.length === 3) m = m.split('').map(c => c + c).join('');
   if (m.length !== 6) return hex;
-  const r = parseInt(m.slice(0, 2), 16) / 255;
-  const g = parseInt(m.slice(2, 4), 16) / 255;
-  const b = parseInt(m.slice(4, 6), 16) / 255;
+  const r0 = parseInt(m.slice(0, 2), 16);
+  const g0 = parseInt(m.slice(2, 4), 16);
+  const b0 = parseInt(m.slice(4, 6), 16);
+  // YIQ perceived luminance on the 0..255 scale. Target ≥ 150 keeps
+  // even deep-blue readable on our #16161c-ish dark background.
+  const y0 = 0.299 * r0 + 0.587 * g0 + 0.114 * b0;
+  if (y0 >= 150) return hex;
+
+  const r = r0 / 255, g = g0 / 255, b = b0 / 255;
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
   let h = 0, s = 0;
   const l = (max + min) / 2;
@@ -72,10 +81,6 @@ function readableColor(hex) {
     }
     h /= 6;
   }
-  if (l >= 0.40) return hex;
-  const nl = 0.55;
-  const q = nl < 0.5 ? nl * (1 + s) : nl + s - nl * s;
-  const p = 2 * nl - q;
   const hue2rgb = (p, q, t) => {
     if (t < 0) t += 1; if (t > 1) t -= 1;
     if (t < 1 / 6) return p + (q - p) * 6 * t;
@@ -83,10 +88,28 @@ function readableColor(hex) {
     if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
     return p;
   };
-  const nr = Math.round(hue2rgb(p, q, h + 1 / 3) * 255);
-  const ng = Math.round(hue2rgb(p, q, h) * 255);
-  const nb = Math.round(hue2rgb(p, q, h - 1 / 3) * 255);
-  return '#' + [nr, ng, nb].map(v => v.toString(16).padStart(2, '0')).join('');
+  const toRGB = (nl) => {
+    const q = nl < 0.5 ? nl * (1 + s) : nl + s - nl * s;
+    const p = 2 * nl - q;
+    return [
+      Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
+      Math.round(hue2rgb(p, q, h) * 255),
+      Math.round(hue2rgb(p, q, h - 1 / 3) * 255),
+    ];
+  };
+  // Walk L upward from max(l, 0.5) in 5% steps until YIQ hits the
+  // target. For pure blue this lands around L=0.85; for red/green
+  // more like L=0.6. Capped at 0.95 so we never blow all the way to
+  // white and lose the user's chosen hue entirely.
+  let nl = Math.max(l, 0.5);
+  let out = toRGB(nl);
+  while (nl < 0.95) {
+    const y = 0.299 * out[0] + 0.587 * out[1] + 0.114 * out[2];
+    if (y >= 150) break;
+    nl += 0.05;
+    out = toRGB(nl);
+  }
+  return '#' + out.map(v => v.toString(16).padStart(2, '0')).join('');
 }
 
 function applyRoles(u) {

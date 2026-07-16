@@ -85,6 +85,63 @@ const inputPrefix = document.getElementById('inputPrefix');
 const msgInput = document.getElementById('msgInput');
 
 // === Helpers ===
+// readableColor boosts too-dark hex colors so usernames stay legible on
+// the dark chat background — Twitch's "Readable Colors" filter. Uses
+// PERCEIVED brightness (YIQ luminance) not raw HSL lightness because
+// blue at 50% L has very low perceived luminance (0.114 weight) and
+// looks pitch black against #16161c. Iterates L upward keeping hue+sat
+// until YIQ hits target 150.
+function readableColor(hex) {
+  if (!hex || typeof hex !== 'string') return '#ffffff';
+  let m = hex.replace('#', '');
+  if (m.length === 3) m = m.split('').map(c => c + c).join('');
+  if (m.length !== 6) return hex;
+  const r0 = parseInt(m.slice(0, 2), 16);
+  const g0 = parseInt(m.slice(2, 4), 16);
+  const b0 = parseInt(m.slice(4, 6), 16);
+  const y0 = 0.299 * r0 + 0.587 * g0 + 0.114 * b0;
+  if (y0 >= 150) return hex;
+  const r = r0 / 255, g = g0 / 255, b = b0 / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1; if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  const toRGB = (nl) => {
+    const q = nl < 0.5 ? nl * (1 + s) : nl + s - nl * s;
+    const p = 2 * nl - q;
+    return [
+      Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
+      Math.round(hue2rgb(p, q, h) * 255),
+      Math.round(hue2rgb(p, q, h - 1 / 3) * 255),
+    ];
+  };
+  let nl = Math.max(l, 0.5);
+  let out = toRGB(nl);
+  while (nl < 0.95) {
+    const y = 0.299 * out[0] + 0.587 * out[1] + 0.114 * out[2];
+    if (y >= 150) break;
+    nl += 0.05;
+    out = toRGB(nl);
+  }
+  return '#' + out.map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
 function el(tag, attrs, ...children) {
   const e = document.createElement(tag);
   if (attrs) {
@@ -575,7 +632,7 @@ async function renderMessage(msg) {
   }
 
   const name = msg.displayName || msg.username;
-  const color = msg.color || '#ffffff';
+  const color = readableColor(msg.color || '#ffffff');
   // 7TV paid users may have a paint applied to their username — a CSS
   // gradient/background-clip recipe sent over the EventAPI WebSocket.
   // Falls back to plain Twitch color when the user has nothing custom.
@@ -1200,7 +1257,7 @@ function renderChatterList(filterText, opts) {
     const section = el('div', { class: 'cl-section cl-section-' + cls });
     section.appendChild(el('div', { class: 'cl-section-title' }, `${title} (${list.length})`));
     for (const { name, u } of list) {
-      const row = el('div', { class: 'cl-name', style: u.color ? 'color:' + u.color : '' }, u.displayName || name);
+      const row = el('div', { class: 'cl-name', style: u.color ? 'color:' + readableColor(u.color) : '' }, u.displayName || name);
       row.addEventListener('click', () => {
         closeChatterList();
         openUserCard(activeChannel, name, u.userId);
@@ -1246,7 +1303,7 @@ async function openUserCard(channel, username, userId) {
   const local = state && state.userMessages.get(username);
 
   const displayName = (data && data.displayName) || (local && local.displayName) || username;
-  const color = (local && local.color) || '#ddd';
+  const color = readableColor((local && local.color) || '#ddd');
   const avatar = data && data.avatar;
   const userId2 = (data && data.userId) || (local && local.userId) || '';
 

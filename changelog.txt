@@ -1,3 +1,22 @@
+2026-07-16 10:00 - v0.4.4 (stable): readable-color boost is now YIQ-based
+  and shipped in chathub too. Updater still untouched.
+
+  - v0.4.3's readableColor used HSL L < 40% as the threshold. Pure
+    blue is L=50%, so it slipped through unmodified even though its
+    perceived brightness (0.114 weight on the B channel) makes it
+    look nearly black on our dark background. Rewrote to check YIQ
+    perceived luminance (target ≥ 150) and iterate L upward in 5%
+    steps until the boosted color meets that target. Deep blue now
+    lands around L=85% instead of staying at L=50%.
+  - Same helper added to chathub. Applied to the chat message
+    username, the channel-list user name column, and the user-card
+    header color. So multi-channel chathub gets the same behavior
+    as single-channel streamerchat-gui.
+  - The reported "filter only works for one account" was the same
+    root cause — blue was never being boosted for any account, it
+    just looked more dramatic for accounts with many blue-color
+    chatters. YIQ approach fixes it universally.
+
 2026-07-15 08:30 - v0.4.3 (stable): five UX fixes, updater UNCHANGED
   Selfupdate code is intentionally untouched — it's exactly what
   v0.4.2 shipped, so anyone on v0.4.2 can auto-update to this.
