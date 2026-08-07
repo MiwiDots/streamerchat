@@ -563,7 +563,7 @@ function updateInputLabel() {
 // are included so they autocomplete too.
 const SLASH_COMMANDS = [
   '/announce', '/announceblue', '/announcegreen', '/announceorange', '/announcepurple',
-  '/ban', '/clear', '/clearchat',
+  '/ban', '/clear',
   '/emoteonly', '/emoteonlyoff',
   '/followers', '/followersoff',
   '/help',
@@ -658,17 +658,6 @@ inputEl.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
     const text = inputEl.value.trim();
     if (text) {
-      // /clear is intercepted client-side and wipes only OUR chat
-      // view — same as chatterino. The Helix /clear (chat-clear for
-      // everyone) needed broadcaster/mod scope and would fail for
-      // most users anyway. If someone really wants the server-side
-      // nuke they can use the ban dialog.
-      if (text.toLowerCase() === '/clear') {
-        chatEl.replaceChildren();
-        userMessages.clear();
-        inputEl.value = '';
-        return;
-      }
       try {
         await window.go.main.App.SendMessage(text);
       } catch (err) { console.error(err); }

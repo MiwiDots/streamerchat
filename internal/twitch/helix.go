@@ -92,13 +92,22 @@ func (h *HelixClient) DeleteMessage(messageID string) error {
 }
 
 // ClearChat clears all messages in the chat.
+//
+// The nicklaw5/helix v2 client returns ErrorMessage on the response
+// struct for 4xx / 5xx Twitch answers — `err` is only set for
+// transport failures. Before this change we silently returned nil
+// when Twitch said "401 missing scope" so /clear appeared to do
+// nothing. Now we surface both.
 func (h *HelixClient) ClearChat() error {
-	_, err := h.client.DeleteChatMessage(&helix.DeleteChatMessageParams{
+	resp, err := h.client.DeleteChatMessage(&helix.DeleteChatMessageParams{
 		BroadcasterID: h.broadcasterID,
 		ModeratorID:   h.moderatorID,
 	})
 	if err != nil {
 		return fmt.Errorf("clear chat: %w", err)
+	}
+	if resp.ErrorMessage != "" {
+		return fmt.Errorf("clear chat: %d %s (%s)", resp.StatusCode, resp.Error, resp.ErrorMessage)
 	}
 	return nil
 }

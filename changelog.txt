@@ -1,3 +1,21 @@
+2026-07-16 14:45 - v0.4.9 (stable): /clear in streamerchat does the
+  real server-side chat wipe again + fixes the silent no-op that
+  made it look broken. Updater still untouched.
+
+  - In streamerchat-gui the user IS the broadcaster, so /clear
+    should nuke the whole channel chat (that's what Twitch's
+    /clear does everywhere else). Reverted the client-side
+    intercept added in v0.4.7 — /clear now routes through Helix
+    again. Removed the /clearchat split from v0.4.8 too, it's
+    redundant.
+  - Root cause of "geht nicht" in v0.4.5 and earlier: the Helix
+    v2 client returns 4xx / 5xx via resp.ErrorMessage, NOT via
+    the err return. ClearChat() only checked err, so any
+    permission / scope error came back as a nil error and /clear
+    silently no-op'd. Now we surface ErrorMessage too.
+  - chathub keeps /clear as client-side (it's a viewer, no scope
+    to nuke other people's channels).
+
 2026-07-16 14:00 - v0.4.8 (stable): chathub gets streamerchat's chat
   cleanup fixes + /clearchat for the actual server nuke. Updater
   still untouched.

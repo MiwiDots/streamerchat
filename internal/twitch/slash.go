@@ -110,15 +110,16 @@ func HandleSlashCommand(h *HelixClient, line string) (status string, handled boo
 		}
 		return fmt.Sprintf("%s timed out for %ds.", login, seconds), true
 
-	case "clearchat":
-		// Server-side chat clear via Helix — wipes everyone's chat
-		// for the channel. Needs broadcaster/mod scope. /clear is
-		// intercepted client-side and only wipes the local view
-		// (chatterino-style), so the two are cleanly separated.
+	case "clear":
+		// Server-side chat clear via Helix — wipes the whole
+		// channel chat for everyone. The broadcaster is implicitly a
+		// mod so this works in streamerchat-gui (streamer dashboard)
+		// with the moderator:manage:chat_messages scope. Chathub is
+		// a viewer app and intercepts /clear client-side instead.
 		if err := h.ClearChat(); err != nil {
 			return err.Error(), true
 		}
-		return "Chat cleared for the whole channel.", true
+		return "Chat cleared.", true
 
 	case "slow":
 		seconds := 30
@@ -258,8 +259,7 @@ func helpText() string {
 		"/vip <user>, /unvip <user>",
 		"/ban <user> [reason], /unban <user>",
 		"/timeout <user> [60s|5m|1h|1d] [reason], /untimeout <user>",
-		"/clear             (clear only your own view — like chatterino)",
-		"/clearchat         (wipe the ENTIRE channel chat, needs mod/broadcaster)",
+		"/clear",
 		"/slow [seconds], /slowoff",
 		"/followers [duration], /followersoff",
 		"/subscribers, /subscribersoff",
