@@ -1,3 +1,15 @@
+2026-07-16 13:15 - v0.4.7 (stable): /clear is now client-side (like
+  chatterino) in both apps. Updater still untouched.
+
+  - Before: /clear went to Helix as a chat-wide server nuke that
+    required broadcaster/mod scope and failed silently for anyone
+    else. Now it's intercepted in the frontend BEFORE hitting the
+    backend and just wipes the current chat view + per-user log
+    for OUR window. Matches chatterino's behavior — everyone can
+    clear their own view without permissions.
+  - In chathub /clear scopes to the active channel only, other
+    tabs stay untouched.
+
 2026-07-16 12:30 - v0.4.6 (stable): full per-user session message log
   in the user-card popup. Updater still untouched.
 

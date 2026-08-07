@@ -1489,6 +1489,18 @@ msgInput.addEventListener('keydown', async (e) => {
     const text = msgInput.value.trim();
     const meta = parseChannelKey(activeChannel);
     msgInput.value = '';
+    // /clear is intercepted client-side and wipes only the current
+    // channel's chat view + user-message log — same as chatterino.
+    // Twitch's server-side chat clear (broadcaster/mod only) would
+    // fail for most users anyway.
+    if (text.toLowerCase() === '/clear') {
+      const state = channels.get(activeChannel);
+      if (state) {
+        if (state.chatViewEl) state.chatViewEl.replaceChildren();
+        state.userMessages.clear();
+      }
+      return;
+    }
     try {
       let err = '';
       if (meta.platform === 'youtube') {
