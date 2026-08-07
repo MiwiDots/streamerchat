@@ -563,7 +563,7 @@ function updateInputLabel() {
 // are included so they autocomplete too.
 const SLASH_COMMANDS = [
   '/announce', '/announceblue', '/announcegreen', '/announceorange', '/announcepurple',
-  '/ban', '/clear',
+  '/ban', '/clear', '/clearchat',
   '/emoteonly', '/emoteonlyoff',
   '/followers', '/followersoff',
   '/help',

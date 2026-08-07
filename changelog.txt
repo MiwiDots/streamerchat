@@ -1,3 +1,20 @@
+2026-07-16 14:00 - v0.4.8 (stable): chathub gets streamerchat's chat
+  cleanup fixes + /clearchat for the actual server nuke. Updater
+  still untouched.
+
+  - chathub was missing three fixes streamerchat got in v0.4.3:
+    (1) ban / timeout target didn't get dropped from the chatter
+    list — ghost user stuck in @-autocomplete + user card; (2)
+    Stream Together messages polluted the chatter list with users
+    from a co-hosted channel; (3) chat event payload didn't carry
+    targetUsername/isSharedChat so the frontend couldn't act on
+    either. All three now match streamerchat.
+  - Splits /clear into two commands (streamerchat only, chathub
+    can't mod other channels so /clearchat wouldn't work there):
+    * /clear     — local view only (chatterino style, no perms)
+    * /clearchat — server nuke via Helix, wipes the whole channel
+                   for everyone (needs mod/broadcaster scope)
+
 2026-07-16 13:15 - v0.4.7 (stable): /clear is now client-side (like
   chatterino) in both apps. Updater still untouched.
 

@@ -545,9 +545,23 @@ async function renderMessage(msg) {
   const state = channels.get(msg.channel);
   if (!state) return;
 
+  // Ban / timeout: drop the target from the local chatter list so it
+  // doesn't linger as a ghost in @-autocomplete / userMessages. Same
+  // fix streamerchat got — Twitch doesn't send IRC PART for bans.
+  if ((msg.type === 'ban' || msg.type === 'timeout') && msg.targetUsername) {
+    const tgt = msg.targetUsername;
+    if (state.chatters.delete(tgt)) {
+      const idx = state.chatterOrder.indexOf(tgt);
+      if (idx >= 0) state.chatterOrder.splice(idx, 1);
+      state.userMessages.delete(tgt);
+    }
+  }
+
   // Track chatters for @-autocomplete. Move existing names to the end so
-  // recently-active users rank higher.
-  if (msg.username) {
+  // recently-active users rank higher. SKIP Stream-Together messages:
+  // their authors live in a co-hosted channel, not ours, and would
+  // pollute the sidebar / autocomplete with strangers.
+  if (msg.username && !msg.isSharedChat) {
     const name = msg.username;
     if (state.chatters.has(name)) {
       const idx = state.chatterOrder.indexOf(name);

@@ -110,11 +110,15 @@ func HandleSlashCommand(h *HelixClient, line string) (status string, handled boo
 		}
 		return fmt.Sprintf("%s timed out for %ds.", login, seconds), true
 
-	case "clear":
+	case "clearchat":
+		// Server-side chat clear via Helix — wipes everyone's chat
+		// for the channel. Needs broadcaster/mod scope. /clear is
+		// intercepted client-side and only wipes the local view
+		// (chatterino-style), so the two are cleanly separated.
 		if err := h.ClearChat(); err != nil {
 			return err.Error(), true
 		}
-		return "Chat cleared.", true
+		return "Chat cleared for the whole channel.", true
 
 	case "slow":
 		seconds := 30
@@ -254,7 +258,8 @@ func helpText() string {
 		"/vip <user>, /unvip <user>",
 		"/ban <user> [reason], /unban <user>",
 		"/timeout <user> [60s|5m|1h|1d] [reason], /untimeout <user>",
-		"/clear",
+		"/clear             (clear only your own view — like chatterino)",
+		"/clearchat         (wipe the ENTIRE channel chat, needs mod/broadcaster)",
 		"/slow [seconds], /slowoff",
 		"/followers [duration], /followersoff",
 		"/subscribers, /subscribersoff",
