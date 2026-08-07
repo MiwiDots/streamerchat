@@ -6,6 +6,13 @@ const SEND_TARGETS = ['Twitch', 'YouTube', 'Both'];
 
 // State
 let users = new Map(); // key: platform:lowerusername -> {userId, username, displayName, platform, isMod, isVIP, isSub, isBroadcaster, isBot}
+// Per-user message log for the current session. Keyed by the same
+// platform:lowerusername key as `users`; each entry is an array of
+// {ts, text} newest-appended-last. Capped at USER_MSG_CAP per user
+// so a spammer can't OOM the tab, but 1000 covers any realistic
+// session. Cleared on profile switch.
+const userMessages = new Map();
+const USER_MSG_CAP = 1000;
 let roles = { mods: new Set(), vips: new Set(), bots: new Set(), broadcaster: '' };
 let selectedUser = null;
 let sendTarget = 0;
@@ -23,6 +30,7 @@ const modalBgEl = document.getElementById('modalBg');
 const modalUserEl = document.getElementById('modalUser');
 const modalInfoEl = document.getElementById('modalInfo');
 const modalCloseEl = document.getElementById('modalClose');
+const modalMsgsEl = document.getElementById('modalMsgs');
 
 // Helpers
 function el(tag, attrs, ...children) {
@@ -446,6 +454,7 @@ async function openUserModal(u, msgId) {
   selectedUser = { ...u, msgId: msgId || '' };
   modalUserEl.textContent = u.displayName || u.username;
   modalInfoEl.textContent = 'Loading user info...';
+  renderUserMessages(u);
   modalBgEl.classList.remove('hidden');
   refreshUserList();
 
@@ -459,6 +468,33 @@ async function openUserModal(u, msgId) {
   } else {
     modalInfoEl.textContent = 'No user ID - cannot fetch info';
   }
+}
+
+// renderUserMessages fills the modal-msgs box with every message this
+// user has sent in the current session. Newest at the bottom so the
+// scroll starts at the most recent line (matches how chat itself flows).
+function renderUserMessages(u) {
+  if (!modalMsgsEl) return;
+  modalMsgsEl.replaceChildren();
+  const key = userKey(u.platform, u.username);
+  const log = userMessages.get(key) || [];
+  const title = el('div', { class: 'modal-msgs-title' }, `Messages this session (${log.length})`);
+  modalMsgsEl.appendChild(title);
+  if (log.length === 0) {
+    modalMsgsEl.appendChild(el('div', { class: 'modal-msgs-empty' }, 'no messages yet'));
+    return;
+  }
+  for (const m of log) {
+    const d = new Date(m.ts);
+    const tsStr = String(d.getHours()).padStart(2, '0') + ':' +
+      String(d.getMinutes()).padStart(2, '0') + ':' +
+      String(d.getSeconds()).padStart(2, '0');
+    modalMsgsEl.appendChild(el('div', { class: 'modal-msg' },
+      el('span', { class: 'modal-msg-ts' }, tsStr),
+      m.text));
+  }
+  // Scroll to newest (bottom) after DOM commits.
+  requestAnimationFrame(() => { modalMsgsEl.scrollTop = modalMsgsEl.scrollHeight; });
 }
 
 function renderModalInfo(info) {
@@ -674,6 +710,16 @@ function setupEvents() {
       const changed = addOrUpdateUser(msg);
       if (changed) refreshUserList();
       playChatSound();
+      // Append to the per-user session log so the user-card modal can
+      // show the full history of what this person said, not just the
+      // last few lines from the visible chat scroll.
+      if (msg.text) {
+        const key = userKey(msg.platform, msg.username);
+        let log = userMessages.get(key);
+        if (!log) { log = []; userMessages.set(key, log); }
+        log.push({ ts: msg.timestamp || Date.now(), text: msg.text });
+        if (log.length > USER_MSG_CAP) log.splice(0, log.length - USER_MSG_CAP);
+      }
     }
     // Ban/timeout: the target vanishes from chat — drop them from the
     // sidebar too so it doesn't show ghost users. Twitch doesn't send
@@ -1204,6 +1250,7 @@ function setupProfileSwitchedListener() {
   window.runtime.EventsOn('profileSwitched', () => {
     chatEl.replaceChildren();
     users.clear();
+    userMessages.clear();
     refreshUserList();
     refreshProfiles();
   });

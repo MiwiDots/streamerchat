@@ -1,3 +1,18 @@
+2026-07-16 12:30 - v0.4.6 (stable): full per-user session message log
+  in the user-card popup. Updater still untouched.
+
+  - streamerchat-gui had NO message history in its user-card modal —
+    only follow info + account age. Now every chat message is
+    appended to a per-user log (keyed by platform:lowerusername)
+    and the modal renders the full log in a scrollable box with
+    timestamps to the second. Log clears on profile switch.
+  - chathub was capping the per-user log at 50 and only showing the
+    last 15 in the card. Bumped cap to 1000 per user (still bounded
+    so a spammer can't OOM the tab) and the card now shows ALL of
+    them, newest at bottom, auto-scrolled into view on open.
+  - Timestamp format now includes seconds so back-to-back messages
+    aren't visually collapsed into one minute.
+
 2026-07-16 11:00 - v0.4.5 (stable): sidebar keeps users across chatters
   refresh when Helix returns nothing. Updater still untouched.
 

@@ -461,6 +461,35 @@ body.no-ts .ts { display: none; }
   white-space: pre-wrap;
 }
 
+.modal-msgs {
+  margin: 0 0 16px 0;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  background: #0d0d14;
+  border-radius: 3px;
+  font-size: 13px;
+  color: #ddd;
+}
+.modal-msgs-title {
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  position: sticky;
+  top: -8px;
+  background: #0d0d14;
+  padding: 4px 0;
+}
+.modal-msgs-empty { color: #666; font-style: italic; }
+.modal-msg {
+  padding: 2px 0;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.modal-msg-ts { color: #666; margin-right: 6px; font-variant-numeric: tabular-nums; }
+
 .modal-btns {
   display: flex;
   gap: 6px;

@@ -580,7 +580,10 @@ async function renderMessage(msg) {
       if (msg.isBroadcaster) u.isBroadcaster = true;
       if (msg.isSub) u.isSub = true;
       u.messages.push({ ts: msg.timestamp || Date.now(), text: msg.text });
-      if (u.messages.length > 50) u.messages.shift();
+      // Keep the full per-user session log so the user-card shows
+      // everything they said, not just a tiny recent slice. Cap at
+      // 1000 per user so a spammer can't OOM the tab.
+      if (u.messages.length > 1000) u.messages.splice(0, u.messages.length - 1000);
     }
   }
 
@@ -1352,19 +1355,24 @@ async function openUserCard(channel, username, userId) {
   }
   if (facts.childElementCount > 0) userCardEl.appendChild(facts);
 
-  // Recent local messages
+  // Full per-user session log — every message this user has sent in
+  // this channel since the app opened, scrollable.
   if (local && local.messages.length > 0) {
     const list = el('div', { class: 'uc-msgs' });
-    list.appendChild(el('div', { class: 'uc-msgs-title' }, 'Recent messages'));
-    for (const m of local.messages.slice(-15)) {
+    list.appendChild(el('div', { class: 'uc-msgs-title' }, `Messages this session (${local.messages.length})`));
+    for (const m of local.messages) {
       const ts = new Date(m.ts);
-      const tsStr = String(ts.getHours()).padStart(2, '0') + ':' + String(ts.getMinutes()).padStart(2, '0');
+      const tsStr = String(ts.getHours()).padStart(2, '0') + ':' +
+        String(ts.getMinutes()).padStart(2, '0') + ':' +
+        String(ts.getSeconds()).padStart(2, '0');
       list.appendChild(el('div', { class: 'uc-msg' },
         el('span', { class: 'uc-msg-ts' }, tsStr),
         ' ',
         el('span', { class: 'uc-msg-text' }, m.text)));
     }
     userCardEl.appendChild(list);
+    // Scroll to newest (bottom) once the DOM commits.
+    requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
   }
 }
 
