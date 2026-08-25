@@ -1,3 +1,34 @@
+2026-07-16 15:45 - v0.5.0 (stable): activity feed via Twitch EventSub
+  (follows / subs / gifts / raids / bits / channel points / hype
+  train) in streamerchat-gui. Updater still untouched.
+
+  - New package internal/eventsub/. Connects to
+    wss://eventsub.wss.twitch.tv/ws, does session_welcome handshake,
+    subscribes to the 10 activity types via
+    /helix/eventsub/subscriptions with transport=websocket, then
+    normalizes every incoming notification into an Event struct
+    the app.go layer forwards to the frontend as "activity".
+    Reconnects on drop with exponential backoff up to 60s. Handles
+    session_reconnect (Twitch's rotate-server signal) by dialing
+    the new URL and swapping the socket.
+  - Per-profile: canceled + respawned on SwitchProfile so
+    subscriptions carry the new profile's access token, and the
+    frontend Activity feed resets to empty for the incoming
+    profile.
+  - Auth scopes added: bits:read (for channel.cheer),
+    channel:read:hype_train (for channel.hype_train.*). The other
+    scopes needed by EventSub (moderator:read:followers,
+    channel:read:subscriptions, channel:read:redemptions) were
+    already requested. **Requires a one-time Twitch re-login** to
+    pick up the two new scopes.
+  - Frontend: sidebar splits into two tabs — Users (the existing
+    chatter list) and Activity (new). Each activity row has a
+    typed left border in the Twitch-brand color for its category,
+    a small icon, user + action line, timestamp, and optional
+    detail (message / bits amount / hype progress %). Auto-scrolls
+    only when already near the bottom so scrolling back to inspect
+    an older event doesn't get yanked. Capped at 500 rows.
+
 2026-07-16 14:45 - v0.4.9 (stable): /clear in streamerchat does the
   real server-side chat wipe again + fixes the silent no-op that
   made it look broken. Updater still untouched.

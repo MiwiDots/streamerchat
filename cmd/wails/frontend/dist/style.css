@@ -248,7 +248,80 @@ html, body {
 }
 
 .chat-panel { flex: 1; }
-.sidebar { width: 220px; }
+.sidebar { width: 240px; }
+
+/* Sidebar tabs — switch between "Users" (chatters) and "Activity"
+   (EventSub feed: follows, subs, raids, cheers, hype train). Only
+   one pane visible at a time; the inactive one is display:none so
+   its scroll position and DOM stay untouched behind the scenes. */
+.sidebar-tabs {
+  display: flex;
+  background: #14141c;
+  border-bottom: 1px solid #333;
+}
+.sidebar-tab {
+  flex: 1;
+  padding: 6px 8px;
+  background: transparent;
+  color: #888;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.sidebar-tab:hover { color: #ddd; }
+.sidebar-tab.active {
+  color: #00bfff;
+  border-bottom-color: #00bfff;
+}
+.sidebar-pane { display: none; flex-direction: column; flex: 1; min-height: 0; }
+.sidebar-pane.active { display: flex; }
+
+/* Activity list — one row per event with a colored icon, header
+   line (user + action), and optional inline detail (message / bits
+   amount / viewer count). Fixed row layout keeps a fast scroll. */
+#activityList { padding: 4px 0; }
+.activity-row {
+  padding: 6px 10px;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid #1a1a24;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: default;
+}
+.activity-row:hover { background: #14141c; }
+.activity-head { display: flex; align-items: baseline; gap: 6px; }
+.activity-icon {
+  font-size: 14px;
+  line-height: 1;
+  width: 16px;
+  text-align: center;
+}
+.activity-user { font-weight: bold; color: #eee; }
+.activity-action { color: #aaa; }
+.activity-ts { color: #555; font-size: 10px; margin-left: auto; font-variant-numeric: tabular-nums; }
+.activity-detail {
+  color: #bbb;
+  margin-top: 3px;
+  padding-left: 22px;
+  word-break: break-word;
+}
+
+/* Per-type accent color on the left border so you can scan the
+   feed at a glance. Chose warm tones for hype/bits/gift and cool
+   for follow/sub/raid — mirrors Twitch's own conventions. */
+.activity-row[data-etype="follow"]    { border-left-color: #ff6b9d; }
+.activity-row[data-etype="subscribe"] { border-left-color: #9146ff; }
+.activity-row[data-etype="resub"]     { border-left-color: #b48eff; }
+.activity-row[data-etype="gift"]      { border-left-color: #ff8f2e; }
+.activity-row[data-etype="raid"]      { border-left-color: #00c8ff; }
+.activity-row[data-etype="cheer"]     { border-left-color: #ffd23f; }
+.activity-row[data-etype="reward"]    { border-left-color: #4ade80; }
+.activity-row[data-etype="hype_train"] { border-left-color: #ff4500; }
 
 .panel-title {
   padding: 4px 10px;

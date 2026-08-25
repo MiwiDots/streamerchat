@@ -23,6 +23,25 @@ let emoteCache = new Map(); // name -> {url, animated} or null
 const chatEl = document.getElementById('chat');
 const userListEl = document.getElementById('userList');
 const userTitleEl = document.getElementById('userTitle');
+const activityListEl = document.getElementById('activityList');
+const activityTitleEl = document.getElementById('activityTitle');
+
+// Sidebar tabs: click a .sidebar-tab to swap between the Users pane
+// and the Activity pane. Both panes stay in the DOM so scroll
+// position + rendered content survive switching.
+document.querySelectorAll('.sidebar-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.side;
+    document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.sidebar-pane').forEach(p => p.classList.toggle('active', p.dataset.sidePane === key));
+  });
+});
+
+// Activity feed state — every EventSub event we receive appended
+// newest-last. Cap at 500 rows so a hype train can't grow the DOM
+// without bound; older rows scroll out of history.
+const activityLog = [];
+const ACTIVITY_CAP = 500;
 const inputEl = document.getElementById('msgInput');
 const inputLabelEl = document.getElementById('inputLabel');
 const ytPillEl = document.getElementById('ytPill');
@@ -181,6 +200,87 @@ function renderRoleBadge(u) {
   if (u.isVIP) return tryImg('vip', 'V', 'role-v');
   if (u.isSub) return tryImg('subscriber', 'S', 'role-s');
   return el('span', null, ' ');
+}
+
+// Activity feed rendering. Each event type gets an icon + a
+// human-readable header line + optional detail. Kept declarative
+// (formatActivity → {icon, action, detail}) so adding a new event
+// type is a single-branch change.
+function formatActivity(ev) {
+  const meta = ev.meta || {};
+  switch (ev.type) {
+    case 'follow':
+      return { icon: '❤', action: 'followed', detail: '' };
+    case 'subscribe':
+      return {
+        icon: '★',
+        action: meta.isGift ? `got a gifted ${tierLabel(meta.tier)} sub` : `subscribed (${tierLabel(meta.tier)})`,
+        detail: '',
+      };
+    case 'resub': {
+      const months = meta.cumulativeMonths ? `${meta.cumulativeMonths}mo total` : '';
+      const streak = meta.streakMonths ? `, ${meta.streakMonths}mo streak` : '';
+      return {
+        icon: '★',
+        action: `resubbed (${tierLabel(meta.tier)})${months || streak ? ' — ' + months + streak : ''}`,
+        detail: ev.message || '',
+      };
+    }
+    case 'gift':
+      return {
+        icon: '🎁',
+        action: `gifted ${meta.total || '?'} × ${tierLabel(meta.tier)} sub${meta.total > 1 ? 's' : ''}`,
+        detail: meta.cumulativeTotal ? `${meta.cumulativeTotal} total gifted in this channel` : '',
+      };
+    case 'raid':
+      return { icon: '⚔', action: `raided with ${meta.viewers || 0} viewers`, detail: '' };
+    case 'cheer':
+      return { icon: '💎', action: `cheered ${meta.bits || 0} bits`, detail: ev.message || '' };
+    case 'reward':
+      return {
+        icon: '◆',
+        action: `redeemed ${meta.reward || 'a reward'}${meta.cost ? ` (${meta.cost} pts)` : ''}`,
+        detail: ev.message || '',
+      };
+    case 'hype_train': {
+      const phase = meta.phase || '';
+      if (phase === 'end') {
+        return { icon: '🚂', action: `hype train ended at level ${meta.level || '?'}`, detail: '' };
+      }
+      if (phase === 'begin') {
+        return { icon: '🚂', action: `hype train started (level ${meta.level || 1})`, detail: '' };
+      }
+      const goal = meta.goal || 1, prog = meta.progress || 0;
+      const pct = Math.min(100, Math.round((prog / goal) * 100));
+      return { icon: '🚂', action: `hype train level ${meta.level || '?'} — ${pct}%`, detail: '' };
+    }
+    default:
+      return { icon: '•', action: ev.type, detail: '' };
+  }
+}
+function tierLabel(t) {
+  return ({ '1000': 'T1', '2000': 'T2', '3000': 'T3', 'Prime': 'Prime' }[t] || t || 'T1');
+}
+function appendActivityRow(ev) {
+  const { icon, action, detail } = formatActivity(ev);
+  const d = new Date(ev.timestamp || Date.now());
+  const tsStr = String(d.getHours()).padStart(2, '0') + ':' +
+    String(d.getMinutes()).padStart(2, '0') + ':' +
+    String(d.getSeconds()).padStart(2, '0');
+  const row = el('div', { class: 'activity-row', 'data-etype': ev.type });
+  const head = el('div', { class: 'activity-head' },
+    el('span', { class: 'activity-icon' }, icon),
+    el('span', { class: 'activity-user' }, ev.user || ''),
+    el('span', { class: 'activity-action' }, ' ' + action),
+    el('span', { class: 'activity-ts' }, tsStr));
+  row.appendChild(head);
+  if (detail) row.appendChild(el('div', { class: 'activity-detail' }, detail));
+  activityListEl.appendChild(row);
+}
+function renderActivity() {
+  activityListEl.replaceChildren();
+  for (const ev of activityLog) appendActivityRow(ev);
+  activityTitleEl.textContent = `Activity (${activityLog.length})`;
 }
 
 function refreshUserList() {
@@ -698,6 +798,22 @@ function setupEvents() {
     preloadRoleBadges();
     setTimeout(preloadRoleBadges, 1500);
     setTimeout(preloadRoleBadges, 4000);
+  });
+
+  // EventSub activity — one row per event goes into the Activity
+  // sidebar pane. Fired by the backend eventsub client running in
+  // its own goroutine per profile.
+  window.runtime.EventsOn('activity', (ev) => {
+    activityLog.push(ev);
+    if (activityLog.length > ACTIVITY_CAP) activityLog.splice(0, activityLog.length - ACTIVITY_CAP);
+    appendActivityRow(ev);
+    activityTitleEl.textContent = `Activity (${activityLog.length})`;
+    // Auto-scroll only if user is already near the bottom, so
+    // scrolling up to inspect an older event doesn't get yanked.
+    const nearBottom = activityListEl.scrollHeight - activityListEl.scrollTop - activityListEl.clientHeight < 60;
+    if (nearBottom) {
+      activityListEl.scrollTop = activityListEl.scrollHeight;
+    }
   });
 
   window.runtime.EventsOn('chat', (msg) => {
@@ -1251,8 +1367,17 @@ function setupProfileSwitchedListener() {
     chatEl.replaceChildren();
     users.clear();
     userMessages.clear();
+    activityLog.length = 0;
+    renderActivity();
     refreshUserList();
     refreshProfiles();
+  });
+  // Backend fires activityReset alongside profileSwitched — treat
+  // as belt-and-suspenders so the feed is guaranteed empty even if
+  // ordering ever changes.
+  window.runtime.EventsOn('activityReset', () => {
+    activityLog.length = 0;
+    renderActivity();
   });
 }
 setupProfileSwitchedListener();

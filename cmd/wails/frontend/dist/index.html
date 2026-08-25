@@ -37,8 +37,18 @@
       <div class="scroll" id="chat"></div>
     </div>
     <div class="panel sidebar">
-      <div class="panel-title sidebar-title" id="userTitle">Users (0)</div>
-      <div class="scroll" id="userList"></div>
+      <div class="sidebar-tabs">
+        <button class="sidebar-tab active" data-side="users" data-i18n="usersTab">Users</button>
+        <button class="sidebar-tab" data-side="activity" data-i18n="activityTab">Activity</button>
+      </div>
+      <div class="sidebar-pane active" data-side-pane="users">
+        <div class="panel-title sidebar-title" id="userTitle">Users (0)</div>
+        <div class="scroll" id="userList"></div>
+      </div>
+      <div class="sidebar-pane" data-side-pane="activity">
+        <div class="panel-title sidebar-title" id="activityTitle">Activity (0)</div>
+        <div class="scroll" id="activityList"></div>
+      </div>
     </div>
   </div>
   <div class="input-row">

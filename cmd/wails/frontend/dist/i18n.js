@@ -18,6 +18,7 @@ const STRINGS = {
     showJoinPart: 'Show join/part messages (lurkers entering/leaving)',
     accounts: 'Accounts',
     accountsHint: 'Each profile holds its own Twitch login + YouTube channel. Switch from the dropdown in the titlebar.',
+    // (usersTab / activityTab already added above)
     addAccount: 'Add Account',
     autostart: 'Start StreamerChat automatically with Windows',
     fontSize: 'Chat font size',
@@ -74,6 +75,8 @@ const STRINGS = {
     language: 'Sprache',
     showTimestamps: 'Zeitstempel anzeigen',
     showJoinPart: 'Join/Part-Nachrichten anzeigen (Lurker, die kommen/gehen)',
+    usersTab: 'Zuschauer',
+    activityTab: 'Aktivität',
     accounts: 'Accounts',
     accountsHint: 'Jedes Profil hat eigenen Twitch-Login + YouTube-Channel. Wechseln über das Dropdown in der Titelleiste.',
     addAccount: 'Account hinzufügen',

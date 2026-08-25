@@ -42,6 +42,14 @@ var requiredScopes = []string{
 	"channel:manage:raids",
 	"channel:manage:broadcast",
 	"channel:read:redemptions",
+	// Activity feed via EventSub — the ones not already covered
+	// above. channel.cheer needs bits:read, channel.hype_train.*
+	// needs channel:read:hype_train. channel.follow v2 uses
+	// moderator:read:followers (already listed). subscribe events
+	// use channel:read:subscriptions (already listed). raid needs
+	// no extra scope for the receiving side.
+	"bits:read",
+	"channel:read:hype_train",
 }
 
 // DeviceCodeResponse is returned when requesting a device code.

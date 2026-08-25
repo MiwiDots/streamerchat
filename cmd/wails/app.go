@@ -13,6 +13,7 @@ import (
 
 	"github.com/miwi/streamerchat/internal/chat"
 	"github.com/miwi/streamerchat/internal/config"
+	"github.com/miwi/streamerchat/internal/eventsub"
 	"github.com/miwi/streamerchat/internal/selfupdate"
 	"github.com/miwi/streamerchat/internal/sevenTV"
 	"github.com/miwi/streamerchat/internal/twitch"
@@ -46,6 +47,12 @@ type App struct {
 	// this streamer's Twitch channel so paint/badge updates can be
 	// pushed to the frontend and applied to chat messages.
 	stv *sevenTV.Client
+
+	// EventSub WebSocket for the activity feed (follow / sub /
+	// resub / gift / raid / cheer / channel-points redemption /
+	// hype train). Per-profile: canceled + restarted on profile
+	// switch so the subscriptions run against the active token.
+	esCancel context.CancelFunc
 
 	// supervisorsStarted gates the eternal IRC supervisor + token
 	// refresh loop to one launch per app process. Profile switches
@@ -181,6 +188,11 @@ func (a *App) bootSequence() {
 	}
 
 	a.helixClient, _ = twitch.NewHelixClient(a.cfg.Twitch.ClientID, a.cfg.Twitch.AccessToken, a.cfg.Twitch.BotUserID, a.cfg.Twitch.BotUserID)
+
+	// EventSub: per-profile, started here after auth so subscribes
+	// go out with the fresh access token. Any previous session for
+	// a switched-out profile gets canceled first.
+	a.startEventSub()
 
 	// 7TV cosmetics: spin the EventAPI client once we know the
 	// broadcaster id (single-channel app, so this fires once).
@@ -330,8 +342,15 @@ func (a *App) SwitchProfile(id string) string {
 		a.ytChatCancel()
 		a.ytChatCancel = nil
 	}
+	if a.esCancel != nil {
+		a.esCancel()
+		a.esCancel = nil
+	}
 	a.helixClient = nil
 	a.mu.Unlock()
+	// Frontend's activity list is per-profile — tell it to reset
+	// so the incoming profile starts with a clean feed.
+	runtime.EventsEmit(a.ctx, "activityReset", nil)
 
 	// New 7TV client per profile would mean a new EventAPI WS — but
 	// the existing one is a single shared connection that fans out
@@ -517,6 +536,46 @@ func (a *App) tokenRefreshLoop() {
 		// Reload badges with the fresh token in case the previous load failed.
 		a.loadBadges()
 	}
+}
+
+// startEventSub cancels any existing session (from the previous
+// profile) then spawns a fresh eventsub.Client for the active one.
+// The client runs forever inside its own goroutine and emits every
+// normalized activity event to the frontend as "activity" so the
+// sidebar Activity tab can render it. Fires only when we have both
+// a broadcaster id and an access token — a partial config would
+// hit Twitch with 401s repeatedly.
+func (a *App) startEventSub() {
+	a.mu.Lock()
+	if a.esCancel != nil {
+		a.esCancel()
+		a.esCancel = nil
+	}
+	clientID := a.cfg.Twitch.ClientID
+	token := a.cfg.Twitch.AccessToken
+	me := a.cfg.Twitch.BotUserID
+	a.mu.Unlock()
+	if clientID == "" || token == "" || me == "" {
+		return
+	}
+	esCtx, cancel := context.WithCancel(a.ctx)
+	a.mu.Lock()
+	a.esCancel = cancel
+	a.mu.Unlock()
+	client := eventsub.New(esCtx, clientID, token, me, me, func(ev eventsub.Event) {
+		if a.ctx == nil {
+			return
+		}
+		runtime.EventsEmit(a.ctx, "activity", map[string]interface{}{
+			"type":      string(ev.Type),
+			"user":      ev.User,
+			"userId":    ev.UserID,
+			"message":   ev.Message,
+			"meta":      ev.Meta,
+			"timestamp": ev.Timestamp.UnixMilli(),
+		})
+	})
+	go client.Start()
 }
 
 // loadChattersAndRoles bootstraps the sidebar user list + moderator/vip
