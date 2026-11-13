@@ -258,7 +258,7 @@ func (c *Client) fetch(twitchUserID string) bool {
 		cos.BadgeName = b.Name
 	}
 	if cos.PaintCSS != "" || cos.BadgeURL != "" {
-		log.Printf("[7TV] %s paint=%q badge=%q", twitchUserID, cos.PaintCSS != "", cos.BadgeURL != "")
+		log.Printf("[7TV] %s paint=%t badge=%t", twitchUserID, cos.PaintCSS != "", cos.BadgeURL != "")
 		if c.onCosmetic != nil {
 			c.onCosmetic(cos)
 		}

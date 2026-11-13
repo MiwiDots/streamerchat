@@ -77,6 +77,8 @@ type Client struct {
 	moderatorID   string
 	onEvent       func(Event)
 
+	// mu guards sessionID and accessToken (the latter is swapped by
+	// SetAccessToken from the app's token refresh goroutine).
 	mu        sync.Mutex
 	sessionID string
 }
@@ -94,6 +96,22 @@ func New(ctx context.Context, clientID, accessToken, broadcasterID, moderatorID 
 		moderatorID:   moderatorID,
 		onEvent:       onEvent,
 	}
+}
+
+// SetAccessToken replaces the token used for subscription requests.
+// Call it after every OAuth refresh: subscriptions are (re)created on each
+// reconnect, and with the boot token they would all 401 once it expires
+// (~4h), leaving the activity feed silently dead.
+func (c *Client) SetAccessToken(token string) {
+	c.mu.Lock()
+	c.accessToken = token
+	c.mu.Unlock()
+}
+
+func (c *Client) token() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.accessToken
 }
 
 // Start runs the session forever. Returns when ctx is cancelled.
@@ -261,7 +279,7 @@ func (c *Client) subscribe(sessionID string, s subscribeRequest) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Client-Id", c.clientID)
-	req.Header.Set("Authorization", "Bearer "+c.accessToken)
+	req.Header.Set("Authorization", "Bearer "+c.token())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err

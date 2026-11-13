@@ -32,9 +32,45 @@ func NewHelixClient(clientID, accessToken, broadcasterID, moderatorID string) (*
 	}, nil
 }
 
+// SetAccessToken swaps the user access token used for every subsequent
+// request. Must be called after each OAuth refresh — the client is built
+// once at boot and would otherwise keep sending the original token, which
+// Twitch expires after ~4h (every call then 401s). The underlying
+// nicklaw5/helix client guards the token with its own mutex, so this is
+// safe to call while other requests are in flight.
+func (h *HelixClient) SetAccessToken(accessToken string) {
+	h.client.SetUserAccessToken(accessToken)
+}
+
+// MaxTimeoutSeconds is the longest timeout Twitch accepts (14 days).
+const MaxTimeoutSeconds = 14 * 24 * 60 * 60
+
+// statusErr turns a non-2xx Helix answer into an error.
+//
+// GOTCHA: the nicklaw5/helix v2 client only returns a non-nil `err` for
+// transport failures. Every 4xx / 5xx Twitch answer (missing scope, not a
+// moderator, expired token, rate limit, ...) comes back with err == nil and
+// the details in ResponseCommon. Every wrapper in this file MUST run its
+// response through this helper, otherwise failures are reported to the UI
+// as success. A 5xx often has an empty ErrorMessage, so StatusCode is the
+// authoritative signal; the message is only used for display.
+func statusErr(op string, rc helix.ResponseCommon) error {
+	if rc.StatusCode < 400 && rc.ErrorMessage == "" {
+		return nil
+	}
+	msg := rc.ErrorMessage
+	if msg == "" {
+		msg = rc.Error
+	}
+	if msg == "" {
+		msg = "request failed"
+	}
+	return fmt.Errorf("%s: %d %s", op, rc.StatusCode, msg)
+}
+
 // BanUser permanently bans a user from chat.
 func (h *HelixClient) BanUser(userID, reason string) error {
-	_, err := h.client.BanUser(&helix.BanUserParams{
+	resp, err := h.client.BanUser(&helix.BanUserParams{
 		BroadcasterID: h.broadcasterID,
 		ModeratorId:   h.moderatorID,
 		Body: helix.BanUserRequestBody{
@@ -45,12 +81,23 @@ func (h *HelixClient) BanUser(userID, reason string) error {
 	if err != nil {
 		return fmt.Errorf("ban user: %w", err)
 	}
+	if err := statusErr("ban user", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // TimeoutUser temporarily bans a user from chat.
+//
+// durationSeconds must be in [1, MaxTimeoutSeconds]. This guard is
+// load-bearing: the library tags Duration with `omitempty`, so a 0 is
+// dropped from the request body and Twitch treats a ban without duration
+// as PERMANENT. A typo like "/timeout user 0" must never become a ban.
 func (h *HelixClient) TimeoutUser(userID string, durationSeconds int, reason string) error {
-	_, err := h.client.BanUser(&helix.BanUserParams{
+	if durationSeconds < 1 || durationSeconds > MaxTimeoutSeconds {
+		return fmt.Errorf("timeout user: duration must be between 1s and %ds, got %ds", MaxTimeoutSeconds, durationSeconds)
+	}
+	resp, err := h.client.BanUser(&helix.BanUserParams{
 		BroadcasterID: h.broadcasterID,
 		ModeratorId:   h.moderatorID,
 		Body: helix.BanUserRequestBody{
@@ -62,12 +109,15 @@ func (h *HelixClient) TimeoutUser(userID string, durationSeconds int, reason str
 	if err != nil {
 		return fmt.Errorf("timeout user: %w", err)
 	}
+	if err := statusErr("timeout user", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // UnbanUser removes a ban or timeout from a user.
 func (h *HelixClient) UnbanUser(userID string) error {
-	_, err := h.client.UnbanUser(&helix.UnbanUserParams{
+	resp, err := h.client.UnbanUser(&helix.UnbanUserParams{
 		BroadcasterID: h.broadcasterID,
 		ModeratorID:   h.moderatorID,
 		UserID:        userID,
@@ -75,12 +125,15 @@ func (h *HelixClient) UnbanUser(userID string) error {
 	if err != nil {
 		return fmt.Errorf("unban user: %w", err)
 	}
+	if err := statusErr("unban user", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // DeleteMessage deletes a single chat message.
 func (h *HelixClient) DeleteMessage(messageID string) error {
-	_, err := h.client.DeleteChatMessage(&helix.DeleteChatMessageParams{
+	resp, err := h.client.DeleteChatMessage(&helix.DeleteChatMessageParams{
 		BroadcasterID: h.broadcasterID,
 		ModeratorID:   h.moderatorID,
 		MessageID:     messageID,
@@ -88,16 +141,14 @@ func (h *HelixClient) DeleteMessage(messageID string) error {
 	if err != nil {
 		return fmt.Errorf("delete message: %w", err)
 	}
+	if err := statusErr("delete message", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
-// ClearChat clears all messages in the chat.
-//
-// The nicklaw5/helix v2 client returns ErrorMessage on the response
-// struct for 4xx / 5xx Twitch answers — `err` is only set for
-// transport failures. Before this change we silently returned nil
-// when Twitch said "401 missing scope" so /clear appeared to do
-// nothing. Now we surface both.
+// ClearChat clears all messages in the chat (DeleteChatMessage without a
+// message id). See statusErr for why the response status is checked.
 func (h *HelixClient) ClearChat() error {
 	resp, err := h.client.DeleteChatMessage(&helix.DeleteChatMessageParams{
 		BroadcasterID: h.broadcasterID,
@@ -106,10 +157,7 @@ func (h *HelixClient) ClearChat() error {
 	if err != nil {
 		return fmt.Errorf("clear chat: %w", err)
 	}
-	if resp.ErrorMessage != "" {
-		return fmt.Errorf("clear chat: %d %s (%s)", resp.StatusCode, resp.Error, resp.ErrorMessage)
-	}
-	return nil
+	return statusErr("clear chat", resp.ResponseCommon)
 }
 
 // SetSlowMode enables or disables slow mode.
@@ -122,16 +170,19 @@ func (h *HelixClient) SetSlowMode(enabled bool, waitSeconds int) error {
 	if enabled && waitSeconds > 0 {
 		params.SlowModeWaitTime = &waitSeconds
 	}
-	_, err := h.client.UpdateChatSettings(params)
+	resp, err := h.client.UpdateChatSettings(params)
 	if err != nil {
 		return fmt.Errorf("set slow mode: %w", err)
+	}
+	if err := statusErr("set slow mode", resp.ResponseCommon); err != nil {
+		return err
 	}
 	return nil
 }
 
 // SetSubOnly enables or disables subscriber-only mode.
 func (h *HelixClient) SetSubOnly(enabled bool) error {
-	_, err := h.client.UpdateChatSettings(&helix.UpdateChatSettingsParams{
+	resp, err := h.client.UpdateChatSettings(&helix.UpdateChatSettingsParams{
 		BroadcasterID:  h.broadcasterID,
 		ModeratorID:    h.moderatorID,
 		SubscriberMode: &enabled,
@@ -139,12 +190,15 @@ func (h *HelixClient) SetSubOnly(enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("set sub-only: %w", err)
 	}
+	if err := statusErr("set sub-only", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // SetEmoteOnly enables or disables emote-only mode.
 func (h *HelixClient) SetEmoteOnly(enabled bool) error {
-	_, err := h.client.UpdateChatSettings(&helix.UpdateChatSettingsParams{
+	resp, err := h.client.UpdateChatSettings(&helix.UpdateChatSettingsParams{
 		BroadcasterID: h.broadcasterID,
 		ModeratorID:   h.moderatorID,
 		EmoteMode:     &enabled,
@@ -152,12 +206,15 @@ func (h *HelixClient) SetEmoteOnly(enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("set emote-only: %w", err)
 	}
+	if err := statusErr("set emote-only", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // SetFollowerOnly enables or disables follower-only mode.
 func (h *HelixClient) SetFollowerOnly(enabled bool, minMinutes int) error {
-	_, err := h.client.UpdateChatSettings(&helix.UpdateChatSettingsParams{
+	resp, err := h.client.UpdateChatSettings(&helix.UpdateChatSettingsParams{
 		BroadcasterID:      h.broadcasterID,
 		ModeratorID:        h.moderatorID,
 		FollowerMode:       &enabled,
@@ -165,6 +222,9 @@ func (h *HelixClient) SetFollowerOnly(enabled bool, minMinutes int) error {
 	})
 	if err != nil {
 		return fmt.Errorf("set follower-only: %w", err)
+	}
+	if err := statusErr("set follower-only", resp.ResponseCommon); err != nil {
+		return err
 	}
 	return nil
 }
@@ -176,6 +236,9 @@ func (h *HelixClient) GetChatSettings() (*helix.GetChatSettingsResponse, error) 
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get chat settings: %w", err)
+	}
+	if err := statusErr("get chat settings", resp.ResponseCommon); err != nil {
+		return nil, err
 	}
 	return resp, nil
 }
@@ -194,6 +257,9 @@ func (h *HelixClient) GetChatters() ([]helix.ChatChatter, error) {
 		})
 		if err != nil {
 			return nil, fmt.Errorf("get chatters: %w", err)
+		}
+		if err := statusErr("get chatters", resp.ResponseCommon); err != nil {
+			return nil, err
 		}
 
 		all = append(all, resp.Data.Chatters...)
@@ -218,6 +284,9 @@ func (h *HelixClient) GetModerators() ([]string, error) {
 			After:         cursor,
 		})
 		if err != nil {
+			return nil, fmt.Errorf("get moderators: %w", err)
+		}
+		if err := statusErr("get moderators", resp.ResponseCommon); err != nil {
 			return nil, err
 		}
 		for _, m := range resp.Data.Moderators {
@@ -242,6 +311,9 @@ func (h *HelixClient) GetVIPs() ([]string, error) {
 			After:         cursor,
 		})
 		if err != nil {
+			return nil, fmt.Errorf("get vips: %w", err)
+		}
+		if err := statusErr("get vips", resp.ResponseCommon); err != nil {
 			return nil, err
 		}
 		for _, v := range resp.Data.ChannelsVips {
@@ -264,10 +336,10 @@ func (h *HelixClient) ResolveLogin(login string) (string, error) {
 		Logins: []string{login},
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve %q: %w", login, err)
 	}
-	if resp.ErrorMessage != "" {
-		return "", fmt.Errorf("%s", resp.ErrorMessage)
+	if err := statusErr(fmt.Sprintf("resolve %q", login), resp.ResponseCommon); err != nil {
+		return "", err
 	}
 	if len(resp.Data.Users) == 0 {
 		return "", fmt.Errorf("user %q not found", login)
@@ -277,48 +349,60 @@ func (h *HelixClient) ResolveLogin(login string) (string, error) {
 
 // AddMod adds a moderator to the broadcaster's channel.
 func (h *HelixClient) AddMod(userID string) error {
-	_, err := h.client.AddChannelModerator(&helix.AddChannelModeratorParams{
+	resp, err := h.client.AddChannelModerator(&helix.AddChannelModeratorParams{
 		BroadcasterID: h.broadcasterID,
 		UserID:        userID,
 	})
 	if err != nil {
 		return fmt.Errorf("add mod: %w", err)
 	}
+	if err := statusErr("add mod", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // RemoveMod removes a moderator from the broadcaster's channel.
 func (h *HelixClient) RemoveMod(userID string) error {
-	_, err := h.client.RemoveChannelModerator(&helix.RemoveChannelModeratorParams{
+	resp, err := h.client.RemoveChannelModerator(&helix.RemoveChannelModeratorParams{
 		BroadcasterID: h.broadcasterID,
 		UserID:        userID,
 	})
 	if err != nil {
 		return fmt.Errorf("remove mod: %w", err)
 	}
+	if err := statusErr("remove mod", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // AddVIP grants a user the VIP role.
 func (h *HelixClient) AddVIP(userID string) error {
-	_, err := h.client.AddChannelVip(&helix.AddChannelVipParams{
+	resp, err := h.client.AddChannelVip(&helix.AddChannelVipParams{
 		BroadcasterID: h.broadcasterID,
 		UserID:        userID,
 	})
 	if err != nil {
 		return fmt.Errorf("add vip: %w", err)
 	}
+	if err := statusErr("add vip", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // RemoveVIP revokes the VIP role.
 func (h *HelixClient) RemoveVIP(userID string) error {
-	_, err := h.client.RemoveChannelVip(&helix.RemoveChannelVipParams{
+	resp, err := h.client.RemoveChannelVip(&helix.RemoveChannelVipParams{
 		BroadcasterID: h.broadcasterID,
 		UserID:        userID,
 	})
 	if err != nil {
 		return fmt.Errorf("remove vip: %w", err)
+	}
+	if err := statusErr("remove vip", resp.ResponseCommon); err != nil {
+		return err
 	}
 	return nil
 }
@@ -326,7 +410,7 @@ func (h *HelixClient) RemoveVIP(userID string) error {
 // SendAnnouncement posts an announcement in chat. color may be one of
 // "primary" (default channel color), "blue", "green", "orange", "purple".
 func (h *HelixClient) SendAnnouncement(message, color string) error {
-	_, err := h.client.SendChatAnnouncement(&helix.SendChatAnnouncementParams{
+	resp, err := h.client.SendChatAnnouncement(&helix.SendChatAnnouncementParams{
 		BroadcasterID: h.broadcasterID,
 		ModeratorID:   h.moderatorID,
 		Message:       message,
@@ -335,12 +419,15 @@ func (h *HelixClient) SendAnnouncement(message, color string) error {
 	if err != nil {
 		return fmt.Errorf("announce: %w", err)
 	}
+	if err := statusErr("announce", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // SendShoutout fires a /shoutout to the given user in the broadcaster's chat.
 func (h *HelixClient) SendShoutout(toBroadcasterID string) error {
-	_, err := h.client.SendShoutout(&helix.SendShoutoutParams{
+	resp, err := h.client.SendShoutout(&helix.SendShoutoutParams{
 		FromBroadcasterID: h.broadcasterID,
 		ToBroadcasterID:   toBroadcasterID,
 		ModeratorID:       h.moderatorID,
@@ -348,28 +435,37 @@ func (h *HelixClient) SendShoutout(toBroadcasterID string) error {
 	if err != nil {
 		return fmt.Errorf("shoutout: %w", err)
 	}
+	if err := statusErr("shoutout", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // StartRaid initiates a raid from this channel to toBroadcasterID.
 func (h *HelixClient) StartRaid(toBroadcasterID string) error {
-	_, err := h.client.StartRaid(&helix.StartRaidParams{
+	resp, err := h.client.StartRaid(&helix.StartRaidParams{
 		FromBroadcasterID: h.broadcasterID,
 		ToBroadcasterID:   toBroadcasterID,
 	})
 	if err != nil {
 		return fmt.Errorf("raid: %w", err)
 	}
+	if err := statusErr("raid", resp.ResponseCommon); err != nil {
+		return err
+	}
 	return nil
 }
 
 // CancelRaid cancels a pending raid started from this channel.
 func (h *HelixClient) CancelRaid() error {
-	_, err := h.client.CancelRaid(&helix.CancelRaidParams{
+	resp, err := h.client.CancelRaid(&helix.CancelRaidParams{
 		BroadcasterID: h.broadcasterID,
 	})
 	if err != nil {
 		return fmt.Errorf("unraid: %w", err)
+	}
+	if err := statusErr("unraid", resp.ResponseCommon); err != nil {
+		return err
 	}
 	return nil
 }
@@ -380,6 +476,9 @@ func (h *HelixClient) GetChannelName(userID string) (string, error) {
 		IDs: []string{userID},
 	})
 	if err != nil {
+		return "", fmt.Errorf("get channel name: %w", err)
+	}
+	if err := statusErr("get channel name", resp.ResponseCommon); err != nil {
 		return "", err
 	}
 	if len(resp.Data.Users) > 0 {

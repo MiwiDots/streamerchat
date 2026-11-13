@@ -6,6 +6,10 @@ import (
 	"strings"
 )
 
+// defaultTimeoutSeconds is what "/timeout <user>" uses without an explicit
+// duration — 10 minutes, same as Twitch's own default.
+const defaultTimeoutSeconds = 10 * 60
+
 // HandleSlashCommand dispatches Twitch-style /commands through the
 // matching Helix endpoint. Returns:
 //
@@ -91,16 +95,23 @@ func HandleSlashCommand(h *HelixClient, line string) (status string, handled boo
 			return "/timeout <user> [seconds=600] [reason]", true
 		}
 		login := strings.TrimPrefix(args[0], "@")
-		seconds := 600
+		seconds := defaultTimeoutSeconds
+		reasonStart := 1
 		if len(args) >= 2 {
+			// Only treat args[1] as a duration when it parses as one.
+			// Otherwise it's the first word of the reason
+			// ("/timeout user spamming links" keeps "spamming").
 			if n, err := parseDuration(args[1]); err == nil {
+				// 0 / negative must be rejected here: Helix would turn a
+				// missing duration into a PERMANENT ban (see TimeoutUser).
+				if n < 1 || n > MaxTimeoutSeconds {
+					return fmt.Sprintf("/timeout: duration must be between 1s and 14d (got %q)", args[1]), true
+				}
 				seconds = n
+				reasonStart = 2
 			}
 		}
-		reason := ""
-		if len(args) >= 3 {
-			reason = strings.Join(args[2:], " ")
-		}
+		reason := strings.Join(args[reasonStart:], " ")
 		userID, err := h.ResolveLogin(login)
 		if err != nil {
 			return fmt.Sprintf("/timeout: %v", err), true

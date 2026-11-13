@@ -1,3 +1,32 @@
+2026-11-13 18:43 - v0.5.1 (stable): Helix errors are no longer
+  swallowed, /timeout 0 can't ban permanently anymore, and the Helix
+  client + EventSub pick up refreshed tokens. Updater still untouched.
+
+  - /timeout <user> 0 (also 0s / 0m / negative) used to PERMANENTLY
+    ban: helix.BanUserRequestBody.Duration is `omitempty`, so 0 was
+    dropped and Twitch treats a ban without duration as permanent.
+    Now rejected in the slash handler and again in TimeoutUser
+    (valid range 1s..14d). Bonus: "/timeout user spamming links" no
+    longer drops "spamming" from the reason.
+  - New statusErr() helper in internal/twitch/helix.go. The helix v2
+    lib only sets err on transport failures; every 4xx/5xx comes back
+    with err == nil. ban / timeout / unban / delete / chat modes /
+    mod / vip / announce / shoutout / raid / unraid / chatters /
+    mods / vips / chat settings / channel name all reported success
+    on Twitch rejections. They now return the real error (status
+    code is authoritative, so body-less 5xx fail too). Same root
+    cause as the v0.4.9 /clear fix, applied everywhere.
+  - streamerchat: Helix client and EventSub were built once with the
+    boot token and never updated. tokenRefreshLoop and the IRC
+    supervisor refresh only wrote cfg, so ~4h after start every
+    Helix call 401'd silently and EventSub resubscribes failed on
+    the next reconnect. New HelixClient.SetAccessToken /
+    eventsub.Client.SetAccessToken, wired through
+    App.applyRefreshedToken() after every successful refresh.
+  - go vet: 7TV cosmetic log used %q for bools.
+  - First unit tests: internal/twitch/helix_test.go (statusErr,
+    timeout range, slash /timeout rejection, parseDuration).
+
 2026-07-16 15:45 - v0.5.0 (stable): activity feed via Twitch EventSub
   (follows / subs / gifts / raids / bits / channel points / hype
   train) in streamerchat-gui. Updater still untouched.

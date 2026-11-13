@@ -53,6 +53,9 @@ type App struct {
 	// hype train). Per-profile: canceled + restarted on profile
 	// switch so the subscriptions run against the active token.
 	esCancel context.CancelFunc
+	// esClient is the running EventSub session (nil when none), kept so
+	// token refreshes can hand it the new access token. Guarded by mu.
+	esClient *eventsub.Client
 
 	// supervisorsStarted gates the eternal IRC supervisor + token
 	// refresh loop to one launch per app process. Profile switches
@@ -345,6 +348,7 @@ func (a *App) SwitchProfile(id string) string {
 	if a.esCancel != nil {
 		a.esCancel()
 		a.esCancel = nil
+		a.esClient = nil
 	}
 	a.helixClient = nil
 	a.mu.Unlock()
@@ -442,6 +446,7 @@ func (a *App) runIRCSupervisor() {
 					a.cfg.Twitch.AccessToken = token.AccessToken
 					a.cfg.Twitch.RefreshToken = token.RefreshToken
 					a.cfg.Save()
+					a.applyRefreshedToken(token.AccessToken)
 				}
 				a.mu.Unlock()
 				backoff = 2 * time.Second
@@ -531,6 +536,7 @@ func (a *App) tokenRefreshLoop() {
 		a.cfg.Twitch.AccessToken = token.AccessToken
 		a.cfg.Twitch.RefreshToken = token.RefreshToken
 		a.cfg.Save()
+		a.applyRefreshedToken(token.AccessToken)
 		a.mu.Unlock()
 		log.Printf("[AUTH] Token refreshed")
 		// Reload badges with the fresh token in case the previous load failed.
@@ -550,6 +556,7 @@ func (a *App) startEventSub() {
 	if a.esCancel != nil {
 		a.esCancel()
 		a.esCancel = nil
+		a.esClient = nil
 	}
 	clientID := a.cfg.Twitch.ClientID
 	token := a.cfg.Twitch.AccessToken
@@ -559,9 +566,6 @@ func (a *App) startEventSub() {
 		return
 	}
 	esCtx, cancel := context.WithCancel(a.ctx)
-	a.mu.Lock()
-	a.esCancel = cancel
-	a.mu.Unlock()
 	client := eventsub.New(esCtx, clientID, token, me, me, func(ev eventsub.Event) {
 		if a.ctx == nil {
 			return
@@ -575,7 +579,26 @@ func (a *App) startEventSub() {
 			"timestamp": ev.Timestamp.UnixMilli(),
 		})
 	})
+	a.mu.Lock()
+	a.esCancel = cancel
+	a.esClient = client
+	a.mu.Unlock()
 	go client.Start()
+}
+
+// applyRefreshedToken pushes a freshly refreshed access token into every
+// long-lived consumer that captured the old one at construction time.
+// Without this, the Helix client and EventSub keep using the boot token,
+// which Twitch expires after ~4h — from then on mod actions, slash commands,
+// chatter/role polling and EventSub resubscribes all 401.
+// Caller must hold a.mu.
+func (a *App) applyRefreshedToken(accessToken string) {
+	if a.helixClient != nil {
+		a.helixClient.SetAccessToken(accessToken)
+	}
+	if a.esClient != nil {
+		a.esClient.SetAccessToken(accessToken)
+	}
 }
 
 // loadChattersAndRoles bootstraps the sidebar user list + moderator/vip
