@@ -950,7 +950,10 @@ if (applyUpdateBtn) {
     applyUpdateBtn.disabled = true;
     updateStatusEl.textContent = i18n.t('updateChecking');
     try {
-      const err = await window.go.main.App.ApplyUpdate(pendingUpdateUrl);
+      // No URL is passed: the backend re-resolves the release itself and
+      // verifies the download's SHA-256 (see selfupdate.Update).
+      // pendingUpdateUrl only tells us an installable asset exists.
+      const err = await window.go.main.App.ApplyUpdate();
       if (err) {
         updateStatusEl.textContent = i18n.t('updateFailed', { error: err });
         applyUpdateBtn.disabled = false;

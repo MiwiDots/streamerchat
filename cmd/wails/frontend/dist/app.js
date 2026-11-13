@@ -1022,7 +1022,10 @@ async function applyUpdateFlow(statusEl, btn, url) {
   btn.disabled = true;
   statusEl.textContent = 'Downloading…';
   try {
-    const err = await window.go.main.App.ApplyUpdate(url);
+    // No URL is passed: the backend re-resolves the release itself and
+    // verifies the download's SHA-256 (see selfupdate.Update). `url` here
+    // only tells us an installable asset exists.
+    const err = await window.go.main.App.ApplyUpdate();
     if (err) {
       statusEl.textContent = 'Update failed: ' + err;
       btn.disabled = false;

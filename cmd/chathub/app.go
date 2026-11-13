@@ -1550,11 +1550,16 @@ func (a *App) SetUpdateChannel(channel string) string {
 // ApplyUpdate downloads the new exe, swaps it in-place, and relaunches.
 // On non-Windows platforms returns a hint so the UI can fall back to
 // opening the release page in a browser.
-func (a *App) ApplyUpdate(url string) string {
-	if url == "" {
-		return "no download URL"
+//
+// It deliberately takes no URL: the webview renders untrusted chat content,
+// so a URL parameter would let injected script install arbitrary code.
+// selfupdate.Update re-resolves the release and verifies its SHA-256.
+func (a *App) ApplyUpdate() string {
+	channel := a.cfg.UpdateChannel
+	if channel == "" {
+		channel = "stable"
 	}
-	if err := selfupdate.Apply(url); err != nil {
+	if err := selfupdate.Update(version.RepoOwner, version.RepoName, channel, version.Version, "chathub.exe"); err != nil {
 		log.Printf("[UPDATE] apply failed: %v", err)
 		return err.Error()
 	}

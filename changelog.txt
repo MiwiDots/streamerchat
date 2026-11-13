@@ -1,3 +1,31 @@
+2026-11-13 19:02 - v0.5.3 (stable): self-updater hardening — verified
+  downloads, no URL from the webview, working pre-release ordering.
+
+  - ApplyUpdate() no longer takes a URL from the frontend. It used to
+    download + run whatever URL it was given; the webview renders
+    untrusted chat content, so any script injection would have been
+    remote code execution. The backend now re-resolves the release
+    itself (selfupdate.Update) and both frontends call ApplyUpdate()
+    without arguments.
+  - Every download is verified before the exe is swapped: URL must be
+    https://github.com/<owner>/<repo>/releases/download/..., byte count
+    must equal the asset size, and SHA-256 must match the `digest`
+    GitHub computes for each uploaded asset (present on all releases
+    since v0.4.8). Assets without a digest are refused. The new exe is
+    fsynced before the rename.
+  - Downloads use their own HTTP client: 30s time-to-first-byte, 15min
+    total. The shared 30s client timeout covered the whole body, so
+    the ~16 MB exe could never finish on connections slower than
+    ~0.5 MB/s.
+  - IsNewer follows semver precedence. The old parser dropped
+    pre-release suffixes, so 0.3.9-alpha == 0.3.9 (alpha users never
+    got the stable build) and beta.1 -> beta.2 was never offered.
+    Unparseable tags are never treated as newer.
+  - Note: clients <= v0.5.2 still update via their old updater code;
+    the hardening applies from the next update after v0.5.3.
+  - Tests: version ordering, asset validation (host/repo/prefix
+    tricks, missing/malformed digest), download size + hash checks.
+
 2026-11-13 19:00 - v0.5.2 (stable): tokens stay out of chathub's config.json,
   config files are written atomically, and streamerchat no longer mixes
   tokens between profiles. Updater still untouched.

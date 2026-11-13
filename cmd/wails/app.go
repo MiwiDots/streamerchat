@@ -1029,11 +1029,17 @@ func (a *App) SetShowJoinPart(v bool) string {
 	return ""
 }
 
-func (a *App) ApplyUpdate(url string) string {
-	if url == "" {
-		return "no download URL"
+// ApplyUpdate downloads the new exe, swaps it in-place, and relaunches.
+//
+// It deliberately takes no URL: the webview renders untrusted chat content,
+// so a URL parameter would let injected script install arbitrary code.
+// selfupdate.Update re-resolves the release and verifies its SHA-256.
+func (a *App) ApplyUpdate() string {
+	channel := a.cfg.UI.UpdateChannel
+	if channel == "" {
+		channel = "stable"
 	}
-	if err := selfupdate.Apply(url); err != nil {
+	if err := selfupdate.Update(version.RepoOwner, version.RepoName, channel, version.Version, "streamerchat-gui.exe"); err != nil {
 		log.Printf("[UPDATE] apply failed: %v", err)
 		return err.Error()
 	}
