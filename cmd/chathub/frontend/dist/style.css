@@ -694,3 +694,17 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
   color: #5fcfc1;
   margin-bottom: 1px;
 }
+
+/* Watch streak shared by a viewer (Twitch viewermilestone/watch-streak):
+   warm orange, distinct from first-message purple and mention gold. */
+.msg.watch-streak {
+  border-left: 3px solid #ff8a3d;
+  background: rgba(255, 138, 61, 0.12);
+  padding-left: 6px;
+}
+.watch-streak-label {
+  font-size: 0.78em;
+  font-weight: 600;
+  color: #ffa766;
+  margin-bottom: 1px;
+}

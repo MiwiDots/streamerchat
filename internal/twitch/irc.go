@@ -3,6 +3,7 @@ package twitch
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -296,14 +297,16 @@ func (c *IRCClient) registerHandlers() {
 			Text:        userNoticeText(msg),
 		}
 
-		switch msg.MsgID {
-		case "sub", "resub":
+		switch {
+		case applyWatchStreak(&m, msg):
+			// type, text and emotes set by applyWatchStreak
+		case msg.MsgID == "sub" || msg.MsgID == "resub":
 			m.Type = chat.MessageTypeSub
-		case "subgift", "anonsubgift":
+		case msg.MsgID == "subgift" || msg.MsgID == "anonsubgift":
 			m.Type = chat.MessageTypeGiftSub
-		case "raid":
+		case msg.MsgID == "raid":
 			m.Type = chat.MessageTypeRaid
-		case "announcement":
+		case msg.MsgID == "announcement":
 			m.Type = chat.MessageTypeAnnouncement
 		default:
 			m.Type = chat.MessageTypeSystem
@@ -360,6 +363,39 @@ func (c *IRCClient) registerHandlers() {
 	})
 }
 
+// applyWatchStreak turns a shared watch streak into a chat-like message:
+// Twitch sends USERNOTICE msg-id=viewermilestone with
+// msg-param-category=watch-streak and the streak length in
+// msg-param-value. The user's optional message becomes the text (with its
+// native emotes) so it renders like a normal chat line plus a streak
+// marker. Returns false for any other USERNOTICE.
+func applyWatchStreak(m *chat.Message, msg twitch.UserNoticeMessage) bool {
+	if msg.MsgID != "viewermilestone" || msg.MsgParams["msg-param-category"] != "watch-streak" {
+		return false
+	}
+	m.Type = chat.MessageTypeWatchStreak
+	m.StreakCount, _ = strconv.Atoi(msg.MsgParams["msg-param-value"])
+	m.ID = msg.ID
+	m.Text = msg.Message
+	m.TwitchEmoteRanges = emoteRanges(msg.Emotes)
+	m.IsMod = hasBadge(msg.User.Badges, "moderator")
+	m.IsVIP = hasBadge(msg.User.Badges, "vip")
+	m.IsSub = hasBadge(msg.User.Badges, "subscriber")
+	m.IsBroadcaster = hasBadge(msg.User.Badges, "broadcaster")
+	return true
+}
+
+// emoteRanges flattens the library's parsed native emotes into rune ranges.
+func emoteRanges(emotes []*twitch.Emote) []chat.EmoteRange {
+	var out []chat.EmoteRange
+	for _, e := range emotes {
+		for _, pos := range e.Positions {
+			out = append(out, chat.EmoteRange{ID: e.ID, Name: e.Name, Start: pos.Start, End: pos.End})
+		}
+	}
+	return out
+}
+
 // userNoticeText builds the display text for a USERNOTICE.
 //
 //   - announcement: system-msg is EMPTY for announcements — the text is
@@ -406,16 +442,7 @@ func convertPrivateMessage(msg twitch.PrivateMessage, channel string) chat.Messa
 	}
 
 	// Extract parsed emote positions from the library
-	for _, e := range msg.Emotes {
-		for _, pos := range e.Positions {
-			m.TwitchEmoteRanges = append(m.TwitchEmoteRanges, chat.EmoteRange{
-				ID:    e.ID,
-				Name:  e.Name,
-				Start: pos.Start,
-				End:   pos.End,
-			})
-		}
-	}
+	m.TwitchEmoteRanges = emoteRanges(msg.Emotes)
 
 	// Shared Chat / Chat Together
 	if msg.Source != nil && msg.Source.RoomID != "" && msg.Source.RoomID != msg.RoomID {

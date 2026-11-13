@@ -808,6 +808,8 @@ func (a *App) chatToMap(channel string, msg chat.Message) map[string]interface{}
 		typeStr = "clearchat"
 	case chat.MessageTypeAnnouncement:
 		typeStr = "announcement"
+	case chat.MessageTypeWatchStreak:
+		typeStr = "watchstreak"
 	case chat.MessageTypeSystem:
 		typeStr = "system"
 	}
@@ -834,6 +836,7 @@ func (a *App) chatToMap(channel string, msg chat.Message) map[string]interface{}
 		"isSharedChat":   msg.IsSharedChat,
 		"firstMsg":       msg.IsFirstMessage,
 		"returningChatter": msg.IsReturningChatter,
+		"streak":           msg.StreakCount,
 	}
 }
 

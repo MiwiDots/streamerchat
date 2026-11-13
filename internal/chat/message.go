@@ -28,6 +28,9 @@ const (
 	MessageTypeClearChat
 	MessageTypeAnnouncement
 	MessageTypeSystem
+	// MessageTypeWatchStreak: a viewer shared their Twitch watch streak
+	// (USERNOTICE msg-id=viewermilestone, category watch-streak).
+	MessageTypeWatchStreak
 )
 
 // Badge represents a user badge (mod, sub, vip, etc.).
@@ -80,6 +83,10 @@ type Message struct {
 	// has chatted in this channel before and is coming back. Shown more
 	// subtly than a first message.
 	IsReturningChatter bool
+
+	// StreakCount is the number of consecutive streams watched, set on
+	// MessageTypeWatchStreak messages.
+	StreakCount int
 
 	// Platform-specific metadata
 	TwitchEmotes     string         // raw emote tag from IRC

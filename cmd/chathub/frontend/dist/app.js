@@ -619,7 +619,7 @@ async function renderMessage(msg) {
     }
     // Keep a small ring of recent messages + role flags for the usercard
     // and the chatter-list popup.
-    if (msg.type === 'chat' && msg.text) {
+    if ((msg.type === 'chat' || msg.type === 'watchstreak') && msg.text) {
       let u = state.userMessages.get(name);
       if (!u) {
         u = { userId: msg.userId || '', displayName: msg.displayName || name, color: msg.color || '', messages: [], isMod: false, isVIP: false, isBroadcaster: false, isSub: false };
@@ -694,7 +694,14 @@ async function renderMessage(msg) {
   // Highlighted like Twitch does for the broadcaster/mods so new chatters
   // can be welcomed. The label is a block line ABOVE the message, so it is
   // inserted as the first child (the timestamp is already in the row).
-  if (msg.firstMsg) {
+  // Twitch watch streak shared by the viewer (USERNOTICE viewermilestone):
+  // rendered as a normal chat line (name, badges, their message) with an
+  // orange streak marker above it, so it stands out from regular chat.
+  if (type === 'watchstreak') {
+    div.classList.add('watch-streak');
+    const label = msg.streak > 0 ? i18n.t('watchStreak', { n: msg.streak }) : i18n.t('watchStreakNoCount');
+    div.insertBefore(el('div', { class: 'watch-streak-label' }, '🔥 ' + label), div.firstChild);
+  } else if (msg.firstMsg) {
     div.classList.add('first-msg');
     div.insertBefore(el('div', { class: 'first-msg-label' }, '✦ ' + i18n.t('firstMessage')), div.firstChild);
   } else if (msg.returningChatter) {
@@ -733,7 +740,7 @@ async function renderMessage(msg) {
     div.appendChild(b);
   }
   div.appendChild(usernameEl);
-  div.appendChild(document.createTextNode(': '));
+  if (type !== 'watchstreak' || msg.text) div.appendChild(document.createTextNode(': '));
 
   const textFragment = await renderText(msg.text || '', msg.twitchEmotes, msg.channel);
   div.appendChild(textFragment);
@@ -767,7 +774,7 @@ function markMessagesDeleted(state, username, msgId, all) {
     }
     const ts = row.querySelector('.ts');
     row.classList.add('deleted');
-    row.classList.remove('highlight', 'first-msg', 'returning-chatter');
+    row.classList.remove('highlight', 'first-msg', 'returning-chatter', 'watch-streak');
     const note = el('span', { class: 'deleted-text' }, i18n.t('messageDeleted'));
     if (ts) row.replaceChildren(ts, note); else row.replaceChildren(note);
   }

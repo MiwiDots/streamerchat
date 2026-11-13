@@ -4,6 +4,8 @@ const STRINGS = {
   en: {
     firstMessage: 'First message in this channel',
     returningChatter: 'Returning chatter',
+    watchStreak: 'Watch streak: {n} streams in a row',
+    watchStreakNoCount: 'Shared a watch streak',
     settings: 'Settings',
     general: 'General',
     sound: 'Sound',
@@ -72,6 +74,8 @@ const STRINGS = {
   de: {
     firstMessage: 'Erste Nachricht im Channel',
     returningChatter: 'Wiederkehrender Zuschauer',
+    watchStreak: 'Watch-Streak: {n} Streams in Folge',
+    watchStreakNoCount: 'Watch-Streak geteilt',
     settings: 'Einstellungen',
     general: 'Allgemein',
     sound: 'Ton',

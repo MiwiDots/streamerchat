@@ -1,3 +1,23 @@
+2026-11-13 21:42 - shared watch streaks are highlighted (unreleased, next
+  version).
+
+  - Twitch sends a shared watch streak as USERNOTICE
+    msg-id=viewermilestone, msg-param-category=watch-streak,
+    msg-param-value=<streams in a row>. It used to fall through to a
+    plain grey system line. New chat.MessageTypeWatchStreak +
+    StreakCount, parsed by applyWatchStreak (shared by both IRC
+    clients) including the viewer's own message and its native emotes;
+    forwarded as type "watchstreak" with "streak".
+  - Both apps render it like a normal chat line (badges, coloured
+    name, message) with an orange bar/tint and a
+    "🔥 Watch streak: N streams in a row" /
+    "🔥 Watch-Streak: N Streams in Folge" label; no dangling ": " when
+    the streak was shared without a message. Persisted in chathub
+    history, counted in the chathub user card log, marker removed on
+    deletion / ban.
+  - emoteRanges helper now shared with convertPrivateMessage.
+  - Test: watch-streak parsing incl. non-matching notices.
+
 2026-11-13 19:32 - v0.6.0 (stable): RELEASE — bundles every change since
   v0.5.0 (the internal steps v0.5.1–v0.5.9 below were never published
   on their own) plus the returning-chatter marker. Updater hardened in

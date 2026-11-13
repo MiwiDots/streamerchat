@@ -33,7 +33,7 @@ const (
 // never restored themselves, but applied on Load so messages deleted,
 // banned or cleared before a restart don't come back.
 var historyPersistTypes = map[string]bool{
-	"chat": true, "sub": true, "giftsub": true, "raid": true, "announcement": true,
+	"chat": true, "sub": true, "giftsub": true, "raid": true, "announcement": true, "watchstreak": true,
 	"deleted": true, "ban": true, "timeout": true, "clearchat": true,
 }
 

@@ -91,3 +91,30 @@ func TestConvertPrivateMessageReturningChatter(t *testing.T) {
 		t.Fatal("returning-chatter=0 wrongly flagged")
 	}
 }
+
+func TestApplyWatchStreak(t *testing.T) {
+	var msg twitch.UserNoticeMessage
+	msg.MsgID = "viewermilestone"
+	msg.ID = "abc"
+	msg.Message = "lets go"
+	msg.MsgParams = map[string]string{"msg-param-category": "watch-streak", "msg-param-value": "12"}
+	msg.User.Badges = map[string]int{"subscriber": 6}
+	var m chat.Message
+	if !applyWatchStreak(&m, msg) {
+		t.Fatal("watch streak not recognised")
+	}
+	if m.Type != chat.MessageTypeWatchStreak || m.StreakCount != 12 || m.Text != "lets go" || m.ID != "abc" || !m.IsSub {
+		t.Fatalf("unexpected message: %+v", m)
+	}
+
+	// Other milestone categories / notices are left alone.
+	msg.MsgParams["msg-param-category"] = "something-else"
+	if applyWatchStreak(&chat.Message{}, msg) {
+		t.Fatal("non watch-streak milestone must not match")
+	}
+	msg.MsgID = "resub"
+	msg.MsgParams["msg-param-category"] = "watch-streak"
+	if applyWatchStreak(&chat.Message{}, msg) {
+		t.Fatal("resub must not match")
+	}
+}
