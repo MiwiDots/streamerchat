@@ -1,3 +1,6 @@
+2026-11-13 23:32 - v0.6.4 (stable): RELEASE — StreamerChat sends to YouTube
+  chat (see the entry below; GitHub issue #1).
+
 2026-11-13 23:31 - StreamerChat can send to YouTube chat (unreleased, next
   version; requested in GitHub issue #1).
 
