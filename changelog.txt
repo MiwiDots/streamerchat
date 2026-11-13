@@ -1,3 +1,9 @@
+2026-11-13 19:32 - v0.6.0 (stable): RELEASE — bundles every change since
+  v0.5.0 (the internal steps v0.5.1–v0.5.9 below were never published
+  on their own) plus the returning-chatter marker. Updater hardened in
+  this release, so users on <= v0.5.0 still update through the old
+  updater once; verified updates apply from v0.6.0 on.
+
 2026-11-13 19:32 - returning chatters are marked too (Twitch "returning-chatter"
   tag → chat.Message.IsReturningChatter → "returningChatter"). Subtler
   than first messages: thin teal bar + small "↺ Returning chatter" /
