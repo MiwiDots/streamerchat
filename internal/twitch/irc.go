@@ -145,14 +145,44 @@ func (c *IRCClient) Disconnect() {
 	c.client.Disconnect()
 }
 
+// sanitizeIRCText makes user text safe to put into a single IRC line.
+//
+// SECURITY: gempir's Say() formats "PRIVMSG #chan :<text>" and writes it
+// verbatim. A CR or LF in text would terminate that line and let the rest
+// be sent as an arbitrary raw IRC command (PRIVMSG another channel, JOIN,
+// PART, ...). Line breaks become spaces; other control characters except
+// the CTCP delimiter \x01 (used by Action) are dropped.
+func sanitizeIRCText(text string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\r' || r == '\n':
+			return ' '
+		case r == '\x01':
+			return r
+		case r < 0x20 || r == 0x7f:
+			return -1
+		}
+		return r
+	}, text)
+}
+
 // Say sends a message to the channel.
 func (c *IRCClient) Say(text string) {
-	c.client.Say(c.channel, text)
+	c.client.Say(c.channel, sanitizeIRCText(text))
+}
+
+// Action sends a "/me" message as CTCP ACTION — the IRC-native form, which
+// doesn't depend on Twitch's server-side parsing of "/commands" in PRIVMSG
+// text (most of which Twitch removed in 2023).
+func (c *IRCClient) Action(text string) {
+	text = strings.ReplaceAll(sanitizeIRCText(text), "\x01", "")
+	c.client.Say(c.channel, "\x01ACTION "+text+"\x01")
 }
 
 // SayTo sends a message to a specific channel (must be joined first).
 func (c *IRCClient) SayTo(channel, text string) {
 	ch := strings.TrimPrefix(channel, "#")
+	text = sanitizeIRCText(text)
 	log.Printf("[SEND] PRIVMSG #%s: %q", ch, text)
 	c.client.Say(ch, text)
 }
@@ -263,7 +293,7 @@ func (c *IRCClient) registerHandlers() {
 			DisplayName: msg.User.DisplayName,
 			Color:       msg.User.Color,
 			Badges:      convertBadges(msg.User.Badges),
-			Text:        msg.SystemMsg,
+			Text:        userNoticeText(msg),
 		}
 
 		switch msg.MsgID {
@@ -328,6 +358,26 @@ func (c *IRCClient) registerHandlers() {
 			Text:      fmt.Sprintf("Connected to #%s", c.channel),
 		})
 	})
+}
+
+// userNoticeText builds the display text for a USERNOTICE.
+//
+//   - announcement: system-msg is EMPTY for announcements — the text is
+//     the user's message (it used to render as a blank line).
+//   - sub / resub / raid / ...: system-msg ("X subscribed for 12
+//     months!") plus the user's own message when they attached one
+//     (it used to be dropped).
+func userNoticeText(msg twitch.UserNoticeMessage) string {
+	if msg.MsgID == "announcement" {
+		return msg.Message
+	}
+	if msg.Message == "" {
+		return msg.SystemMsg
+	}
+	if msg.SystemMsg == "" {
+		return msg.Message
+	}
+	return msg.SystemMsg + " — " + msg.Message
 }
 
 func convertPrivateMessage(msg twitch.PrivateMessage, channel string) chat.Message {

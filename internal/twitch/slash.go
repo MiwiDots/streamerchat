@@ -6,6 +6,37 @@ import (
 	"strings"
 )
 
+// Slow-mode limits enforced by Twitch (Helix rejects anything else).
+const (
+	defaultSlowSeconds = 30
+	minSlowSeconds     = 3
+	maxSlowSeconds     = 120
+)
+
+// maxFollowerMinutes is Twitch's follower-only cap: 3 months.
+const maxFollowerMinutes = 129600
+
+// parseFollowerMinutes parses the /followers argument into minutes.
+// Like Twitch's own command, a BARE number means minutes ("/followers 10"
+// = 10 minutes; it used to be read as 10 seconds and rounded to 1 min).
+// Suffixed values use parseDuration ("30s" rounds up to 1 min, "1h", "1d").
+func parseFollowerMinutes(arg string) (int, error) {
+	var minutes int
+	if n, err := strconv.Atoi(arg); err == nil {
+		minutes = n
+	} else {
+		secs, err := parseDuration(arg)
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration %q (use e.g. 10, 10m, 1h, 1d)", arg)
+		}
+		minutes = (secs + 59) / 60
+	}
+	if minutes < 0 || minutes > maxFollowerMinutes {
+		return 0, fmt.Errorf("duration must be 0–%d minutes (got %q)", maxFollowerMinutes, arg)
+	}
+	return minutes, nil
+}
+
 // defaultTimeoutSeconds is what "/timeout <user>" uses without an explicit
 // duration — 10 minutes, same as Twitch's own default.
 const defaultTimeoutSeconds = 10 * 60
@@ -133,11 +164,13 @@ func HandleSlashCommand(h *HelixClient, line string) (status string, handled boo
 		return "Chat cleared.", true
 
 	case "slow":
-		seconds := 30
+		seconds := defaultSlowSeconds
 		if len(args) >= 1 {
-			if n, err := parseDuration(args[0]); err == nil {
-				seconds = n
+			n, err := parseDuration(args[0])
+			if err != nil || n < minSlowSeconds || n > maxSlowSeconds {
+				return fmt.Sprintf("/slow: wait time must be %d–%d seconds (got %q)", minSlowSeconds, maxSlowSeconds, args[0]), true
 			}
+			seconds = n
 		}
 		if err := h.SetSlowMode(true, seconds); err != nil {
 			return err.Error(), true
@@ -152,12 +185,11 @@ func HandleSlashCommand(h *HelixClient, line string) (status string, handled boo
 	case "followers":
 		minutes := 0
 		if len(args) >= 1 {
-			if n, err := parseDuration(args[0]); err == nil {
-				minutes = n / 60
-				if minutes == 0 {
-					minutes = 1
-				}
+			n, err := parseFollowerMinutes(args[0])
+			if err != nil {
+				return fmt.Sprintf("/followers: %v", err), true
 			}
+			minutes = n
 		}
 		if err := h.SetFollowerOnly(true, minutes); err != nil {
 			return err.Error(), true

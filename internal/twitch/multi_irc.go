@@ -281,7 +281,7 @@ func (m *MultiIRCClient) registerHandlers(c *twitch.Client) {
 			DisplayName: msg.User.DisplayName,
 			Color:       msg.User.Color,
 			Badges:      convertBadges(msg.User.Badges),
-			Text:        msg.SystemMsg,
+			Text:        userNoticeText(msg),
 		}
 		switch msg.MsgID {
 		case "sub", "resub":

@@ -1,3 +1,35 @@
+2026-11-13 19:10 - v0.5.5 (stable): chat semantics — IRC line-injection
+  guard, /me works, announcements + resub messages visible, slash
+  argument fixes, chathub channel bookkeeping.
+
+  - SECURITY: gempir's Say() writes "PRIVMSG #chan :<text>" verbatim,
+    so a CR/LF in a sent message (e.g. a multi-line paste) started a
+    second, arbitrary raw IRC command. IRCClient.Say/SayTo now replace
+    line breaks with spaces and drop other control characters
+    (sanitizeIRCText). chathub sends via Helix JSON and wasn't affected.
+  - /me in streamerchat: was answered with "Unknown command" and never
+    sent. Now sent as CTCP ACTION (IRCClient.Action) and echoed locally.
+  - Announcements rendered as an empty line (their system-msg is
+    empty — the text is the user message). Sub/resub/raid notices now
+    also show the message the user attached (userNoticeText, shared by
+    both IRC clients).
+  - /followers 10 means 10 MINUTES like on Twitch (was read as 10s and
+    rounded to 1 min); range 0..90 days validated. /slow validates
+    Twitch's 3..120s range instead of reporting "0s" success.
+  - chathub: after login, the live-check / emote loop also ran for
+    YouTube tabs ("yt:@handle") → live YouTube tabs flipped to offline
+    and ~30 failing Helix lookups per YouTube channel. Twitch only now.
+  - chathub: reordering tabs lower-cased YouTube handles / UC ids, so
+    their order was never saved. Entries are normalised via
+    parseChannelRef instead.
+  - chathub: double-clicking Add could store a channel twice (check +
+    append without lock); both add paths share addChannelRef under mu.
+  - Known, intentionally not changed: partial ROOMSTATE updates reset
+    the other chat-mode flags, but neither frontend consumes the
+    "settings" event, so there is no visible effect today.
+  - Tests: IRC sanitizing, USERNOTICE text, /followers + /slow parsing,
+    /me command matching.
+
 2026-11-13 19:08 - v0.5.4 (stable): concurrency + leak fixes — no more
   profile-switch crash, no wedged IRC, no runaway goroutines.
 

@@ -85,3 +85,28 @@ func newOfflineHelix(t *testing.T) *HelixClient {
 	}
 	return h
 }
+
+func TestParseFollowerMinutes(t *testing.T) {
+	ok := map[string]int{"0": 0, "10": 10, "10m": 10, "30s": 1, "1h": 60, "1d": 1440, "90d": 129600}
+	for in, want := range ok {
+		got, err := parseFollowerMinutes(in)
+		if err != nil || got != want {
+			t.Errorf("parseFollowerMinutes(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"-1", "91d", "abc"} {
+		if _, err := parseFollowerMinutes(in); err == nil {
+			t.Errorf("parseFollowerMinutes(%q): want error", in)
+		}
+	}
+}
+
+func TestSlashSlowRange(t *testing.T) {
+	h := newOfflineHelix(t)
+	for _, line := range []string{"/slow 0", "/slow 2", "/slow 121", "/slow 5m", "/slow abc"} {
+		status, handled := HandleSlashCommand(h, line)
+		if !handled || !strings.Contains(status, "wait time must be") {
+			t.Errorf("%q: want range rejection, got %q", line, status)
+		}
+	}
+}

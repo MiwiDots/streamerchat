@@ -1457,6 +1457,24 @@ func (a *App) SendMessage(text string) {
 		return
 	}
 
+	// "/me <text>" is a chat message, not a moderation command: send it as
+	// an IRC ACTION. It used to fall through to HandleSlashCommand, which
+	// answered "Unknown command" and never sent anything.
+	if rest, ok := cutCommand(text, "/me"); ok {
+		if rest == "" {
+			return
+		}
+		a.mu.Lock()
+		c := a.ircClient
+		a.mu.Unlock()
+		if c == nil {
+			return
+		}
+		c.Action(rest)
+		a.emitOwnMessage(rest)
+		return
+	}
+
 	// Slash command? Route through Helix and surface the response as a
 	// system message in chat. The IRC connection stays untouched.
 	if strings.HasPrefix(text, "/") {
@@ -1481,7 +1499,12 @@ func (a *App) SendMessage(text string) {
 		return
 	}
 	c.Say(text)
+	a.emitOwnMessage(text)
+}
 
+// emitOwnMessage echoes a message we just sent into the local chat view
+// (Twitch IRC doesn't send our own PRIVMSGs back to us).
+func (a *App) emitOwnMessage(text string) {
 	username := a.cfg.Twitch.Username
 	channel := a.cfg.Twitch.Channel
 	a.emitChat(chat.Message{
@@ -1495,6 +1518,20 @@ func (a *App) SendMessage(text string) {
 		IsBroadcaster: strings.EqualFold(username, channel),
 		Text:          text,
 	})
+}
+
+// cutCommand reports whether text is the slash command cmd (case-
+// insensitive, e.g. "/me" or "/ME hi") and returns its trimmed argument.
+func cutCommand(text, cmd string) (string, bool) {
+	t := strings.TrimSpace(text)
+	if len(t) < len(cmd) || !strings.EqualFold(t[:len(cmd)], cmd) {
+		return "", false
+	}
+	rest := t[len(cmd):]
+	if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
+		return "", false // e.g. "/mention" is not "/me"
+	}
+	return strings.TrimSpace(rest), true
 }
 
 // loadBadges fetches global + channel badges via Helix. Safe to call multiple

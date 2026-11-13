@@ -964,15 +964,7 @@ func (a *App) AddChannel(channel string) string {
 	if ref.Name == "" {
 		return "empty channel"
 	}
-	stored := ref.String()
-	for _, c := range a.cfg.Channels {
-		if c == stored {
-			return ""
-		}
-	}
-	a.cfg.Channels = append(a.cfg.Channels, stored)
-	a.cfg.Save()
-	a.startChannelWatcher(ref)
+	a.addChannelRef(ref)
 	return ""
 }
 
@@ -990,16 +982,26 @@ func (a *App) AddChannelOn(platform, name string) string {
 	if platform == "twitch" {
 		ref.Name = strings.ToLower(ref.Name)
 	}
+	a.addChannelRef(ref)
+	return ""
+}
+
+// addChannelRef stores ref (if new) and starts watching it. Check and
+// append happen under a.mu: two quick Add clicks used to both pass the
+// duplicate check and store the channel twice.
+func (a *App) addChannelRef(ref ChannelRef) {
 	stored := ref.String()
+	a.mu.Lock()
 	for _, c := range a.cfg.Channels {
 		if c == stored {
-			return ""
+			a.mu.Unlock()
+			return
 		}
 	}
 	a.cfg.Channels = append(a.cfg.Channels, stored)
 	a.cfg.Save()
+	a.mu.Unlock()
 	a.startChannelWatcher(ref)
-	return ""
 }
 
 // startChannelWatcher wires up the platform-specific subscriptions for a
@@ -1205,7 +1207,10 @@ func (a *App) SetChannelOrder(order []string) {
 	seen := make(map[string]bool, len(order))
 	newList := make([]string, 0, len(a.cfg.Channels))
 	for _, c := range order {
-		c = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(c), "#"))
+		// Normalise like stored entries: Twitch names lower-cased, YouTube
+		// handles / UC… ids keep their case. Lower-casing everything made
+		// every YouTube tab miss the lookup and jump to the end.
+		c = parseChannelRef(c).String()
 		if !existing[c] || seen[c] {
 			continue
 		}
@@ -1366,9 +1371,16 @@ func (a *App) StartLogin() map[string]interface{} {
 		a.mu.Lock()
 		chans := append([]string{}, a.cfg.Channels...)
 		a.mu.Unlock()
-		for _, ch := range chans {
-			go a.loadChannelEmotes(ch)
-			go a.checkAndEmitLive(ch)
+		for _, raw := range chans {
+			// Twitch only: YouTube tabs ("yt:@handle") have their own live
+			// detector. Passing them here marked live YouTube tabs offline
+			// and fired ~30 failing Helix lookups per YouTube channel.
+			ref := parseChannelRef(raw)
+			if ref.Platform != "twitch" {
+				continue
+			}
+			go a.loadChannelEmotes(ref.Name)
+			go a.checkAndEmitLive(ref.Name)
 		}
 
 		// Re-emit "ready" so the frontend (which subscribed during startup)
