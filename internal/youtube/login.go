@@ -40,8 +40,15 @@ type LoginCookies struct {
 // Valid reports whether the cookie set has the bare minimum required to
 // authenticate a request — SAPISID (for the hash) plus at least one of the
 // SID variants (for the actual session).
+//
+// SAPISID must also be a clean cookie value: sessions captured on Windows
+// before v0.5.7 carry Chromium's 32-byte host-hash prefix in their values
+// and can never authenticate. Treating them as invalid makes the app show
+// "not logged in" so the user simply logs in again, instead of every send
+// failing with an opaque 401.
 func (c LoginCookies) Valid() bool {
-	return c.SAPISID != "" && (c.SID != "" || c.Secure3PSID != "" || c.Secure1PSID != "")
+	return c.SAPISID != "" && validCookieValue([]byte(c.SAPISID)) &&
+		(c.SID != "" || c.Secure3PSID != "" || c.Secure1PSID != "")
 }
 
 // ErrNotLoggedIn is returned by LoadLoginCookies when nothing is stored.

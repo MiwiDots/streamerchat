@@ -110,7 +110,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// 3rd party emotes (loaded async)
 	a.emotes = twitch.NewThirdPartyEmotes()
-	go a.emotes.Load(cfg.Twitch.BotUserID)
+	// Globals now; the channel set is loaded in bootSequence once the
+	// account (and thus the channel id) is validated — per profile.
+	go a.emotes.LoadGlobal()
 
 	// Twitch native badges registry (loaded inside bootSequence after auth is valid)
 	a.badges = twitch.NewBadgeRegistry()
@@ -221,6 +223,13 @@ func (a *App) bootSequence() {
 	a.cfg.Save()
 	a.helixClient, _ = twitch.NewHelixClient(clientID, accessToken, info.UserID, info.UserID)
 	a.mu.Unlock()
+
+	// Channel 7TV/BTTV/FFZ emotes for this profile. Used to be loaded only
+	// once at startup, so after a profile switch (or a first login) the
+	// channel's emotes never showed up.
+	if !a.emotes.HasChannel(info.UserID) {
+		go a.emotes.LoadChannel(info.UserID)
+	}
 
 	// EventSub: per-profile, started here after auth so subscribes
 	// go out with the fresh access token. Any previous session for
@@ -1553,11 +1562,15 @@ func (a *App) loadBadges() {
 }
 
 // LookupEmote returns 3rd-party emote info for a name.
+// Channel emotes of the active profile's channel win over global ones.
 func (a *App) LookupEmote(name string) map[string]interface{} {
 	if a.emotes == nil {
 		return nil
 	}
-	info, ok := a.emotes.Lookup(name)
+	a.mu.Lock()
+	broadcasterID := a.cfg.Twitch.BotUserID
+	a.mu.Unlock()
+	info, ok := a.emotes.LookupIn(broadcasterID, name)
 	if !ok {
 		return nil
 	}

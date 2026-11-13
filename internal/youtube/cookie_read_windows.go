@@ -3,16 +3,15 @@
 package youtube
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"unsafe"
 
 	_ "modernc.org/sqlite"
@@ -33,8 +32,12 @@ import (
 //     readers. We make a temp copy first as a safety net for older browsers
 //     that hold an exclusive lock.
 //  4. SELECT rows whose host_key matches .google.com or .youtube.com.
-//  5. For each, decrypt the BLOB: "v10" / "v11" header + 12-byte AES-GCM
-//     nonce + ciphertext + 16-byte tag.
+//  5. For each, decrypt the BLOB (see decryptChromeValue in
+//     cookie_decrypt.go, which also strips the host-key hash prefix).
+//
+// Returns ErrAppBoundEncryption when the session cookies are only present
+// in Chrome's v20 format, so the login flow can stop with a clear message
+// instead of polling until it times out.
 func readBrowserProfileCookies(profileDir string) (map[string]string, error) {
 	masterKey, err := readChromeMasterKey(profileDir)
 	if err != nil {
@@ -86,22 +89,32 @@ func readBrowserProfileCookies(profileDir string) (map[string]string, error) {
 	defer rows.Close()
 
 	out := make(map[string]string)
+	appBound := false
 	for rows.Next() {
 		var name, host string
 		var enc []byte
 		if err := rows.Scan(&name, &host, &enc); err != nil {
 			continue
 		}
-		plain, derr := decryptChromeValue(enc, masterKey)
+		plain, derr := decryptChromeValue(enc, masterKey, host)
 		if derr != nil {
-			// Skip unreadable rows (e.g. very old v11-only entries we don't
-			// handle, or DPAPI fallback rows from before Chrome 80).
+			if errors.Is(derr, ErrAppBoundEncryption) {
+				appBound = true
+			} else if name == "SAPISID" {
+				log.Printf("[YT-LOGIN] SAPISID row unreadable: %v", derr)
+			}
+			// Skip unreadable rows (legacy DPAPI-only rows, corrupt data).
 			continue
 		}
 		// Last writer wins; .google.com and .youtube.com may have separate
 		// cookies with the same name and we want whichever was set later.
 		out[name] = string(plain)
-		_ = host
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read cookies: %w", err)
+	}
+	if appBound && out["SAPISID"] == "" {
+		return nil, ErrAppBoundEncryption
 	}
 	return out, nil
 }
@@ -144,26 +157,6 @@ func dpapiUnprotect(blob []byte) ([]byte, error) {
 	return result, nil
 }
 
-func decryptChromeValue(blob, key []byte) ([]byte, error) {
-	if len(blob) < 3+12+16 {
-		return nil, fmt.Errorf("blob too short")
-	}
-	if !strings.HasPrefix(string(blob[:3]), "v") {
-		return nil, fmt.Errorf("not an AES-GCM blob (might be legacy DPAPI)")
-	}
-	nonce := blob[3:15]
-	ct := blob[15:]
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	return gcm.Open(nil, nonce, ct, nil)
-}
-
 func copyToTemp(src string) (string, error) {
 	in, err := os.Open(src)
 	if err != nil {
@@ -176,6 +169,9 @@ func copyToTemp(src string) (string, error) {
 	}
 	defer tmp.Close()
 	if _, err := io.Copy(tmp, in); err != nil {
+		// Don't leave a partial copy of the cookie DB in %TEMP%.
+		tmp.Close()
+		os.Remove(tmp.Name())
 		return "", err
 	}
 	return tmp.Name(), nil

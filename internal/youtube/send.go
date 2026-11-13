@@ -33,10 +33,11 @@ func computeSAPISIDHASH(sapisid, origin string) string {
 }
 
 // sanitizeCookieValue drops bytes Go's net/http rejects as invalid in a
-// Cookie header value. RFC6265 defines cookie-octet as %x21-7E excluding
-// the few special chars below; high-bit bytes (e.g. the stray 0xEF the
-// SQLite reader sometimes returns) trigger "invalid byte" warnings and
-// the whole cookie gets dropped from the outgoing request.
+// Cookie header value (RFC 6265 cookie-octets). Values captured since
+// v0.5.7 are validated at capture time (cookie_decrypt.go), so this is a
+// no-op for them; it only cleans sessions saved by older versions, whose
+// values could carry a 32-byte host-hash prefix. The SAPISIDHASH is
+// computed over the same sanitized SAPISID so header and hash agree.
 func sanitizeCookieValue(v string) string {
 	b := make([]byte, 0, len(v))
 	for i := 0; i < len(v); i++ {
@@ -132,7 +133,7 @@ func SendLiveChatMessage(c LoginCookies, chatParams, text string) error {
 	req.Header.Set("X-Youtube-Client-Name", "1")
 	req.Header.Set("X-Youtube-Client-Version", "2.20260101.00.00")
 	req.Header.Set("Cookie", c.cookieHeader())
-	req.Header.Set("Authorization", computeSAPISIDHASH(c.SAPISID, origin))
+	req.Header.Set("Authorization", computeSAPISIDHASH(sanitizeCookieValue(c.SAPISID), origin))
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 	resp, err := sendClient.Do(req)

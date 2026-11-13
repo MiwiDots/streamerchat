@@ -27,92 +27,129 @@ type EmoteInfo struct {
 }
 
 // ThirdPartyEmotes holds emote data from 7TV, BTTV, and FFZ.
+//
+// Global emotes and per-channel emotes are kept apart. They used to share
+// one flat name→emote map, so in chathub every watched channel's emotes
+// rendered in every other channel, and parallel loads decided name
+// collisions by whichever HTTP call finished last.
 type ThirdPartyEmotes struct {
-	mu     sync.RWMutex
-	emotes map[string]EmoteInfo // name -> info
+	mu       sync.RWMutex
+	global   emoteSet
+	channels map[string]emoteSet // broadcaster id -> channel emotes
 }
+
+type emoteSet map[string]EmoteInfo // name -> info
+
+func (s emoteSet) add(info EmoteInfo) { s[info.Name] = info }
 
 // NewThirdPartyEmotes creates a new emote registry.
 func NewThirdPartyEmotes() *ThirdPartyEmotes {
 	return &ThirdPartyEmotes{
-		emotes: make(map[string]EmoteInfo),
+		global:   emoteSet{},
+		channels: make(map[string]emoteSet),
 	}
 }
 
-// Load fetches global emotes and channel-specific emotes for the given broadcaster.
+// providerLoader fetches one provider's emotes for a scope.
+type providerLoader func() emoteSet
+
+// loadAll runs the loaders in parallel and merges the results in a FIXED
+// precedence order (later wins): FFZ < BTTV < 7TV, so a name defined by
+// several providers resolves the same way every time.
+func loadAll(ffz, bttv, sevenTV providerLoader) emoteSet {
+	results := make([]emoteSet, 3)
+	var wg sync.WaitGroup
+	for i, load := range []providerLoader{ffz, bttv, sevenTV} {
+		wg.Add(1)
+		go func(i int, load providerLoader) {
+			defer wg.Done()
+			results[i] = load()
+		}(i, load)
+	}
+	wg.Wait()
+	merged := emoteSet{}
+	for _, set := range results {
+		for name, info := range set {
+			merged[name] = info
+		}
+	}
+	return merged
+}
+
+// LoadGlobal (re)loads the global emote sets of all providers.
+func (tpe *ThirdPartyEmotes) LoadGlobal() {
+	set := loadAll(loadFFZGlobal, loadBTTVGlobal, load7TVGlobal)
+	tpe.mu.Lock()
+	tpe.global = set
+	tpe.mu.Unlock()
+}
+
+// LoadChannel (re)loads the channel emotes of broadcasterID. A failed
+// provider simply contributes nothing; existing data for the channel is
+// replaced as a whole.
+func (tpe *ThirdPartyEmotes) LoadChannel(broadcasterID string) {
+	if broadcasterID == "" {
+		return
+	}
+	set := loadAll(
+		func() emoteSet { return loadFFZChannel(broadcasterID) },
+		func() emoteSet { return loadBTTVChannel(broadcasterID) },
+		func() emoteSet { return load7TVChannel(broadcasterID) },
+	)
+	tpe.mu.Lock()
+	tpe.channels[broadcasterID] = set
+	tpe.mu.Unlock()
+}
+
+// Load fetches global emotes and, if broadcasterID is set, that channel's
+// emotes.
 func (tpe *ThirdPartyEmotes) Load(broadcasterID string) {
 	var wg sync.WaitGroup
-
-	// 7TV Global
 	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		tpe.load7TVGlobal()
-	}()
-
-	// 7TV Channel
+	go func() { defer wg.Done(); tpe.LoadGlobal() }()
 	if broadcasterID != "" {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tpe.load7TVChannel(broadcasterID)
-		}()
+		go func() { defer wg.Done(); tpe.LoadChannel(broadcasterID) }()
 	}
-
-	// BTTV Global
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		tpe.loadBTTVGlobal()
-	}()
-
-	// BTTV Channel
-	if broadcasterID != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tpe.loadBTTVChannel(broadcasterID)
-		}()
-	}
-
-	// FFZ Global
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		tpe.loadFFZGlobal()
-	}()
-
-	// FFZ Channel
-	if broadcasterID != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tpe.loadFFZChannel(broadcasterID)
-		}()
-	}
-
 	wg.Wait()
 }
 
-// Lookup returns emote info for a name, or nil if not found.
+// Lookup returns a GLOBAL emote by name.
 func (tpe *ThirdPartyEmotes) Lookup(name string) (EmoteInfo, bool) {
+	return tpe.LookupIn("", name)
+}
+
+// LookupIn returns the emote `name` as seen in broadcasterID's chat:
+// channel emotes win over global ones. Empty broadcasterID = global only.
+func (tpe *ThirdPartyEmotes) LookupIn(broadcasterID, name string) (EmoteInfo, bool) {
 	tpe.mu.RLock()
 	defer tpe.mu.RUnlock()
-	info, ok := tpe.emotes[name]
+	if broadcasterID != "" {
+		if info, ok := tpe.channels[broadcasterID][name]; ok {
+			return info, true
+		}
+	}
+	info, ok := tpe.global[name]
 	return info, ok
 }
 
-// Count returns the total number of loaded emotes.
+// HasChannel reports whether emotes for broadcasterID have been loaded.
+func (tpe *ThirdPartyEmotes) HasChannel(broadcasterID string) bool {
+	tpe.mu.RLock()
+	defer tpe.mu.RUnlock()
+	_, ok := tpe.channels[broadcasterID]
+	return ok
+}
+
+// Count returns the number of loaded global emotes plus all channel emotes.
 func (tpe *ThirdPartyEmotes) Count() int {
 	tpe.mu.RLock()
 	defer tpe.mu.RUnlock()
-	return len(tpe.emotes)
-}
-
-func (tpe *ThirdPartyEmotes) add(info EmoteInfo) {
-	tpe.mu.Lock()
-	tpe.emotes[info.Name] = info
-	tpe.mu.Unlock()
+	n := len(tpe.global)
+	for _, set := range tpe.channels {
+		n += len(set)
+	}
+	return n
 }
 
 // HTTP helper
@@ -148,35 +185,39 @@ type sevenTVEmote struct {
 	} `json:"data"`
 }
 
-func (tpe *ThirdPartyEmotes) load7TVGlobal() {
+func load7TVGlobal() emoteSet {
+	set := emoteSet{}
 	var resp sevenTVResponse
 	if err := fetchJSON("https://7tv.io/v3/emote-sets/global", &resp); err != nil {
-		return
+		return set
 	}
 	for _, e := range resp.Emotes {
-		tpe.add(EmoteInfo{
+		set.add(EmoteInfo{
 			Name:     e.Name,
 			Provider: EmoteProvider7TV,
 			ID:       e.ID,
 			Animated: e.Data.Animated,
 		})
 	}
+	return set
 }
 
-func (tpe *ThirdPartyEmotes) load7TVChannel(userID string) {
+func load7TVChannel(userID string) emoteSet {
+	set := emoteSet{}
 	var user sevenTVUser
 	url := fmt.Sprintf("https://7tv.io/v3/users/twitch/%s", userID)
 	if err := fetchJSON(url, &user); err != nil {
-		return
+		return set
 	}
 	for _, e := range user.EmoteSet.Emotes {
-		tpe.add(EmoteInfo{
+		set.add(EmoteInfo{
 			Name:     e.Name,
 			Provider: EmoteProvider7TV,
 			ID:       e.ID,
 			Animated: e.Data.Animated,
 		})
 	}
+	return set
 }
 
 // ========== BTTV ==========
@@ -192,29 +233,32 @@ type bttvUser struct {
 	SharedEmotes  []bttvEmote `json:"sharedEmotes"`
 }
 
-func (tpe *ThirdPartyEmotes) loadBTTVGlobal() {
+func loadBTTVGlobal() emoteSet {
+	set := emoteSet{}
 	var emotes []bttvEmote
 	if err := fetchJSON("https://api.betterttv.net/3/cached/emotes/global", &emotes); err != nil {
-		return
+		return set
 	}
 	for _, e := range emotes {
-		tpe.add(EmoteInfo{
+		set.add(EmoteInfo{
 			Name:     e.Code,
 			Provider: EmoteProviderBTTV,
 			ID:       e.ID,
 			Animated: e.ImageType == "gif",
 		})
 	}
+	return set
 }
 
-func (tpe *ThirdPartyEmotes) loadBTTVChannel(userID string) {
+func loadBTTVChannel(userID string) emoteSet {
+	set := emoteSet{}
 	var user bttvUser
 	url := fmt.Sprintf("https://api.betterttv.net/3/cached/users/twitch/%s", userID)
 	if err := fetchJSON(url, &user); err != nil {
-		return
+		return set
 	}
 	for _, e := range user.ChannelEmotes {
-		tpe.add(EmoteInfo{
+		set.add(EmoteInfo{
 			Name:     e.Code,
 			Provider: EmoteProviderBTTV,
 			ID:       e.ID,
@@ -222,19 +266,20 @@ func (tpe *ThirdPartyEmotes) loadBTTVChannel(userID string) {
 		})
 	}
 	for _, e := range user.SharedEmotes {
-		tpe.add(EmoteInfo{
+		set.add(EmoteInfo{
 			Name:     e.Code,
 			Provider: EmoteProviderBTTV,
 			ID:       e.ID,
 			Animated: e.ImageType == "gif",
 		})
 	}
+	return set
 }
 
 // ========== FFZ ==========
 
 type ffzGlobalResponse struct {
-	DefaultSets []int                 `json:"default_sets"`
+	DefaultSets []int                  `json:"default_sets"`
 	Sets        map[string]ffzEmoteSet `json:"sets"`
 }
 
@@ -254,35 +299,46 @@ type ffzEmote struct {
 	Name string `json:"name"`
 }
 
-func (tpe *ThirdPartyEmotes) loadFFZGlobal() {
+// loadFFZGlobal loads only FFZ's default_sets. /set/global also returns
+// restricted sets (e.g. for specific users/add-ons) that are not visible to
+// everyone; those used to render for all chatters.
+func loadFFZGlobal() emoteSet {
+	set := emoteSet{}
 	var resp ffzGlobalResponse
 	if err := fetchJSON("https://api.frankerfacez.com/v1/set/global", &resp); err != nil {
-		return
+		return set
 	}
-	for _, set := range resp.Sets {
-		for _, e := range set.Emoticons {
-			tpe.add(EmoteInfo{
+	for _, id := range resp.DefaultSets {
+		ffzSet, ok := resp.Sets[fmt.Sprintf("%d", id)]
+		if !ok {
+			continue
+		}
+		for _, e := range ffzSet.Emoticons {
+			set.add(EmoteInfo{
 				Name:     e.Name,
 				Provider: EmoteProviderFFZ,
 				ID:       fmt.Sprintf("%d", e.ID),
 			})
 		}
 	}
+	return set
 }
 
-func (tpe *ThirdPartyEmotes) loadFFZChannel(userID string) {
+func loadFFZChannel(userID string) emoteSet {
+	set := emoteSet{}
 	var resp ffzRoomResponse
 	url := fmt.Sprintf("https://api.frankerfacez.com/v1/room/id/%s", userID)
 	if err := fetchJSON(url, &resp); err != nil {
-		return
+		return set
 	}
-	for _, set := range resp.Sets {
-		for _, e := range set.Emoticons {
-			tpe.add(EmoteInfo{
+	for _, ffzSet := range resp.Sets {
+		for _, e := range ffzSet.Emoticons {
+			set.add(EmoteInfo{
 				Name:     e.Name,
 				Provider: EmoteProviderFFZ,
 				ID:       fmt.Sprintf("%d", e.ID),
 			})
 		}
 	}
+	return set
 }

@@ -476,18 +476,21 @@ function applyOnlyLiveFilter() {
 // === Emote lookup ===
 const EMOTE_CACHE_MAX = 4000;
 let emoteEpoch = 0; // bumped whenever negative entries are flushed
-async function lookupEmote(name) {
-  if (emoteCache.has(name)) return emoteCache.get(name);
+// Cache key includes the channel: 7TV/BTTV/FFZ channel emotes are per
+// channel, so the same word can be an emote in one tab and text in another.
+async function lookupEmote(channel, name) {
+  const key = channel + '\u0000' + name;
+  if (emoteCache.has(key)) return emoteCache.get(key);
   const epoch = emoteEpoch;
   let result = null;
   try {
-    const info = await window.go.main.App.LookupEmote(name);
+    const info = await window.go.main.App.LookupEmote(channel, name);
     if (info && info.url) result = info;
   } catch (e) { return null; } // don't cache transient failures
   // A lookup that started before emotes finished loading may carry a stale
   // "not an emote"; don't cache it if the cache was flushed meanwhile.
   if (epoch !== emoteEpoch && !result) return result;
-  emoteCache.set(name, result);
+  emoteCache.set(key, result);
   // Bounded: evict oldest (Map keeps insertion order).
   while (emoteCache.size > EMOTE_CACHE_MAX) {
     emoteCache.delete(emoteCache.keys().next().value);
@@ -528,7 +531,7 @@ async function renderBadges(channel, badges) {
   return fragment;
 }
 
-async function renderText(text, nativeEmotes) {
+async function renderText(text, nativeEmotes, channel) {
   const fragment = document.createDocumentFragment();
   const runes = Array.from(text);
   const nativeMap = new Map();
@@ -555,7 +558,7 @@ async function renderText(text, nativeEmotes) {
     const wordStart = i;
     while (i < runes.length && runes[i] !== ' ' && !nativeMap.has(i)) i++;
     const word = runes.slice(wordStart, i).join('');
-    const emote = await lookupEmote(word);
+    const emote = await lookupEmote(channel, word);
     if (emote) {
       fragment.appendChild(el('img', { class: 'emote', src: emote.url, alt: word, title: word }));
     } else {
@@ -719,7 +722,7 @@ async function renderMessage(msg) {
   div.appendChild(usernameEl);
   div.appendChild(document.createTextNode(': '));
 
-  const textFragment = await renderText(msg.text || '', msg.twitchEmotes);
+  const textFragment = await renderText(msg.text || '', msg.twitchEmotes, msg.channel);
   div.appendChild(textFragment);
 
   if (msg.bits > 0) {

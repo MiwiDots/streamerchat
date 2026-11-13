@@ -2,6 +2,7 @@ package youtube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -76,6 +77,9 @@ func LaunchLoginFlow(parent context.Context, timeout time.Duration) (LoginCookie
 	}
 	for {
 		cookies, err := readBrowserProfileCookies(tmpProfile)
+		if errors.Is(err, ErrAppBoundEncryption) {
+			return LoginCookies{}, fmt.Errorf("%s cannot be used for YouTube login: %w. Please install or use Microsoft Edge", filepath.Base(exe), err)
+		}
 		if err == nil {
 			creds := buildLoginCookies(cookies)
 			if creds.Valid() {
@@ -130,15 +134,19 @@ func chromiumCandidates() []string {
 	switch runtime.GOOS {
 	case "windows":
 		candidates = []string{
-			// Prefer Chrome first: Chrome users tend to have all their
-			// existing logins there and it avoids Edge's "this is a work
-			// account" enterprise gating that some users hit.
-			filepath.Join(os.Getenv("ProgramFiles"), "Google", "Chrome", "Application", "chrome.exe"),
-			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Google", "Chrome", "Application", "chrome.exe"),
-			filepath.Join(os.Getenv("LocalAppData"), "Google", "Chrome", "Application", "chrome.exe"),
+			// Edge first. Chrome 127+ writes cookies with App-Bound
+			// Encryption (v20) on Windows, which only Chrome itself can
+			// decrypt — capturing the session from a Chrome window can't
+			// work. Edge ships with every Windows 10/11 install and still
+			// writes readable v10 cookies. Chrome stays as a fallback for
+			// systems without Edge (it fails fast with a clear message if
+			// it uses v20).
 			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
 			filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
 			filepath.Join(os.Getenv("ProgramFiles"), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+			filepath.Join(os.Getenv("ProgramFiles"), "Google", "Chrome", "Application", "chrome.exe"),
+			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+			filepath.Join(os.Getenv("LocalAppData"), "Google", "Chrome", "Application", "chrome.exe"),
 		}
 	case "darwin":
 		candidates = []string{

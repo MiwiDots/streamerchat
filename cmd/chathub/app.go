@@ -268,7 +268,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.emotes = twitch.NewThirdPartyEmotes()
-	go a.emotes.Load("")
+	go a.emotes.LoadGlobal()
 
 	a.badges = twitch.NewBadgeRegistry()
 	go a.loadGlobalBadges()
@@ -744,12 +744,11 @@ func (a *App) emitMessage(channel string, msg chat.Message) {
 		return
 	}
 	m := a.chatToMap(channel, msg)
-	// Persist real chat messages (skip system/join/part noise)
+	// Persist chat-like messages plus moderation tombstones; Append
+	// filters by type (see historyPersistTypes) and skips system /
+	// join / part noise.
 	if a.history != nil {
-		t, _ := m["type"].(string)
-		if t == "chat" || t == "sub" || t == "giftsub" || t == "raid" || t == "announcement" {
-			a.history.Append(channel, m)
-		}
+		a.history.Append(channel, m)
 	}
 	// 7TV cosmetics lookup: kick off a one-shot HTTP fetch for any
 	// Twitch user we haven't queried yet so paint/badge entitlements
@@ -861,7 +860,8 @@ func (a *App) loadChannelEmotes(channel string) {
 		log.Printf("[BADGES] channel %s skipped (no auth / could not resolve user id)", channel)
 		return
 	}
-	a.emotes.Load(userID)
+	// Channel emotes only — globals are loaded once at startup.
+	a.emotes.LoadChannel(userID)
 	if err := a.badges.LoadChannel(userID, a.cfg.ClientID, a.cfg.AccessToken); err != nil {
 		log.Printf("[BADGES] channel badge load failed for %s: %v", channel, err)
 		return
@@ -1244,11 +1244,22 @@ func (a *App) LookupBadge(channel, setID, version string) string {
 	return a.badges.Lookup(userID, setID, version)
 }
 
-func (a *App) LookupEmote(name string) map[string]interface{} {
+// LookupEmote resolves a 7TV/BTTV/FFZ emote as seen in `channel`'s chat:
+// that channel's emotes first, then globals. Only the cached channel id is
+// used (no Helix call per word); until it is known, globals only — the
+// frontend flushes its "not an emote" cache on badgesReady, which fires
+// after the channel's emotes are loaded.
+func (a *App) LookupEmote(channel, name string) map[string]interface{} {
 	if a.emotes == nil {
 		return nil
 	}
-	info, ok := a.emotes.Lookup(name)
+	var broadcasterID string
+	if ref := parseChannelRef(channel); ref.Platform == "twitch" {
+		a.mu.Lock()
+		broadcasterID = a.channelIDCache[ref.Name]
+		a.mu.Unlock()
+	}
+	info, ok := a.emotes.LookupIn(broadcasterID, name)
 	if !ok {
 		return nil
 	}

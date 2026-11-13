@@ -1,3 +1,48 @@
+2026-11-13 19:25 - v0.5.7 (stable): chathub history keeps deletions + stays
+  small, per-channel 3rd-party emotes, YouTube login/send on Windows,
+  dead code removed.
+
+  - chathub history: delete / ban / timeout / clear-chat events are now
+    stored as tombstones and applied on load, so moderated messages no
+    longer reappear after a restart. Load reads only the last 1 MB of
+    the file (was: whole file, every tab, every start) and handles
+    read errors; files are compacted atomically to their newest 2000
+    lines once they pass 4 MB (they used to grow forever).
+    safeFilename also neutralises "." / ".." / control chars; the
+    unused ensureValidChannelName helper is gone.
+  - 7TV/BTTV/FFZ emotes are kept per channel + global. chathub used to
+    merge every watched channel into one map (channel A's emotes in
+    channel B) and name collisions were won by whichever HTTP call
+    finished last. Now: channel emotes > global, fixed provider order
+    7TV > BTTV > FFZ, FFZ global limited to default_sets.
+    LookupEmote in chathub takes the channel (frontend cache keyed by
+    channel). streamerchat loads the channel set per profile in
+    bootSequence (was only once at startup → missing after a profile
+    switch or first login).
+  - YouTube on Windows:
+    * Chrome/Edge >= ~130 prefix every decrypted cookie with
+      SHA-256(host_key). That prefix was kept, so cookie values had 32
+      bytes of garbage (the "invalid byte 'ï'" errors) and the
+      SAPISIDHASH was computed over the wrong value → sends rejected.
+      The prefix is stripped when it matches the row's host hash;
+      decrypted values must be valid cookie octets.
+    * Chrome 127+ uses app-bound "v20" cookie encryption that no other
+      app can read; login used to poll silently until the 5-min
+      timeout. The login now prefers Edge and fails fast with a clear
+      message if a browser only has v20 cookies.
+    * Saved sessions from older versions with a corrupted SAPISID now
+      count as logged out → re-login once on Windows.
+    * SAPISIDHASH uses the same sanitized SAPISID as the Cookie header;
+      partial temp copies of the cookie DB are removed.
+    * Decryption moved to cookie_decrypt.go (platform independent,
+      unit-tested).
+  - Removed dead code: internal/twitch/ircclient.go (FastIRCClient, no
+    callers, with its own bugs) and internal/twitch/emotes.go (only
+    used by it).
+  - Tests: history tombstones / compaction / tail reading / filenames,
+    emote scoping + provider precedence, cookie decryption (host hash,
+    v20, wrong key), corrupt legacy session detection.
+
 2026-11-13 19:14 - chore: stop tracking the compiled cmd/chathub/chathub
   binary (9.5 MB Mach-O from v0.2.7, stale since). Removed from the
   index only — the local file stays. .gitignore now covers in-place
