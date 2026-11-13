@@ -1,3 +1,54 @@
+2026-11-13 19:14 - v0.5.6 (stable): frontend fixes in both apps — message
+  order, deleted messages actually disappear, input handling, caches,
+  i18n.
+
+  Both apps:
+  - Messages rendered out of order: renderMessage awaits backend
+    emote/badge lookups and wasn't queued, so a later message with
+    cached words overtook an earlier one. Rendering now goes through a
+    promise chain (chathub: one per channel; history renders before
+    live messages for that tab).
+  - Deleted / banned / timed-out / cleared messages are now greyed out
+    and replaced by "<message deleted>" (rows carry data-msg-id /
+    data-user; chathub only touches the affected channel). The
+    "[deleted]" notice no longer repeats the deleted text.
+  - "Not an emote" lookups made before emotes finished loading were
+    cached forever, so early channel emotes never rendered. Misses are
+    flushed when loading completes (chathub: badgesReady; streamerchat:
+    15s TTL + flush on ready); caches are size-capped.
+  - User card: a slow reply for user A can no longer render into the
+    card of user B opened after it.
+
+  streamerchat:
+  - Tab cycling through /commands and @mentions works past the first
+    Tab (focus used to jump out of the input).
+  - Profile switch drops renders still pending for the old profile and
+    clears roles / badge / emote caches. Empty mod/VIP lists (null
+    from Go) now clear the UI; an absent key (Helix error) keeps it.
+  - Activity feed DOM is trimmed together with its 500-entry log.
+  - Missing English i18n keys (usersTab, activityTab). Switching
+    language no longer resets the login status, sound-file label and
+    YouTube status (runtime text re-rendered via i18n.onLocaleChange).
+  - Mod-action handler was bound to every .btn on the page (settings
+    Login/Save fired ModAction(undefined)); now only the user card's
+    action buttons.
+  - Fast double Enter no longer sends the same message twice.
+  - With the send target on "YT", messages were silently posted to
+    Twitch. There is no YouTube send in streamerchat, so it now says so
+    and keeps the text ("Both" sends to Twitch with a one-time notice).
+
+  chathub:
+  - Enter on an @-mention suggestion no longer also sends the message.
+  - History replayed at startup no longer marks tabs unread or beeps.
+  - Chatter search keeps focus while typing; the Helix refresh no
+    longer wipes the typed filter.
+  - Mention highlighting matches the username on word boundaries
+    (short names used to highlight almost every message).
+  - Stream-info refresh interval no longer leaks on fast tab switches.
+  - Missing i18n key updateChannelLabel.
+  - Known: deletions aren't persisted to the history file, so deleted
+    messages reappear after a restart.
+
 2026-11-13 19:10 - v0.5.5 (stable): chat semantics — IRC line-injection
   guard, /me works, announcements + resub messages visible, slash
   argument fixes, chathub channel bookkeeping.

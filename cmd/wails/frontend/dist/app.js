@@ -17,7 +17,44 @@ let roles = { mods: new Set(), vips: new Set(), bots: new Set(), broadcaster: ''
 let selectedUser = null;
 let sendTarget = 0;
 let ytEnabled = false;
-let emoteCache = new Map(); // name -> {url, animated} or null
+let emoteCache = new Map(); // name -> {url, animated}; hits only (misses live in emoteMiss)
+
+// Lookups made before the backend finished loading emotes/badges return
+// nothing. Caching those misses forever hid every emote/badge for the whole
+// session, so misses expire after MISS_TTL_MS and are all dropped on the
+// "ready" event. Both maps are insertion-ordered, so evicting the first key
+// drops the oldest entry.
+const MISS_TTL_MS = 15000;
+const CACHE_MAX = 3000;
+const emoteMiss = new Map(); // name -> expiry timestamp
+const badgeMiss = new Map(); // "set/version" -> expiry timestamp
+function capMap(m, max) {
+  while (m.size > max) m.delete(m.keys().next().value);
+}
+function missActive(m, key) {
+  const exp = m.get(key);
+  if (exp === undefined) return false;
+  if (exp > Date.now()) return true;
+  m.delete(key);
+  return false;
+}
+
+// Chat rendering is async (backend lookups for emotes/badges), so messages
+// are rendered through a single promise chain: DOM order == arrival order.
+// renderGen is bumped on profile switch so renders still pending for the old
+// profile are dropped instead of appearing in the new profile's chat.
+let renderGen = 0;
+let renderChain = Promise.resolve();
+// "Both" send target: the "YouTube sending not supported" notice is shown
+// only once per session.
+let ytBothNoticeShown = false;
+function enqueueRender(msg) {
+  const gen = renderGen;
+  renderChain = renderChain
+    .then(() => renderMessage(msg, gen))
+    .catch((e) => console.error('render failed', e));
+  return renderChain;
+}
 
 // DOM
 const chatEl = document.getElementById('chat');
@@ -330,9 +367,19 @@ const badgeCache = new Map();
 async function lookupBadge(setID, version) {
   const key = setID + '/' + version;
   if (badgeCache.has(key)) return badgeCache.get(key);
+  if (missActive(badgeMiss, key)) return '';
+  const gen = renderGen;
   let url = '';
   try { url = await window.go.main.App.LookupBadge('', setID, version); } catch (e) {}
-  badgeCache.set(key, url);
+  // A profile switch while the lookup was in flight invalidates the answer.
+  if (gen !== renderGen) return url;
+  if (url) {
+    badgeCache.set(key, url);
+    capMap(badgeCache, CACHE_MAX);
+  } else {
+    badgeMiss.set(key, Date.now() + MISS_TTL_MS);
+    capMap(badgeMiss, CACHE_MAX);
+  }
   return url;
 }
 async function renderBadges(badges) {
@@ -350,12 +397,21 @@ async function renderBadges(badges) {
 // Emote lookup cache
 async function lookupEmote(name) {
   if (emoteCache.has(name)) return emoteCache.get(name);
+  if (missActive(emoteMiss, name)) return null;
+  const gen = renderGen;
   let result = null;
   try {
     const info = await window.go.main.App.LookupEmote(name);
     if (info && info.url) result = info;
   } catch (e) {}
-  emoteCache.set(name, result);
+  if (gen !== renderGen) return result;
+  if (result) {
+    emoteCache.set(name, result);
+    capMap(emoteCache, CACHE_MAX);
+  } else {
+    emoteMiss.set(name, Date.now() + MISS_TTL_MS);
+    capMap(emoteMiss, CACHE_MAX);
+  }
   return result;
 }
 
@@ -413,7 +469,31 @@ async function renderText(text, nativeEmotes) {
   return fragment;
 }
 
-async function renderMessage(msg) {
+// Deleted-message state (item: moderation removals). Chat messages carry
+// data-msg-id / data-user / data-platform so moderation events can find them.
+// Attribute values are compared in JS, never interpolated into a selector.
+function markDeleted(div) {
+  if (div.classList.contains('deleted')) return;
+  div.classList.add('deleted');
+  // Keep timestamp + platform badge (first two children), drop the rest
+  // (username, emotes, text) so the deleted content is no longer shown.
+  while (div.childNodes.length > 2) div.removeChild(div.lastChild);
+  div.appendChild(document.createTextNode(' '));
+  div.appendChild(el('span', { class: 'system deleted-text' }, '<message deleted>'));
+}
+function markMessages(pred) {
+  for (const m of chatEl.querySelectorAll('.msg[data-user]')) {
+    if (pred(m.dataset)) markDeleted(m);
+  }
+}
+
+async function renderMessage(msg, gen = renderGen) {
+  // Appends the finished row unless the profile changed while we awaited.
+  const commit = (div) => {
+    if (gen !== renderGen) return;
+    chatEl.appendChild(div);
+    trimAndScroll();
+  };
   const ts = new Date(msg.timestamp || Date.now());
   const tsStr = String(ts.getHours()).padStart(2, '0') + ':' + String(ts.getMinutes()).padStart(2, '0');
 
@@ -430,50 +510,55 @@ async function renderMessage(msg) {
 
   if (type === 'join') {
     div.appendChild(el('span', { class: 'system' }, `-> ${msg.username} joined`));
-    chatEl.appendChild(div);
-    trimAndScroll();
+    commit(div);
     return;
   }
   if (type === 'part') {
     div.appendChild(el('span', { class: 'system' }, `<- ${msg.username} left`));
-    chatEl.appendChild(div);
-    trimAndScroll();
+    commit(div);
     return;
   }
   if (type === 'system') {
     div.appendChild(el('span', { class: 'system' }, msg.text || ''));
-    chatEl.appendChild(div);
-    trimAndScroll();
+    commit(div);
     return;
   }
   if (type === 'sub' || type === 'giftsub' || type === 'raid' || type === 'membership' || type === 'announcement') {
     div.appendChild(el('span', { class: 'super' }, '★'));
     div.appendChild(el('span', { class: 'system' }, ' ' + (msg.text || '')));
-    chatEl.appendChild(div);
-    trimAndScroll();
+    commit(div);
     return;
   }
   if (type === 'ban' || type === 'timeout') {
+    if (gen === renderGen && msg.targetUsername) {
+      const target = msg.targetUsername.toLowerCase();
+      const plat = msg.platform || 'twitch';
+      markMessages(d => d.user === target && d.platform === plat);
+    }
     div.appendChild(el('span', { class: 'super', style: 'color:#ff4444' }, '⛔'));
     div.appendChild(el('span', { class: 'system' }, ' ' + (msg.text || '')));
-    chatEl.appendChild(div);
-    trimAndScroll();
+    commit(div);
     return;
   }
   if (type === 'deleted') {
-    div.appendChild(el('span', { class: 'system' }, `[deleted] ${msg.username}: ${msg.text}`));
-    chatEl.appendChild(div);
-    trimAndScroll();
+    // Mark the original line and do not echo the deleted text in the notice.
+    const who = (msg.targetUsername || msg.username || '').toLowerCase();
+    if (gen === renderGen && msg.id) markMessages(d => d.msgId === msg.id);
+    div.appendChild(el('span', { class: 'system' }, `[deleted] message from ${msg.targetUsername || msg.username || who}`));
+    commit(div);
     return;
   }
   if (type === 'clearchat') {
+    if (gen === renderGen) markMessages(() => true);
     div.appendChild(el('span', { class: 'system' }, '--- Chat cleared ---'));
-    chatEl.appendChild(div);
-    trimAndScroll();
+    commit(div);
     return;
   }
 
   // Regular chat message
+  if (msg.id) div.dataset.msgId = msg.id;
+  div.dataset.user = (msg.username || '').toLowerCase();
+  div.dataset.platform = msg.platform || 'twitch';
   if (msg.isSharedChat && msg.sourceChannel) {
     div.appendChild(el('span', { class: 'shared-tag' }, `[${msg.sourceChannel}]`));
   }
@@ -519,8 +604,7 @@ async function renderMessage(msg) {
     div.appendChild(el('span', { class: 'bits' }, ` [${msg.bits} bits]`));
   }
 
-  chatEl.appendChild(div);
-  trimAndScroll();
+  commit(div);
 }
 
 // Sticky follow state: we don't re-measure scroll geometry on every
@@ -550,7 +634,12 @@ function trimAndScroll() {
 
 // === Modal ===
 
+// Incremented per card open so a slow GetUserInfo reply for a previous user
+// can't render into the card of the user opened after it.
+let userCardReq = 0;
+
 async function openUserModal(u, msgId) {
+  const req = ++userCardReq;
   selectedUser = { ...u, msgId: msgId || '' };
   modalUserEl.textContent = u.displayName || u.username;
   modalInfoEl.textContent = 'Loading user info...';
@@ -561,8 +650,10 @@ async function openUserModal(u, msgId) {
   if (u.userId) {
     try {
       const info = await window.go.main.App.GetUserInfo(u.userId);
+      if (req !== userCardReq || !selectedUser) return;
       if (info) renderModalInfo(info);
     } catch (e) {
+      if (req !== userCardReq || !selectedUser) return;
       modalInfoEl.textContent = 'Failed to load info: ' + e;
     }
   } else {
@@ -624,19 +715,21 @@ function closeModal() {
 modalCloseEl.onclick = closeModal;
 modalBgEl.onclick = (e) => { if (e.target === modalBgEl) closeModal(); };
 
-document.querySelectorAll('.btn').forEach(btn => {
+// Only the user card's action buttons (data-action inside the modal); a bare
+// '.btn' selector also grabbed settings Login/Save and fired ModAction(undefined).
+document.querySelectorAll('#modal .btn[data-action]').forEach(btn => {
   btn.onclick = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser || !btn.dataset.action) return;
     const action = btn.dataset.action;
     try {
       const result = await window.go.main.App.ModAction(action, selectedUser.userId, selectedUser.msgId || '');
       if (result) {
-        await renderMessage({
+        await enqueueRender({
           type: 'system', platform: 'twitch', timestamp: Date.now(),
           text: `Mod action error: ${result}`
         });
       } else {
-        await renderMessage({
+        await enqueueRender({
           type: 'system', platform: 'twitch', timestamp: Date.now(),
           text: `>>> ${action} on ${selectedUser.displayName || selectedUser.username}`
         });
@@ -708,48 +801,54 @@ function mentionCandidates(prefix) {
 }
 
 inputEl.addEventListener('keydown', async (e) => {
-  if (e.key === 'Tab' && inputEl.value.startsWith('/') && !inputEl.value.includes(' ')) {
+  // A cycle is "active" while the input still holds exactly what the last Tab
+  // wrote. The inserted text ends in a space, so without this check the second
+  // Tab no longer looked like a "/cmd" or "@mention" prefix and focus left the
+  // input instead of cycling.
+  const slashActive = !!slashTabState && inputEl.value === slashTabState.applied;
+  const mentionActive = !!mentionTabState && inputEl.value === mentionTabState.applied;
+
+  if (e.key === 'Tab' && (slashActive || (inputEl.value.startsWith('/') && !inputEl.value.includes(' ')))) {
     e.preventDefault();
-    // Re-evaluate matches whenever the typed prefix changes, but keep
-    // the cycle position when the user just hits Tab again with the
-    // same prefix (so /v Tab Tab Tab walks /vip → /unvip → ...).
-    const typed = inputEl.value.toLowerCase();
-    if (!slashTabState || slashTabState.prefix !== typed) {
+    if (slashActive) {
+      slashTabState.index = (slashTabState.index + (e.shiftKey ? -1 : 1) + slashTabState.matches.length) % slashTabState.matches.length;
+    } else {
+      const typed = inputEl.value.toLowerCase();
       const stripped = typed.slice(1); // drop the leading "/"
       const matches = SLASH_COMMANDS.filter(c => c.slice(1).startsWith(stripped));
       if (matches.length === 0) return;
-      slashTabState = { prefix: typed, matches, index: 0 };
-    } else {
-      slashTabState.index = (slashTabState.index + (e.shiftKey ? -1 : 1) + slashTabState.matches.length) % slashTabState.matches.length;
+      slashTabState = { matches, index: 0, applied: '' };
     }
     inputEl.value = slashTabState.matches[slashTabState.index] + ' ';
+    slashTabState.applied = inputEl.value;
     return;
   }
   // @-mention Tab completion: like slash but for usernames in the
   // current user list. Cursor position matters — a Tab in the middle
   // of "hey @mi | rest" still cycles the @mi token in place.
-  if (e.key === 'Tab') {
-    const tok = currentMentionToken();
-    if (tok) {
-      e.preventDefault();
-      const key = tok.start + ':' + tok.prefix;
-      if (!mentionTabState || mentionTabState.key !== key) {
-        const matches = mentionCandidates(tok.prefix);
-        if (matches.length === 0) return;
-        mentionTabState = { key, start: tok.start, matches, index: 0 };
-      } else {
-        mentionTabState.index = (mentionTabState.index + (e.shiftKey ? -1 : 1) + mentionTabState.matches.length) % mentionTabState.matches.length;
-      }
-      const pick = mentionTabState.matches[mentionTabState.index];
-      const before = inputEl.value.slice(0, mentionTabState.start);
-      const caret = inputEl.selectionStart || 0;
-      const after = inputEl.value.slice(caret);
-      const insert = '@' + pick + ' ';
-      inputEl.value = before + insert + after;
-      const newCaret = before.length + insert.length;
-      inputEl.setSelectionRange(newCaret, newCaret);
-      return;
+  if (e.key === 'Tab' && (mentionActive || currentMentionToken())) {
+    e.preventDefault();
+    if (mentionActive) {
+      mentionTabState.index = (mentionTabState.index + (e.shiftKey ? -1 : 1) + mentionTabState.matches.length) % mentionTabState.matches.length;
+    } else {
+      const tok = currentMentionToken();
+      const matches = mentionCandidates(tok.prefix);
+      if (matches.length === 0) return;
+      mentionTabState = { start: tok.start, matches, index: 0, applied: '', insertLen: 0, caret: 0 };
     }
+    const st = mentionTabState;
+    const pick = st.matches[st.index];
+    const before = inputEl.value.slice(0, st.start);
+    // First Tab replaces "@prefix" up to the caret; later Tabs replace the
+    // previously inserted "@name " so the rest of the line is preserved.
+    const after = inputEl.value.slice(st.insertLen ? st.start + st.insertLen : (inputEl.selectionStart || 0));
+    const insert = '@' + pick + ' ';
+    inputEl.value = before + insert + after;
+    st.insertLen = insert.length;
+    st.applied = inputEl.value;
+    const newCaret = before.length + insert.length;
+    inputEl.setSelectionRange(newCaret, newCaret);
+    return;
   }
   // Anything other than Tab resets both cycle states so the next Tab
   // starts fresh from whatever prefix the caret is on.
@@ -758,10 +857,34 @@ inputEl.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
     const text = inputEl.value.trim();
     if (text) {
+      const target = SEND_TARGETS[sendTarget];
+      // The backend can only send to Twitch (no YouTube send binding in
+      // app.go). Don't silently post to Twitch while "YT" is selected: keep
+      // the text and say so.
+      if (target === 'YouTube') {
+        enqueueRender({
+          type: 'system', platform: 'youtube', timestamp: Date.now(),
+          text: "Sending to YouTube isn't supported in StreamerChat yet",
+        });
+        return;
+      }
+      // Once per session — repeating it on every message would bury chat.
+      if (target === 'Both' && !ytBothNoticeShown) {
+        ytBothNoticeShown = true;
+        enqueueRender({
+          type: 'system', platform: 'youtube', timestamp: Date.now(),
+          text: "Sending to YouTube isn't supported in StreamerChat yet; sent to Twitch only",
+        });
+      }
+      // Clear before awaiting so a fast second Enter can't send the same
+      // text twice.
+      inputEl.value = '';
       try {
         await window.go.main.App.SendMessage(text);
-      } catch (err) { console.error(err); }
-      inputEl.value = '';
+      } catch (err) {
+        console.error(err);
+        if (!inputEl.value) inputEl.value = text; // give it back to retry
+      }
     }
   } else if (e.key === 'Escape') {
     if (!modalBgEl.classList.contains('hidden')) {
@@ -789,6 +912,10 @@ function setupEvents() {
   }
 
   window.runtime.EventsOn('ready', (data) => {
+    // No dedicated "emotes/badges loaded" event exists; "ready" is the
+    // closest signal, so forget misses recorded before it.
+    emoteMiss.clear();
+    badgeMiss.clear();
     ytEnabled = !!data.youtube;
     if (ytEnabled) ytPillEl.classList.remove('hidden');
     if (data.username) setLoggedInUI(true, data.username);
@@ -807,6 +934,10 @@ function setupEvents() {
     activityLog.push(ev);
     if (activityLog.length > ACTIVITY_CAP) activityLog.splice(0, activityLog.length - ACTIVITY_CAP);
     appendActivityRow(ev);
+    // Keep the DOM in step with the capped log; rows used to pile up forever.
+    while (activityListEl.childElementCount > ACTIVITY_CAP) {
+      activityListEl.removeChild(activityListEl.firstChild);
+    }
     activityTitleEl.textContent = `Activity (${activityLog.length})`;
     // Auto-scroll only if user is already near the bottom, so
     // scrolling up to inspect an older event doesn't get yanked.
@@ -817,7 +948,7 @@ function setupEvents() {
   });
 
   window.runtime.EventsOn('chat', (msg) => {
-    renderMessage(msg);
+    enqueueRender(msg);
     // Stream Together: messages from a co-hosted channel show up in our
     // stream with isSharedChat=true. Render them in chat (users want to
     // see them), but DON'T add their author to our sidebar — that
@@ -903,14 +1034,14 @@ function setupEvents() {
         applyRoles(u);
         users.set(key, u);
         if (showJoinPart) {
-          renderMessage({ type: 'join', platform: jp.platform, username: jp.username, timestamp: Date.now() });
+          enqueueRender({ type: 'join', platform: jp.platform, username: jp.username, timestamp: Date.now() });
         }
         refreshUserList();
       }
     } else {
       if (users.delete(key)) {
         if (showJoinPart) {
-          renderMessage({ type: 'part', platform: jp.platform, username: jp.username, timestamp: Date.now() });
+          enqueueRender({ type: 'part', platform: jp.platform, username: jp.username, timestamp: Date.now() });
         }
         refreshUserList();
       }
@@ -936,9 +1067,22 @@ function setupEvents() {
 
   window.runtime.EventsOn('roles', (data) => {
     if (data.broadcaster) roles.broadcaster = data.broadcaster;
-    if (Array.isArray(data.mods)) roles.mods = new Set(data.mods.map(m => m.toLowerCase()));
-    if (Array.isArray(data.vips)) roles.vips = new Set(data.vips.map(v => v.toLowerCase()));
-    if (Array.isArray(data.bots)) roles.bots = new Set(data.bots.map(b => b.toLowerCase()));
+    // The backend omits mods/vips/bots on a Helix error (keep the previous
+    // list) and sends null for an empty list (a Go nil slice) — that must
+    // clear the list, otherwise removing the last mod/VIP never shows.
+    const toSet = (v) => new Set((Array.isArray(v) ? v : []).map(x => String(x).toLowerCase()));
+    const prev = { mods: roles.mods, vips: roles.vips, bots: roles.bots };
+    if ('mods' in data) roles.mods = toSet(data.mods);
+    if ('vips' in data) roles.vips = toSet(data.vips);
+    if ('bots' in data) roles.bots = toSet(data.bots);
+    // applyRoles only ever sets flags, so clear the ones whose name just left
+    // a list (flags learned from chat tags for other users stay untouched).
+    for (const u of users.values()) {
+      const name = u.username.toLowerCase();
+      if (prev.mods.has(name) && !roles.mods.has(name)) u.isMod = false;
+      if (prev.vips.has(name) && !roles.vips.has(name)) u.isVIP = false;
+      if (prev.bots.has(name) && !roles.bots.has(name)) u.isBot = false;
+    }
     // Apply to all users
     for (const u of users.values()) applyRoles(u);
     refreshUserList();
@@ -1367,7 +1511,16 @@ function setupProfileSwitchedListener() {
     return;
   }
   window.runtime.EventsOn('profileSwitched', () => {
+    // Drop renders still pending for the old profile, and everything that
+    // was resolved against the old profile's channel/roles/emotes.
+    renderGen++;
     chatEl.replaceChildren();
+    roles = { mods: new Set(), vips: new Set(), bots: new Set(), broadcaster: '' };
+    badgeCache.clear();
+    badgeMiss.clear();
+    emoteCache.clear();
+    emoteMiss.clear();
+    for (const k of Object.keys(roleBadgeUrls)) delete roleBadgeUrls[k];
     users.clear();
     userMessages.clear();
     activityLog.length = 0;
@@ -1495,6 +1648,15 @@ const chatSoundVolumeInput = document.getElementById('chatSoundVolume');
 const chatSoundVolumeLabel = document.getElementById('chatSoundVolumeLabel');
 const chatSoundTestBtn = document.getElementById('chatSoundTestBtn');
 
+// The label's text is runtime state, so it has no data-i18n (applyI18n would
+// overwrite it on a language change); it is re-rendered via onLocaleChange.
+let chatSoundFile = '';
+function renderChatSoundFile() {
+  if (chatSoundFileLabel) chatSoundFileLabel.textContent = chatSoundFile || i18n.t('builtInBeepLabel');
+}
+i18n.onLocaleChange(renderChatSoundFile);
+renderChatSoundFile();
+
 async function loadChatSoundConfig() {
   try {
     const c = await window.go.main.App.GetChatSoundConfig();
@@ -1503,7 +1665,8 @@ async function loadChatSoundConfig() {
     if (chatSoundCheckbox) chatSoundCheckbox.checked = chatSoundEnabled;
     if (chatSoundVolumeInput) chatSoundVolumeInput.value = String(Math.round(chatSoundVolume * 100));
     if (chatSoundVolumeLabel) chatSoundVolumeLabel.textContent = String(Math.round(chatSoundVolume * 100));
-    if (chatSoundFileLabel) chatSoundFileLabel.textContent = c.file || '(built-in beep)';
+    chatSoundFile = c.file || '';
+    renderChatSoundFile();
     chatSoundDataUrl = c.file ? await window.go.main.App.LoadChatSoundData() : '';
     rebuildChatSoundAudio();
   } catch (e) {}
@@ -1521,7 +1684,8 @@ if (chatSoundPickBtn) {
     try {
       const path = await window.go.main.App.PickChatSoundFile();
       if (path) {
-        chatSoundFileLabel.textContent = path;
+        chatSoundFile = path;
+        renderChatSoundFile();
         chatSoundDataUrl = await window.go.main.App.LoadChatSoundData();
         rebuildChatSoundAudio();
       }
@@ -1533,7 +1697,8 @@ if (chatSoundClearBtn) {
     try { await window.go.main.App.ClearChatSoundFile(); } catch (e) {}
     chatSoundDataUrl = '';
     chatSoundAudio = null;
-    chatSoundFileLabel.textContent = '(built-in beep)';
+    chatSoundFile = '';
+    renderChatSoundFile();
   });
 }
 if (chatSoundVolumeInput) {
@@ -1576,6 +1741,20 @@ const ytSaveBtn = document.getElementById('ytSaveBtn');
 const ytStatus = document.getElementById('ytStatus');
 const ytEnabledCheckbox = document.getElementById('ytEnabledCheckbox');
 const ytHandleInput = document.getElementById('ytHandleInput');
+// Runtime status text (no data-i18n, same reason as the sound label).
+let ytStatusState = { kind: 'hint' };
+function renderYtStatus() {
+  if (!ytStatus) return;
+  const st = ytStatusState;
+  let color = '';
+  if (st.kind === 'hint') ytStatus.textContent = i18n.t('ytStatus');
+  else if (st.kind === 'saved') { ytStatus.textContent = i18n.t('ytSaved', { handle: st.handle }); color = '#7fdc7f'; }
+  else if (st.kind === 'disabled') { ytStatus.textContent = i18n.t('ytDisabled'); color = '#7fdc7f'; }
+  else { ytStatus.textContent = i18n.t('ytFailed', { err: st.err }); color = '#ff6b6b'; }
+  ytStatus.style.color = color;
+}
+i18n.onLocaleChange(renderYtStatus);
+renderYtStatus();
 if (ytSaveBtn) {
   ytSaveBtn.addEventListener('click', async () => {
     const enabled = !!ytEnabledCheckbox.checked;
@@ -1583,11 +1762,11 @@ if (ytSaveBtn) {
     try {
       const err = await window.go.main.App.SetYouTubeConfig(enabled, handle);
       if (err) {
-        ytStatus.textContent = 'Failed: ' + err;
-        ytStatus.style.color = '#ff6b6b';
+        ytStatusState = { kind: 'failed', err: String(err) };
+        renderYtStatus();
       } else {
-        ytStatus.textContent = enabled ? ('Saved. Polling ' + (handle || '') + '…') : 'Disabled.';
-        ytStatus.style.color = '#7fdc7f';
+        ytStatusState = enabled ? { kind: 'saved', handle: handle || '' } : { kind: 'disabled' };
+        renderYtStatus();
         // Re-read so we get the normalized handle ("@" prepended etc.)
         try {
           const yt = await window.go.main.App.GetYouTubeConfig();
@@ -1595,8 +1774,8 @@ if (ytSaveBtn) {
         } catch (e) {}
       }
     } catch (e) {
-      ytStatus.textContent = 'Failed: ' + String(e);
-      ytStatus.style.color = '#ff6b6b';
+      ytStatusState = { kind: 'failed', err: String(e) };
+      renderYtStatus();
     }
   });
 }
@@ -1609,18 +1788,29 @@ const authHelp = document.getElementById('authHelp');
 const authUrl = document.getElementById('authUrl');
 const authCode = document.getElementById('authCode');
 
+// authInfo has no data-i18n: its text depends on login state, so it is
+// rendered from authState and re-rendered on language change.
+let authState = { loggedIn: false, username: '' };
+function renderAuthInfo() {
+  if (!authInfo) return;
+  authInfo.textContent = authState.loggedIn
+    ? i18n.t('loggedInAs', { name: authState.username || '?' })
+    : i18n.t('notLoggedIn');
+}
 function setLoggedInUI(loggedIn, username) {
   if (!authInfo) return;
+  authState = { loggedIn: !!loggedIn, username: username || '' };
+  renderAuthInfo();
   if (loggedIn) {
-    authInfo.textContent = 'Logged in as @' + (username || '?');
     loginBtn.classList.add('hidden');
     logoutBtn.classList.remove('hidden');
   } else {
-    authInfo.textContent = 'Not logged in';
     loginBtn.classList.remove('hidden');
     logoutBtn.classList.add('hidden');
   }
 }
+i18n.onLocaleChange(renderAuthInfo);
+renderAuthInfo();
 
 if (loginBtn) {
   loginBtn.addEventListener('click', async () => {

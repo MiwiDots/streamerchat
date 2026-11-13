@@ -165,30 +165,44 @@ function el(tag, attrs, ...children) {
 const sevenTVByUser = new Map();
 
 // === Channel tabs ===
+// renderMessage is async (Go lookups per uncached word / badge), so messages
+// must be rendered through a per-channel promise chain or they would append
+// out of arrival order. channel -> tail of the chain.
+const renderQueues = new Map();
+function enqueueRender(msg) {
+  const prev = renderQueues.get(msg.channel) || Promise.resolve();
+  const next = prev.then(() => renderMessage(msg)).catch((e) => console.error('render failed', e));
+  renderQueues.set(msg.channel, next);
+  return next;
+}
+
 async function loadHistoryForChannel(channel) {
   console.log('[history] loading for', channel);
+  const state = channels.get(channel);
+  // Gate the channel's queue synchronously: live messages arriving while
+  // history is still loading wait behind it, so history renders first and
+  // live messages land below the "new messages" separator.
+  let release;
+  renderQueues.set(channel, new Promise((resolve) => { release = resolve; }));
   try {
     const history = await window.go.main.App.GetHistory(channel, 200);
     console.log('[history] got', history ? history.length : 0, 'messages for', channel);
-    if (history && history.length > 0) {
-      // Render historical separator
-      const state = channels.get(channel);
-      if (state) {
-        const sep = el('div', { class: 'msg history-sep' }, '── ' + i18n.t('earlierMessages') + ' ──');
-        state.chatViewEl.appendChild(sep);
-      }
+    // Tab may have been closed (or closed and re-added) while loading.
+    if (history && history.length > 0 && state && channels.get(channel) === state) {
+      state.chatViewEl.appendChild(el('div', { class: 'msg history-sep' }, '── ' + i18n.t('earlierMessages') + ' ──'));
       for (const msg of history) {
-        await renderMessage(msg);
+        if (channels.get(channel) !== state) break;
+        try { await renderMessage(msg); } catch (e) { console.error('history render failed', e); }
       }
-      const state2 = channels.get(channel);
-      if (state2) {
-        const sep = el('div', { class: 'msg history-sep' }, '── ' + i18n.t('newMessages') + ' ──');
-        state2.chatViewEl.appendChild(sep);
-        state2.chatViewEl.scrollTop = state2.chatViewEl.scrollHeight;
+      if (channels.get(channel) === state) {
+        state.chatViewEl.appendChild(el('div', { class: 'msg history-sep' }, '── ' + i18n.t('newMessages') + ' ──'));
+        state.chatViewEl.scrollTop = state.chatViewEl.scrollHeight;
       }
     }
   } catch (e) {
     console.error('history load failed', e);
+  } finally {
+    release();
   }
 }
 
@@ -316,6 +330,7 @@ function removeChannelTab(channel) {
   state.chatViewEl.remove();
   channels.delete(channel);
   liveStatus.delete(channel);
+  renderQueues.delete(channel);
 
   if (activeChannel === channel) {
     activeChannel = null;
@@ -396,6 +411,10 @@ async function refreshStreamMeta() {
     const info = await window.go.main.App.GetStreamInfo(ch);
     if (activeChannel === ch) applyStreamMeta(ch, info);
   } catch (e) { streamMetaEl.classList.add('hidden'); }
+  // A newer call (fast tab switching) may have superseded us during the await.
+  if (activeChannel !== ch) return;
+  // Overlapping calls for the same channel: drop the other's interval first.
+  if (streamMetaTimer) { clearInterval(streamMetaTimer); streamMetaTimer = null; }
   // Tick uptime locally every 30s without re-hitting Helix; full refresh
   // every 60s in case the title/game/viewer count changes.
   streamMetaTimer = setInterval(async () => {
@@ -455,15 +474,31 @@ function applyOnlyLiveFilter() {
 }
 
 // === Emote lookup ===
+const EMOTE_CACHE_MAX = 4000;
+let emoteEpoch = 0; // bumped whenever negative entries are flushed
 async function lookupEmote(name) {
   if (emoteCache.has(name)) return emoteCache.get(name);
+  const epoch = emoteEpoch;
   let result = null;
   try {
     const info = await window.go.main.App.LookupEmote(name);
     if (info && info.url) result = info;
-  } catch (e) {}
+  } catch (e) { return null; } // don't cache transient failures
+  // A lookup that started before emotes finished loading may carry a stale
+  // "not an emote"; don't cache it if the cache was flushed meanwhile.
+  if (epoch !== emoteEpoch && !result) return result;
   emoteCache.set(name, result);
+  // Bounded: evict oldest (Map keeps insertion order).
+  while (emoteCache.size > EMOTE_CACHE_MAX) {
+    emoteCache.delete(emoteCache.keys().next().value);
+  }
   return result;
+}
+function clearNegativeEmoteCache() {
+  emoteEpoch++;
+  for (const [k, v] of Array.from(emoteCache.entries())) {
+    if (!v) emoteCache.delete(k);
+  }
 }
 
 // Badge URL lookup with cache
@@ -533,8 +568,12 @@ async function renderText(text, nativeEmotes) {
 function isMention(text) {
   if (!text) return false;
   const lower = text.toLowerCase();
-  if (myUsername && lower.includes('@' + myUsername.toLowerCase())) return true;
-  if (myUsername && lower.includes(myUsername.toLowerCase())) return true;
+  if (myUsername) {
+    // Word-boundary match (an optional leading @ is not a word char, so it
+    // is covered too); a bare substring made short names match everything.
+    const esc = myUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp('(^|[^a-z0-9_])' + esc + '($|[^a-z0-9_])', 'i').test(text)) return true;
+  }
   for (const h of highlights) {
     if (h && lower.includes(h)) return true;
   }
@@ -618,25 +657,36 @@ async function renderMessage(msg) {
     div.appendChild(el('span', { class: 'super' }, '★'));
     div.appendChild(el('span', { class: 'system' }, ' ' + (msg.text || '')));
     appendAndScroll(state, div);
-    markUnread(msg.channel, false);
+    if (!msg.historical) markUnread(msg.channel, false);
     return;
   }
   if (type === 'ban' || type === 'timeout') {
+    markMessagesDeleted(state, msg.targetUsername, null);
     div.appendChild(el('span', { class: 'super', style: 'color:#ff4444' }, '⛔'));
     div.appendChild(el('span', { class: 'system' }, ' ' + (msg.text || '')));
     appendAndScroll(state, div);
     return;
   }
   if (type === 'deleted') {
-    div.appendChild(el('span', { class: 'system' }, `${i18n.t('deletedPrefix')} ${msg.username}: ${msg.text}`));
+    // Backend puts the deleted message's id in msg.id and the author's login
+    // in targetUsername. The notice deliberately omits the deleted text.
+    markMessagesDeleted(state, null, msg.id);
+    const who = msg.targetUsername || msg.username || '';
+    div.appendChild(el('span', { class: 'system' }, `${i18n.t('deletedPrefix')} ${who}`.trim()));
     appendAndScroll(state, div);
     return;
   }
   if (type === 'clearchat') {
+    markMessagesDeleted(state, null, null, true);
     div.appendChild(el('span', { class: 'system' }, '--- ' + i18n.t('chatCleared') + ' ---'));
     appendAndScroll(state, div);
     return;
   }
+
+  // Tag the row so later delete / ban / clear events can find it. Scoped to
+  // this channel's own container, so other channels are never touched.
+  if (msg.id) div.dataset.msgId = String(msg.id);
+  div.dataset.user = (msg.username || '').toLowerCase();
 
   // Render real Twitch badge images if available, fall back to text
   if (msg.badges && msg.badges.length > 0) {
@@ -679,11 +729,32 @@ async function renderMessage(msg) {
   const mention = isMention(msg.text);
   if (mention) {
     div.classList.add('highlight');
-    if (soundOnMention !== 'none' && msg.channel !== activeChannel) playBeep();
+    // History replay must not beep or count as unread.
+    if (!msg.historical && soundOnMention !== 'none' && msg.channel !== activeChannel) playBeep();
   }
 
   appendAndScroll(state, div);
-  markUnread(msg.channel, mention);
+  if (!msg.historical) markUnread(msg.channel, mention);
+}
+
+// Replaces matching chat rows in ONE channel with a muted placeholder.
+// Match by message id, by lowercase author, or all rows (clear chat).
+function markMessagesDeleted(state, username, msgId, all) {
+  const user = (username || '').toLowerCase();
+  if (!all && !user && !msgId) return;
+  // Compare via dataset instead of building selectors from untrusted ids.
+  for (const row of state.chatViewEl.querySelectorAll('.msg[data-user]')) {
+    if (row.classList.contains('deleted')) continue;
+    if (!all) {
+      const hit = msgId ? row.dataset.msgId === String(msgId) : row.dataset.user === user;
+      if (!hit) continue;
+    }
+    const ts = row.querySelector('.ts');
+    row.classList.add('deleted');
+    row.classList.remove('highlight');
+    const note = el('span', { class: 'deleted-text' }, i18n.t('messageDeleted'));
+    if (ts) row.replaceChildren(ts, note); else row.replaceChildren(note);
+  }
 }
 
 // Batch join/part events so we don't spam the chat with one line per user.
@@ -1146,17 +1217,32 @@ function closeChatterList() { chatterListBg.classList.add('hidden'); }
 // modal feels instant. Refreshed on every open.
 const helixChattersCache = new Map();
 
+// Header, search input and note are created once; only the list body is
+// re-rendered, so typing in the search box never loses focus.
+const clTitleEl = el('span', null, '');
+const clCloseEl = el('span', { class: 'modal-close' }, '✕');
+clCloseEl.addEventListener('click', closeChatterList);
+const clSearchEl = el('input', { class: 'cl-search', type: 'text', placeholder: i18n.t('chatterListSearch') });
+const clNoteEl = el('div', { class: 'cl-note hidden' }, '');
+const clBodyEl = el('div', { class: 'cl-body' });
+let chatterListOpts = {};
+clSearchEl.addEventListener('input', () => renderChatterList(chatterListOpts));
+chatterListModal.append(el('div', { class: 'modal-header' }, clTitleEl, clCloseEl), clSearchEl, clNoteEl, clBodyEl);
+
 async function openChatterList() {
   if (!activeChannel) return;
   const ch = activeChannel;
   chatterListBg.classList.remove('hidden');
-  renderChatterList('', { loading: true });
+  clSearchEl.value = '';
+  clSearchEl.placeholder = i18n.t('chatterListSearch');
+  renderChatterList({ loading: true });
+  clSearchEl.focus();
   // Fire Helix call in the background; render again when it returns. If we
   // already have a cached list show it immediately, then refresh on top.
   // helixChatters is the richer [{login, isBot}, …] shape from v0.2.25+.
   let helixChatters = helixChattersCache.get(ch) || null;
   let helixSource = 'unknown';
-  if (helixChatters) renderChatterList('', { helixChatters, helixSource: 'helix' });
+  if (helixChatters) renderChatterList({ helixChatters, helixSource: 'helix' });
   try {
     const res = await window.go.main.App.GetChannelChatters(ch);
     helixSource = (res && res.source) || 'none';
@@ -1168,35 +1254,26 @@ async function openChatterList() {
     if (helixChatters && helixChatters.length > 0) helixChattersCache.set(ch, helixChatters);
   } catch (e) { helixSource = 'error'; }
   if (activeChannel === ch && !chatterListBg.classList.contains('hidden')) {
-    renderChatterList('', { helixChatters, helixSource });
+    // Keeps whatever the user has typed in the search box meanwhile.
+    renderChatterList({ helixChatters, helixSource });
   }
 }
 
-function renderChatterList(filterText, opts) {
+function renderChatterList(opts) {
   opts = opts || {};
+  chatterListOpts = opts;
+  const filterText = clSearchEl.value;
   const state = channels.get(activeChannel);
-  chatterListModal.replaceChildren();
-  const header = el('div', { class: 'modal-header' },
-    el('span', null, i18n.t('chatterListTitle', { channel: activeChannel })),
-    el('span', { class: 'modal-close' }, '✕'));
-  header.querySelector('.modal-close').addEventListener('click', closeChatterList);
-  chatterListModal.appendChild(header);
-
-  const search = el('input', { class: 'cl-search', type: 'text', placeholder: i18n.t('chatterListSearch') });
-  search.value = filterText || '';
-  search.addEventListener('input', () => renderChatterList(search.value, opts));
-  chatterListModal.appendChild(search);
+  clTitleEl.textContent = i18n.t('chatterListTitle', { channel: activeChannel });
+  const body = clBodyEl;
+  body.replaceChildren();
 
   // Surface the data source so the user understands why "lurkers" may be
   // missing. Twitch's /chat/chatters endpoint only returns the full list
   // when the caller is broadcaster or moderator of the channel.
-  if (opts.helixSource && opts.helixSource !== 'helix' && !opts.loading) {
-    const note = el('div', { class: 'cl-note' }, i18n.t('chatterListRestricted'));
-    chatterListModal.appendChild(note);
-  }
-
-  const body = el('div', { class: 'cl-body' });
-  chatterListModal.appendChild(body);
+  const showNote = !!(opts.helixSource && opts.helixSource !== 'helix' && !opts.loading);
+  clNoteEl.classList.toggle('hidden', !showNote);
+  clNoteEl.textContent = showNote ? i18n.t('chatterListRestricted') : '';
 
   if (opts.loading && !opts.helixChatters) {
     body.appendChild(el('div', { class: 'cl-empty' }, i18n.t('chatterListLoading')));
@@ -1309,8 +1386,10 @@ document.body.appendChild(userCardBg);
 
 function closeUserCard() { userCardBg.classList.add('hidden'); }
 
+let userCardRequestSeq = 0;
 async function openUserCard(channel, username, userId) {
   if (!username) return;
+  const reqId = ++userCardRequestSeq;
   userCardEl.replaceChildren(el('div', { class: 'user-card-loading' }, i18n.t('waiting') || 'Loading…'));
   userCardBg.classList.remove('hidden');
 
@@ -1318,6 +1397,8 @@ async function openUserCard(channel, username, userId) {
   try {
     data = await window.go.main.App.GetUserCard(channel, userId || username);
   } catch (e) { data = { error: String(e) }; }
+  // A newer card was opened while this response was in flight: drop it.
+  if (reqId !== userCardRequestSeq) return;
 
   const state = channels.get(channel);
   const local = state && state.userMessages.get(username);
@@ -1500,8 +1581,10 @@ msgInput.addEventListener('keydown', (e) => {
 });
 
 msgInput.addEventListener('keydown', async (e) => {
-  // The mention handler above intercepts Enter when the popup is open.
-  if (mentionState) return;
+  // The mention handler above intercepts Enter when the popup is open. It
+  // clears mentionState while handling the event, so check defaultPrevented
+  // too or the same Enter would accept the mention AND send the message.
+  if (mentionState || e.defaultPrevented) return;
   if (e.key === 'Enter' && activeChannel && msgInput.value.trim()) {
     const text = msgInput.value.trim();
     const meta = parseChannelKey(activeChannel);
@@ -1601,7 +1684,7 @@ function setupEvents() {
 
   window.runtime.EventsOn('chat', (msg) => {
     if (!msg.channel || !channels.has(msg.channel)) return;
-    renderMessage(msg);
+    enqueueRender(msg);
   });
 
   window.runtime.EventsOn('joinPart', (data) => {
@@ -1616,6 +1699,9 @@ function setupEvents() {
   window.runtime.EventsOn('badgesReady', (data) => {
     const ch = data && data.channel;
     if (!ch) return;
+    // Channel emotes load right before this event; earlier "not an emote"
+    // results for words like channel emotes are now stale.
+    clearNegativeEmoteCache();
     const prefix = ch + '/';
     for (const key of Array.from(badgeCache.keys())) {
       if (key.startsWith(prefix)) badgeCache.delete(key);

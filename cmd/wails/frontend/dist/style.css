@@ -584,3 +584,12 @@ body.no-ts .ts { display: none; }
 .btn:hover { background: #9146ff; }
 .btn-danger { background: #8b0000; }
 .btn-danger:hover { background: #ff0000; }
+
+/* Moderated (deleted / banned / timed-out / cleared) chat lines */
+.msg.deleted {
+  opacity: 0.55;
+}
+.msg.deleted .deleted-text {
+  font-style: italic;
+  color: #777;
+}

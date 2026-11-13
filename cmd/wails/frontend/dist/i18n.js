@@ -18,7 +18,8 @@ const STRINGS = {
     showJoinPart: 'Show join/part messages (lurkers entering/leaving)',
     accounts: 'Accounts',
     accountsHint: 'Each profile holds its own Twitch login + YouTube channel. Switch from the dropdown in the titlebar.',
-    // (usersTab / activityTab already added above)
+    usersTab: 'Users',
+    activityTab: 'Activity',
     addAccount: 'Add Account',
     autostart: 'Start StreamerChat automatically with Windows',
     fontSize: 'Chat font size',
@@ -30,12 +31,14 @@ const STRINGS = {
     pickWav: 'Pick .wav…',
     builtInBeep: 'Use built-in beep',
     none: '(none)',
+    builtInBeepLabel: '(built-in beep)',
     volume: 'Volume',
     test: 'Test',
 
     // Twitch pane
     twitchLogin: 'Twitch Login',
     notLoggedIn: 'Not logged in',
+    loggedInAs: 'Logged in as @{name}',
     login: 'Login',
     logout: 'Logout',
     authStep1: '1. Go to',
@@ -46,6 +49,9 @@ const STRINGS = {
     ytEnable: 'Enable YouTube live-chat overlay',
     ytStatus: 'Read-only, no login needed. App polls /live every 30s and attaches automatically when you go live.',
     save: 'Save',
+    ytSaved: 'Saved. Polling {handle}…',
+    ytDisabled: 'Disabled.',
+    ytFailed: 'Failed: {err}',
 
     // Updates pane
     updateChannel: 'Update channel:',
@@ -89,11 +95,13 @@ const STRINGS = {
     pickWav: '.wav auswählen…',
     builtInBeep: 'Eingebauten Ton nutzen',
     none: '(keine)',
+    builtInBeepLabel: '(eingebauter Ton)',
     volume: 'Lautstärke',
     test: 'Testen',
 
     twitchLogin: 'Twitch-Login',
     notLoggedIn: 'Nicht eingeloggt',
+    loggedInAs: 'Eingeloggt als @{name}',
     login: 'Einloggen',
     logout: 'Ausloggen',
     authStep1: '1. Öffne',
@@ -103,6 +111,9 @@ const STRINGS = {
     ytEnable: 'YouTube-Live-Chat-Overlay aktivieren',
     ytStatus: 'Nur lesen, kein Login nötig. App pollt /live alle 30s und verbindet sich automatisch sobald du live gehst.',
     save: 'Speichern',
+    ytSaved: 'Gespeichert. Pollt {handle}…',
+    ytDisabled: 'Deaktiviert.',
+    ytFailed: 'Fehlgeschlagen: {err}',
 
     updateChannel: 'Update-Kanal:',
     checkForUpdates: 'Nach Updates suchen',
@@ -142,11 +153,20 @@ function applyI18n(root) {
   });
 }
 
+// Elements whose text is set at runtime (login status, sound file label,
+// YouTube save status) carry no data-i18n; app.js registers a callback here
+// to re-render them after a language change.
+const localeListeners = [];
+function onLocaleChange(fn) { localeListeners.push(fn); }
+
 function setLocale(loc) {
   if (loc !== 'de' && loc !== 'en') loc = 'en';
   currentLocale = loc;
   document.documentElement.lang = loc;
   applyI18n();
+  for (const fn of localeListeners) {
+    try { fn(loc); } catch (e) { console.error('locale listener', e); }
+  }
 }
 
-window.i18n = { t, applyI18n, setLocale, get locale() { return currentLocale; } };
+window.i18n = { t, applyI18n, setLocale, onLocaleChange, get locale() { return currentLocale; } };

@@ -663,3 +663,7 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
   word-break: break-all;
   user-select: all;
 }
+
+/* Deleted / banned messages */
+.msg.deleted { opacity: 0.5; }
+.deleted-text { color: #888; font-style: italic; }
