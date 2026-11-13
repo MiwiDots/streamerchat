@@ -4,6 +4,11 @@
 /streamerchat
 /streamerchat-gui
 /chathub
+# `go build` inside a cmd dir drops the binary next to the sources
+# (named after the directory). The files are named exactly like their
+# directory, so anchor them to the full path.
+/cmd/chathub/chathub
+/cmd/wails/wails
 *.exe
 *.dll
 *.so

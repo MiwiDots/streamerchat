@@ -1,3 +1,10 @@
+2026-11-13 19:14 - chore: stop tracking the compiled cmd/chathub/chathub
+  binary (9.5 MB Mach-O from v0.2.7, stale since). Removed from the
+  index only — the local file stays. .gitignore now covers in-place
+  `go build` output for cmd/chathub/chathub and cmd/wails/wails. No
+  version bump (nothing shipped changes). The blob remains in git
+  history; purging it would need a history rewrite.
+
 2026-11-13 19:14 - v0.5.6 (stable): frontend fixes in both apps — message
   order, deleted messages actually disappear, input handling, caches,
   i18n.
