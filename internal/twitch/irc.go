@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,7 +29,25 @@ type IRCClient struct {
 	// dropped counts events discarded because a consumer channel was full
 	// (see push). Logged every dropLogEvery drops.
 	dropped atomic.Int64
+
+	// Send-only clients queue outgoing lines in outbox; a worker forwards
+	// them in order once the server has welcomed us (ready closed in
+	// OnConnect). gempir would otherwise write lines queued before the
+	// connection was up right after PASS/NICK — before the login is
+	// confirmed and before the JOIN — and Twitch drops them.
+	ready     chan struct{}
+	readyOnce sync.Once
+	outbox    chan string
+	stop      chan struct{}
+	stopOnce  sync.Once
 }
+
+// sendOutboxSize bounds queued messages while a send-only client connects.
+const sendOutboxSize = 64
+
+// sendReadyTimeout: queued messages are dropped (and logged) if the
+// send-only connection doesn't come up within this time.
+const sendReadyTimeout = 20 * time.Second
 
 // dropLogEvery throttles the "event dropped" log line.
 const dropLogEvery = 100
@@ -60,7 +79,7 @@ func push[T any](c *IRCClient, ch chan T, v T) {
 // dropped (not blocked on) once a buffer is full. A client that only sends
 // should use NewSendOnlyIRCClient instead.
 func NewIRCClient(username, oauthToken, channel string, extraChannels ...string) *IRCClient {
-	irc := newIRCClient(username, oauthToken, channel, extraChannels, []string{
+	irc := newIRCClient(authedClient(username, oauthToken), channel, extraChannels, []string{
 		"twitch.tv/tags",
 		"twitch.tv/commands",
 		// membership = JOIN/PART events (core requirement for the chatter list)
@@ -76,21 +95,79 @@ func NewIRCClient(username, oauthToken, channel string, extraChannels ...string)
 // nothing accumulates in its channels; NOTICE rejections and connects are
 // logged. Messages()/Joins()/Settings() never deliver anything.
 func NewSendOnlyIRCClient(username, oauthToken, channel string, extraChannels ...string) *IRCClient {
-	irc := newIRCClient(username, oauthToken, channel, extraChannels, []string{
+	irc := newIRCClient(authedClient(username, oauthToken), channel, extraChannels, []string{
 		"twitch.tv/tags",
 		"twitch.tv/commands",
 	})
 	irc.client.OnNoticeMessage(func(msg twitch.NoticeMessage) {
 		log.Printf("[SEND] NOTICE %s in #%s: %s", msg.MsgID, msg.Channel, msg.Message)
 	})
+	irc.ready = make(chan struct{})
+	irc.outbox = make(chan string, sendOutboxSize)
+	irc.stop = make(chan struct{})
 	irc.client.OnConnect(func() {
 		log.Printf("[SEND] send-only client connected (primary=#%s extras=%v)", irc.channel, irc.extraJoins)
+		irc.readyOnce.Do(func() { close(irc.ready) })
 	})
+	go irc.runOutbox()
 	return irc
 }
 
-func newIRCClient(username, oauthToken, channel string, extraChannels, caps []string) *IRCClient {
-	client := twitch.NewClient(username, "oauth:"+strings.TrimPrefix(oauthToken, "oauth:"))
+// runOutbox forwards queued lines in order once the connection is ready.
+func (c *IRCClient) runOutbox() {
+	select {
+	case <-c.ready:
+	case <-c.stop:
+		return
+	case <-time.After(sendReadyTimeout):
+		log.Printf("[SEND] send-only connection to #%s not ready after %s — dropping %d queued message(s)", c.channel, sendReadyTimeout, len(c.outbox))
+		return
+	}
+	for {
+		select {
+		case line := <-c.outbox:
+			c.client.Say(c.channel, line)
+		case <-c.stop:
+			return
+		}
+	}
+}
+
+// say sends a line to the primary channel — through the ordered outbox
+// for send-only clients, directly otherwise.
+func (c *IRCClient) say(line string) {
+	if c.outbox == nil {
+		c.client.Say(c.channel, line)
+		return
+	}
+	select {
+	case c.outbox <- line:
+	default:
+		log.Printf("[SEND] outbox for #%s full — message dropped", c.channel)
+	}
+}
+
+// NewAnonymousIRCClient creates a READ-ONLY client logged in as an
+// anonymous "justinfan" user — no token involved. Reading chat (incl.
+// JOIN/PART via the membership capability) therefore works the moment the
+// app starts, independent of whether the Twitch login is valid, expired or
+// still being refreshed. Say/Action on it are silently ignored by Twitch;
+// send through Helix or an authenticated client instead.
+func NewAnonymousIRCClient(channel string) *IRCClient {
+	irc := newIRCClient(twitch.NewAnonymousClient(), channel, nil, []string{
+		"twitch.tv/tags",
+		"twitch.tv/commands",
+		"twitch.tv/membership",
+	})
+	irc.registerHandlers()
+	return irc
+}
+
+func authedClient(username, oauthToken string) *twitch.Client {
+	return twitch.NewClient(username, "oauth:"+strings.TrimPrefix(oauthToken, "oauth:"))
+}
+
+func newIRCClient(client *twitch.Client, channel string, extraChannels, caps []string) *IRCClient {
 	client.Capabilities = caps
 
 	extras := make([]string, 0, len(extraChannels))
@@ -141,8 +218,11 @@ func (c *IRCClient) Connect() error {
 	return c.client.Connect()
 }
 
-// Disconnect closes the IRC connection.
+// Disconnect closes the IRC connection (and stops a send-only outbox).
 func (c *IRCClient) Disconnect() {
+	if c.stop != nil {
+		c.stopOnce.Do(func() { close(c.stop) })
+	}
 	c.client.Disconnect()
 }
 
@@ -169,7 +249,7 @@ func sanitizeIRCText(text string) string {
 
 // Say sends a message to the channel.
 func (c *IRCClient) Say(text string) {
-	c.client.Say(c.channel, sanitizeIRCText(text))
+	c.say(sanitizeIRCText(text))
 }
 
 // Action sends a "/me" message as CTCP ACTION — the IRC-native form, which
@@ -177,7 +257,7 @@ func (c *IRCClient) Say(text string) {
 // text (most of which Twitch removed in 2023).
 func (c *IRCClient) Action(text string) {
 	text = strings.ReplaceAll(sanitizeIRCText(text), "\x01", "")
-	c.client.Say(c.channel, "\x01ACTION "+text+"\x01")
+	c.say("\x01ACTION " + text + "\x01")
 }
 
 // SayTo sends a message to a specific channel (must be joined first).
@@ -343,7 +423,7 @@ func (c *IRCClient) registerHandlers() {
 	})
 
 	c.client.OnReconnectMessage(func(_ twitch.ReconnectMessage) {
-		log.Printf("[SEND] OnReconnectMessage: Twitch told us to reconnect (#%s)", c.channel)
+		log.Printf("[IRC] Twitch asked us to reconnect (#%s)", c.channel)
 		push(c, c.messages, chat.Message{
 			Platform:  chat.PlatformTwitch,
 			Type:      chat.MessageTypeSystem,
@@ -353,7 +433,7 @@ func (c *IRCClient) registerHandlers() {
 	})
 
 	c.client.OnConnect(func() {
-		log.Printf("[SEND] OnConnect: authed + joined for primary=#%s extras=%v", c.channel, c.extraJoins)
+		log.Printf("[IRC] connected + joined #%s (extras=%v)", c.channel, c.extraJoins)
 		push(c, c.messages, chat.Message{
 			Platform:  chat.PlatformTwitch,
 			Type:      chat.MessageTypeSystem,

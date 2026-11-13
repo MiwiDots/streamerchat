@@ -1,3 +1,33 @@
+2026-11-13 22:53 - streamerchat reads chat ANONYMOUSLY, like chathub (unreleased,
+  next version).
+
+  - Reading chat no longer depends on the Twitch login at all. The IRC
+    read supervisor connects as an anonymous "justinfan" user
+    (twitch.NewAnonymousIRCClient, incl. JOIN/PART via membership) and
+    is started in startup() — before and independent of the token check
+    in bootSequence. An expired / refreshing / unreachable login can no
+    longer keep chat from showing, chat keeps working after logout, and
+    the IRC auth-error → refresh branch is gone. Before the first login
+    (no channel configured) the supervisor waits and picks the channel
+    up as soon as it's set.
+  - Sending: regular messages go through Helix Send Chat Message (like
+    chathub; drop reasons such as follower-only are shown). No local
+    echo anymore — the reader receives our own message back with real
+    badges and emotes. /me (CTCP ACTION has no Helix equivalent) and the
+    fallback for logins without user:write:chat (Helix 401/403 →
+    twitch.ErrSendNotAuthorized) use a lazily created, authenticated
+    send-only IRC connection, rebuilt when token/user/channel change and
+    dropped on logout / profile switch / shutdown.
+  - Send-only IRC clients queue outgoing lines in an ordered outbox that
+    is flushed only after Twitch's welcome (OnConnect): gempir would
+    otherwise write lines queued before the connection was up right
+    after PASS/NICK — before login confirmation and JOIN — where Twitch
+    drops them.
+  - Reader log lines are tagged [IRC] instead of the misleading [SEND].
+  - Verified live: anonymous connection to public channels receives
+    chat. Tests: outbox queueing/order/sanitizing/non-blocking,
+    anonymous client construction.
+
 2026-11-13 22:41 - v0.6.2 (stable): RELEASE — streamerchat boot resilience +
   log location (see the entry below).
 

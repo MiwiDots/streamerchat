@@ -3,12 +3,19 @@ package twitch
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"time"
 )
+
+// ErrSendNotAuthorized means Twitch refused the send because the token is
+// not allowed to (HTTP 401/403: expired, or missing the user:write:chat
+// scope on logins from before it was requested). Callers can fall back to
+// sending over IRC, which only needs chat:edit.
+var ErrSendNotAuthorized = errors.New("not authorized to send via Helix")
 
 // SendChatMessage posts a chat message via the Helix Send Chat Message
 // endpoint. This is Twitch's modern replacement for raw-IRC PRIVMSG —
@@ -55,6 +62,10 @@ func SendChatMessage(clientID, accessToken, broadcasterID, senderID, message str
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		log.Printf("[SEND] Helix status %d body=%s", resp.StatusCode, string(raw))
+		return fmt.Errorf("twitch: %w (status %d): %s", ErrSendNotAuthorized, resp.StatusCode, string(raw))
+	}
 	if resp.StatusCode != 200 {
 		log.Printf("[SEND] Helix status %d body=%s", resp.StatusCode, string(raw))
 		return fmt.Errorf("twitch: send_message status %d: %s", resp.StatusCode, string(raw))

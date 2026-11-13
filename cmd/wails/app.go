@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -64,11 +65,22 @@ type App struct {
 	// token refreshes can hand it the new access token. Guarded by mu.
 	esClient *eventsub.Client
 
-	// supervisorsStarted gates the eternal IRC supervisor + token
-	// refresh loop to one launch per app process. Profile switches
-	// trigger reconnects via ircClient.Disconnect() rather than
-	// spawning fresh supervisors.
+	// supervisorsStarted gates the eternal token refresh loop to one
+	// launch per app process (started after the first successful auth).
+	// The IRC read supervisor is started unconditionally in startup.
 	supervisorsStarted bool
+
+	// sendClient is an authenticated, send-only IRC connection used for
+	// /me (CTCP ACTION has no Helix equivalent) and as a fallback when a
+	// Helix send is not authorized. Created lazily; sendClientKey records
+	// the user/token/channel it was built with so a token refresh or
+	// profile switch rebuilds it. Guarded by mu.
+	sendClient    *twitch.IRCClient
+	sendClientKey string
+
+	// helixSendHintOnce: the "re-login for the new chat permission" hint
+	// is shown once per session.
+	helixSendHintOnce sync.Once
 
 	// Startup event buffer (see emit / FrontendReady in lifecycle.go).
 	uiMu      sync.Mutex
@@ -125,6 +137,11 @@ func (a *App) startup(ctx context.Context) {
 	// Twitch native badges registry (loaded inside bootSequence after auth is valid)
 	a.badges = twitch.NewBadgeRegistry()
 
+	// Chat is read anonymously, so it can start right away — independent
+	// of the login check below, which used to gate it (no network at boot
+	// or any auth hiccup meant no chat at all).
+	go a.runIRCSupervisor()
+
 	// Start connection sequence
 	go a.bootSequence()
 }
@@ -136,6 +153,7 @@ func (a *App) shutdown(_ context.Context) {
 	if a.ircClient != nil {
 		a.ircClient.Disconnect()
 	}
+	a.dropSendClientLocked()
 	if a.ytChatCancel != nil {
 		a.ytChatCancel()
 	}
@@ -227,14 +245,11 @@ func (a *App) bootSequence() {
 	// Load badges now that auth is valid (was previously a race against bootSequence).
 	a.loadBadges()
 
-	// Eternal goroutines — must NOT be re-started on profile switch
-	// or we'll leak supervisors. The IRC supervisor reads cfg.Twitch
-	// on every reconnect, so swapping the active profile + calling
-	// ircClient.Disconnect() is enough to make it pick up new creds.
+	// Token refresh loop: eternal, one per process. (The IRC read
+	// supervisor already runs since startup and needs no login.)
 	a.mu.Lock()
 	if !a.supervisorsStarted {
 		a.supervisorsStarted = true
-		go a.runIRCSupervisor()
 		go a.tokenRefreshLoop()
 	}
 	a.mu.Unlock()
@@ -352,8 +367,9 @@ func (a *App) SwitchProfile(id string) string {
 	// cfg.Twitch.*. YT gets re-detected from the new profile's
 	// channel handle.
 	if a.ircClient != nil {
-		a.ircClient.Disconnect()
+		a.ircClient.Disconnect() // reader reconnects to the new profile's channel
 	}
+	a.dropSendClientLocked()
 	a.stopYouTubeLocked()
 	if a.rolesCancel != nil {
 		a.rolesCancel()
@@ -406,19 +422,44 @@ const (
 	ircBackoffMin        = 2 * time.Second
 	ircBackoffMax        = 60 * time.Second
 	ircHealthySessionMin = 30 * time.Second
+	// ircChannelPoll: how often the supervisor checks for a channel while
+	// none is configured yet (first start, before login).
+	ircChannelPoll = 2 * time.Second
 )
 
 func (a *App) runIRCSupervisor() {
 	backoff := ircBackoffMin
+	waitingLogged := false
 
 	for {
-		select {
-		case <-a.ctx.Done():
+		if a.ctx.Err() != nil {
 			return
-		default:
 		}
 
-		client := twitch.NewIRCClient(a.cfg.Twitch.Username, a.cfg.Twitch.AccessToken, a.cfg.Twitch.Channel)
+		a.mu.Lock()
+		channel := a.cfg.Twitch.Channel
+		a.mu.Unlock()
+		if channel == "" {
+			// First start before any login: no channel known yet. Login
+			// (or a profile switch) sets it; pick it up shortly after.
+			if !waitingLogged {
+				log.Printf("[IRC] No channel configured yet — waiting for login")
+				waitingLogged = true
+			}
+			select {
+			case <-a.ctx.Done():
+				return
+			case <-time.After(ircChannelPoll):
+			}
+			continue
+		}
+		waitingLogged = false
+
+		// Chat is READ anonymously (justinfan), exactly like chathub: no
+		// token involved, so an expired / refreshing / unreachable login
+		// can never keep chat from showing. Sending goes through Helix (or
+		// the authenticated send-only client) — see SendMessage.
+		client := twitch.NewAnonymousIRCClient(channel)
 		// The resolver looks the Helix client up on every call: it outlives
 		// profile switches (which nil the client) and token rebuilds.
 		client.SetRoomResolver(func(roomID string) string {
@@ -436,7 +477,7 @@ func (a *App) runIRCSupervisor() {
 		clientCtx, cancelClient := context.WithCancel(a.ctx)
 		go a.forwardIRC(clientCtx, client)
 
-		log.Printf("[IRC] Connecting to #%s", a.cfg.Twitch.Channel)
+		log.Printf("[IRC] Connecting (anonymous, read-only) to #%s", channel)
 		started := time.Now()
 		err := client.Connect()
 		cancelClient()
@@ -448,35 +489,7 @@ func (a *App) runIRCSupervisor() {
 		if time.Since(started) >= ircHealthySessionMin {
 			backoff = ircBackoffMin
 		}
-
-		log.Printf("[IRC] Disconnected: %v", err)
-		errStr := ""
-		if err != nil {
-			errStr = strings.ToLower(err.Error())
-		}
-		isAuth := strings.Contains(errStr, "login") ||
-			strings.Contains(errStr, "auth") ||
-			strings.Contains(errStr, "improperly formatted") ||
-			strings.Contains(errStr, "invalid")
-
-		if isAuth && a.cfg.Twitch.RefreshToken != "" {
-			// Same snapshot-and-verify pattern as tokenRefreshLoop:
-			// don't clobber the new profile's tokens if the user
-			// switched accounts while the refresh was in flight.
-			a.mu.Lock()
-			activeAtStart := a.cfg.ActiveProfileID
-			clientID := a.cfg.Twitch.ClientID
-			clientSecret := a.cfg.Twitch.ClientSecret
-			refreshToken := a.cfg.Twitch.RefreshToken
-			a.mu.Unlock()
-			if token, refErr := twitch.RefreshAccessToken(clientID, clientSecret, refreshToken); refErr == nil {
-				if !a.commitTokens(activeAtStart, token) {
-					log.Printf("[AUTH] Profile switched during supervisor refresh — discarding tokens for %s", activeAtStart)
-				}
-				backoff = ircBackoffMin
-				continue
-			}
-		}
+		log.Printf("[IRC] Disconnected from #%s: %v — reconnecting in %s", channel, err, backoff)
 
 		select {
 		case <-a.ctx.Done():
@@ -1428,22 +1441,18 @@ func (a *App) StartLogin() map[string]interface{} {
 		a.loadBadges()
 		a.startEventSub()
 
-		// Tear down any existing IRC client so the supervisor reconnects
-		// with the fresh credentials, or starts cold if none was
-		// running. Gate on supervisorsStarted (not on a.ircClient != nil)
-		// so we never spawn a duplicate supervisor after a profile
-		// switch — the old behaviour leaked goroutines on every login.
+		// Reading chat is anonymous and unaffected by a login; the read
+		// supervisor picks up a newly set channel by itself. Only the
+		// token refresh loop needs starting (once per process), and the
+		// send-only connection must be rebuilt with the new token.
 		a.mu.Lock()
-		if a.ircClient != nil {
-			a.ircClient.Disconnect()
-		}
+		a.dropSendClientLocked()
 		needStart := !a.supervisorsStarted
 		if needStart {
 			a.supervisorsStarted = true
 		}
 		a.mu.Unlock()
 		if needStart {
-			go a.runIRCSupervisor()
 			go a.tokenRefreshLoop()
 		}
 		a.startChattersAndRoles()
@@ -1488,10 +1497,10 @@ func (a *App) Logout() {
 	a.cfg.Twitch.AccessToken = ""
 	a.cfg.Twitch.RefreshToken = ""
 	a.cfg.Save()
+	// Only the authenticated send connection goes away; chat keeps being
+	// READ anonymously after logout.
 	a.mu.Lock()
-	if a.ircClient != nil {
-		a.ircClient.Disconnect()
-	}
+	a.dropSendClientLocked()
 	a.mu.Unlock()
 	log.Printf("[AUTH] Logged out")
 }
@@ -1551,67 +1560,113 @@ func (a *App) SendMessage(text string) {
 		return
 	}
 
-	// "/me <text>" is a chat message, not a moderation command: send it as
-	// an IRC ACTION. It used to fall through to HandleSlashCommand, which
-	// answered "Unknown command" and never sent anything.
+	// "/me <text>" is a chat message, not a moderation command. CTCP
+	// ACTION only exists on IRC, so it goes through the authenticated
+	// send-only connection.
 	if rest, ok := cutCommand(text, "/me"); ok {
-		if rest == "" {
-			return
+		if rest != "" {
+			a.sendViaIRC(rest, true)
 		}
-		a.mu.Lock()
-		c := a.ircClient
-		a.mu.Unlock()
-		if c == nil {
-			return
-		}
-		c.Action(rest)
-		a.emitOwnMessage(rest)
 		return
 	}
 
 	// Slash command? Route through Helix and surface the response as a
-	// system message in chat. The IRC connection stays untouched.
+	// system message in chat.
 	if strings.HasPrefix(text, "/") {
 		h := a.helix()
 		status, handled := twitch.HandleSlashCommand(h, text)
 		if handled {
-			a.emitChat(chat.Message{
-				Platform:  chat.PlatformTwitch,
-				Type:      chat.MessageTypeSystem,
-				Channel:   a.cfg.Twitch.Channel,
-				Timestamp: time.Now(),
-				Text:      status,
-			})
+			a.emitSystem(status)
 			return
 		}
 	}
 
+	// Regular message: Helix Send Chat Message. No local echo needed —
+	// chat is read on a separate (anonymous) connection, which receives
+	// our own message back like everyone else's, with real badges/emotes.
 	a.mu.Lock()
-	c := a.ircClient
+	clientID := a.cfg.Twitch.ClientID
+	token := a.cfg.Twitch.AccessToken
+	senderID := a.cfg.Twitch.BotUserID
+	channel := a.cfg.Twitch.Channel
+	username := a.cfg.Twitch.Username
 	a.mu.Unlock()
-	if c == nil {
+	if token == "" || senderID == "" {
+		a.emitSystem("Not logged in — open Settings → Twitch to log in before sending.")
 		return
 	}
-	c.Say(text)
-	a.emitOwnMessage(text)
+	broadcasterID := senderID
+	if !strings.EqualFold(channel, username) {
+		h := a.helix()
+		if h == nil {
+			a.emitSystem("Message not sent: Twitch login not ready yet.")
+			return
+		}
+		id, err := h.ResolveLogin(channel)
+		if err != nil {
+			a.emitSystem("Message not sent: " + err.Error())
+			return
+		}
+		broadcasterID = id
+	}
+	err := twitch.SendChatMessage(clientID, token, broadcasterID, senderID, text)
+	switch {
+	case err == nil:
+	case errors.Is(err, twitch.ErrSendNotAuthorized):
+		// Logins from before the user:write:chat scope existed can't send
+		// via Helix; IRC only needs chat:edit. Fall back and say why once.
+		log.Printf("[SEND] Helix not authorized, falling back to IRC: %v", err)
+		a.sendViaIRC(text, false)
+		a.helixSendHintOnce.Do(func() {
+			a.emitSystem("Sent via IRC fallback. Log out and in again (Settings → Twitch) to grant the newer chat permission.")
+		})
+	default:
+		a.emitSystem("Message not sent: " + err.Error())
+	}
 }
 
-// emitOwnMessage echoes a message we just sent into the local chat view
-// (Twitch IRC doesn't send our own PRIVMSGs back to us).
-func (a *App) emitOwnMessage(text string) {
-	username := a.cfg.Twitch.Username
-	channel := a.cfg.Twitch.Channel
-	a.emitChat(chat.Message{
-		Platform:      chat.PlatformTwitch,
-		Type:          chat.MessageTypeChat,
-		Channel:       channel,
-		Timestamp:     time.Now(),
-		UserID:        a.cfg.Twitch.BotUserID,
-		Username:      username,
-		DisplayName:   username,
-		IsBroadcaster: strings.EqualFold(username, channel),
-		Text:          text,
-	})
+// sendViaIRC sends text (or a /me action) over the authenticated send-only
+// IRC connection, creating it on first use or after the token / channel
+// changed. Messages queued before the connection is up are flushed by the
+// IRC library once it has connected.
+func (a *App) sendViaIRC(text string, action bool) {
+	a.mu.Lock()
+	username, token, channel := a.cfg.Twitch.Username, a.cfg.Twitch.AccessToken, a.cfg.Twitch.Channel
+	if token == "" || username == "" || channel == "" {
+		a.mu.Unlock()
+		a.emitSystem("Not logged in — open Settings → Twitch to log in before sending.")
+		return
+	}
+	key := username + "\x00" + token + "\x00" + channel
+	if a.sendClient == nil || a.sendClientKey != key {
+		a.dropSendClientLocked()
+		c := twitch.NewSendOnlyIRCClient(username, token, channel)
+		a.sendClient, a.sendClientKey = c, key
+		go func() {
+			err := c.Connect()
+			log.Printf("[SEND] send-only IRC connection ended: %v", err)
+			a.mu.Lock()
+			if a.sendClient == c {
+				a.sendClient, a.sendClientKey = nil, ""
+			}
+			a.mu.Unlock()
+		}()
+	}
+	c := a.sendClient
+	a.mu.Unlock()
+	if action {
+		c.Action(text)
+	} else {
+		c.Say(text)
+	}
+}
+
+// dropSendClientLocked closes the send-only IRC connection. Caller holds mu.
+func (a *App) dropSendClientLocked() {
+	if a.sendClient != nil {
+		a.sendClient.Disconnect()
+		a.sendClient, a.sendClientKey = nil, ""
+	}
 }
 
 // cutCommand reports whether text is the slash command cmd (case-

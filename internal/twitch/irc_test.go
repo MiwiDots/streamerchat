@@ -118,3 +118,45 @@ func TestApplyWatchStreak(t *testing.T) {
 		t.Fatal("resub must not match")
 	}
 }
+
+// Lines sent before the connection is ready are queued in order, never
+// handed to gempir early (Twitch would drop them before login/JOIN).
+func TestSendOnlyQueuesUntilReady(t *testing.T) {
+	c := NewSendOnlyIRCClient("u", "tok", "chan")
+	defer c.Disconnect()
+	c.Say("first\r\nline")
+	c.Action("waves")
+	if got := len(c.outbox); got != 2 {
+		t.Fatalf("outbox len = %d, want 2 (nothing may be sent before ready)", got)
+	}
+	if l := <-c.outbox; l != "first  line" {
+		t.Fatalf("first queued line = %q (must be sanitized, in order)", l)
+	}
+	if l := <-c.outbox; l != "\x01ACTION waves\x01" {
+		t.Fatalf("second queued line = %q", l)
+	}
+	// A full outbox drops instead of blocking the caller.
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < sendOutboxSize+5; i++ {
+			c.Say("x")
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Say blocked on a full outbox")
+	}
+	c.Disconnect() // second Disconnect must not panic (stopOnce)
+}
+
+func TestAnonymousClientNeedsNoToken(t *testing.T) {
+	c := NewAnonymousIRCClient("#SomeChannel")
+	if c.channel != "SomeChannel" || c.outbox != nil {
+		t.Fatalf("unexpected client: channel=%q outbox=%v", c.channel, c.outbox != nil)
+	}
+	if len(c.client.Capabilities) != 3 {
+		t.Fatalf("reader needs tags+commands+membership caps, got %v", c.client.Capabilities)
+	}
+}
