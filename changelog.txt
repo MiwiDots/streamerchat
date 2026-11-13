@@ -1,3 +1,24 @@
+2026-11-13 23:31 - StreamerChat can send to YouTube chat (unreleased, next
+  version; requested in GitHub issue #1).
+
+  - Backend: App keeps the InnerTube client of the live chat it reads
+    (ytClient, cleared when the chat stops) and gives it the saved
+    YouTube login cookies, so YouTube renders the send endpoint
+    (SendParams). New bindings StartYouTubeLogin / LogoutYouTube /
+    HasYouTubeLogin (same Edge-based login as ChatHub; Windows only) and
+    SendYouTubeMessage(text). After login/logout the YouTube chat
+    reconnects so it picks up / drops the cookies. No local echo — the
+    poller receives our own message back.
+  - Frontend: the F2 send target now really works — "YT" sends to
+    YouTube, "Both" to Twitch + YouTube (slash commands only to Twitch).
+    YouTube errors appear as a system line; with only YouTube targeted
+    the text is given back for a retry. Removed the old "not supported"
+    notices.
+  - Settings → YouTube: new "YouTube login (to send messages)" section
+    with Connect / Disconnect and status (en/de, re-rendered on language
+    change). The YouTube status hint no longer says "read-only".
+  - Test: SendYouTubeMessage guards (empty, slash command, no chat).
+
 2026-11-13 23:02 - v0.6.3 (stable): RELEASE — streamerchat reads chat
   anonymously (see the entry below). v0.6.2 confirmed working by the
   user before this release.

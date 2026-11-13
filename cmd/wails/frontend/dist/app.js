@@ -70,9 +70,6 @@ function withTimeout(promise, ms, fallback) {
 
 let renderGen = 0;
 let renderChain = Promise.resolve();
-// "Both" send target: the "YouTube sending not supported" notice is shown
-// only once per session.
-let ytBothNoticeShown = false;
 function enqueueRender(msg) {
   const gen = renderGen;
   renderChain = renderChain
@@ -907,33 +904,35 @@ inputEl.addEventListener('keydown', async (e) => {
     const text = inputEl.value.trim();
     if (text) {
       const target = SEND_TARGETS[sendTarget];
-      // The backend can only send to Twitch (no YouTube send binding in
-      // app.go). Don't silently post to Twitch while "YT" is selected: keep
-      // the text and say so.
-      if (target === 'YouTube') {
-        enqueueRender({
-          type: 'system', platform: 'youtube', timestamp: Date.now(),
-          text: "Sending to YouTube isn't supported in StreamerChat yet",
-        });
-        return;
-      }
-      // Once per session — repeating it on every message would bury chat.
-      if (target === 'Both' && !ytBothNoticeShown) {
-        ytBothNoticeShown = true;
-        enqueueRender({
-          type: 'system', platform: 'youtube', timestamp: Date.now(),
-          text: "Sending to YouTube isn't supported in StreamerChat yet; sent to Twitch only",
-        });
-      }
       // Clear before awaiting so a fast second Enter can't send the same
       // text twice.
       inputEl.value = '';
-      try {
-        await window.go.main.App.SendMessage(text);
-      } catch (err) {
-        console.error(err);
-        if (!inputEl.value) inputEl.value = text; // give it back to retry
+      let failed = false;
+      // Twitch (also for "Both"). Errors are reported by the backend as
+      // system lines in chat.
+      if (target !== 'YouTube') {
+        try {
+          await window.go.main.App.SendMessage(text);
+        } catch (err) {
+          console.error(err);
+          failed = true;
+        }
       }
+      // YouTube: returns '' on success or a user-facing error string.
+      // Slash commands are Twitch-only, so "Both" doesn't forward them.
+      if (target !== 'Twitch' && !(target === 'Both' && text.startsWith('/'))) {
+        let err = '';
+        try { err = await window.go.main.App.SendYouTubeMessage(text); } catch (e) { err = String(e); }
+        if (err) {
+          enqueueRender({
+            type: 'system', platform: 'youtube', timestamp: Date.now(),
+            text: i18n.t('ytSendFailed', { err }),
+          });
+          // Only YouTube was targeted: give the text back to retry.
+          if (target === 'YouTube') failed = true;
+        }
+      }
+      if (failed && !inputEl.value) inputEl.value = text;
     }
   } else if (e.key === 'Escape') {
     if (!modalBgEl.classList.contains('hidden')) {
@@ -1932,6 +1931,55 @@ if (autostartCheckbox) {
     }
   });
 }
+
+// === YouTube login (send support) ===
+const ytAuthInfoEl = document.getElementById('ytAuthInfo');
+const ytLoginBtn = document.getElementById('ytLoginBtn');
+const ytLogoutBtn = document.getElementById('ytLogoutBtn');
+// Status text is runtime state (no data-i18n); re-rendered on locale change.
+let ytLoginState = 'unknown'; // 'unknown' | 'in' | 'out' | 'opening'
+function renderYTLogin() {
+  if (!ytAuthInfoEl) return;
+  const s = ytLoginState;
+  ytAuthInfoEl.textContent = s === 'in' ? i18n.t('ytConnected')
+    : s === 'opening' ? i18n.t('ytLoginOpening')
+    : s === 'out' ? i18n.t('ytNotConnected') : '';
+  ytAuthInfoEl.style.color = s === 'in' ? '#4ade80' : s === 'opening' ? '#fbbf24' : '#ff5555';
+  ytLoginBtn.classList.toggle('hidden', s === 'in');
+  ytLogoutBtn.classList.toggle('hidden', s !== 'in');
+}
+i18n.onLocaleChange(renderYTLogin);
+function setYTLogin(state) { ytLoginState = state; renderYTLogin(); }
+
+if (ytLoginBtn && ytLogoutBtn) {
+  ytLoginBtn.addEventListener('click', async () => {
+    ytLoginBtn.disabled = true;
+    setYTLogin('opening');
+    try {
+      const err = await window.go.main.App.StartYouTubeLogin();
+      if (err) {
+        alert('YouTube login failed: ' + err);
+        setYTLogin('out');
+      } else {
+        setYTLogin('in');
+      }
+    } catch (e) {
+      alert('YouTube login error: ' + e);
+      setYTLogin('out');
+    }
+    ytLoginBtn.disabled = false;
+  });
+  ytLogoutBtn.addEventListener('click', async () => {
+    try { await window.go.main.App.LogoutYouTube(); } catch (e) {}
+    setYTLogin('out');
+  });
+}
+whenRuntime(() => {
+  window.runtime.EventsOn('youtubeLoginChanged', (data) => {
+    setYTLogin(data && data.loggedIn ? 'in' : 'out');
+  });
+  window.go.main.App.HasYouTubeLogin().then((has) => setYTLogin(has ? 'in' : 'out')).catch(() => {});
+});
 
 // Boot runner (keep at the very END of the file so every whenRuntime()
 // registration above is queued): wait for the Wails runtime + bindings,

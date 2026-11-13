@@ -105,3 +105,17 @@ func TestEmitBuffersUntilFrontendReady(t *testing.T) {
 		t.Fatalf("oldest events must be dropped first, got %v", a.uiPending[0].data)
 	}
 }
+
+func TestSendYouTubeMessageGuards(t *testing.T) {
+	a := newTestApp(t)
+	if got := a.SendYouTubeMessage("   "); got != "" {
+		t.Fatalf("empty text: got %q, want no-op", got)
+	}
+	if got := a.SendYouTubeMessage("/ban someone"); got == "" {
+		t.Fatal("slash commands must be rejected for YouTube")
+	}
+	// No live YouTube chat attached → clear error, no keyring access.
+	if got := a.SendYouTubeMessage("hello"); got == "" {
+		t.Fatal("sending without a YouTube chat must fail with a message")
+	}
+}

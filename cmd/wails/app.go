@@ -48,6 +48,7 @@ type App struct {
 	// switch / login / YouTube settings change leaked another copy, and a
 	// stale YouTube detector could take over the current profile's chat.
 	ytChatCancel   context.CancelFunc // running InnerTube chat poller
+	ytClient       *youtube.InnerTubeClient // the live chat being read; needed to send
 	ytDetectCancel context.CancelFunc // running YouTube live detector
 	rolesCancel    context.CancelFunc // Helix chatter/role poller
 
@@ -918,6 +919,7 @@ func (a *App) stopYouTubeLocked() {
 		a.ytChatCancel()
 		a.ytChatCancel = nil
 	}
+	a.ytClient = nil
 }
 
 // startYouTubeChat connects the InnerTube poller for videoID as a child of
@@ -936,9 +938,15 @@ func (a *App) startYouTubeChat(parent context.Context, videoID string) {
 	}
 	chatCtx, cancel := context.WithCancel(parent)
 	a.ytChatCancel = cancel
-	a.mu.Unlock()
-
 	ytClient := youtube.NewInnerTubeClient(videoID)
+	// With the YouTube login cookies the chat page is rendered for the
+	// logged-in user and includes the send endpoint (SendParams); without
+	// them the chat is read-only.
+	if creds, err := youtube.LoadLoginCookies(); err == nil && creds.Valid() {
+		ytClient.SetCookies(creds)
+	}
+	a.ytClient = ytClient
+	a.mu.Unlock()
 
 	go func() {
 		for {
@@ -988,6 +996,7 @@ func (a *App) runYouTubeDetector(ctx context.Context, handle string) {
 				a.ytChatCancel()
 				a.ytChatCancel = nil
 			}
+			a.ytClient = nil
 			a.mu.Unlock()
 			a.emitSystem("YouTube stream ended")
 		},
@@ -1371,6 +1380,82 @@ func (a *App) SetYouTubeConfig(enabled bool, channelHandle string) string {
 	// Stops the old detector + chat (they used to keep running alongside
 	// the new one) and starts whatever the new settings call for.
 	a.startYouTube()
+	return ""
+}
+
+// === YouTube login + send ===
+
+// StartYouTubeLogin opens an isolated browser window for the Google login
+// and stores the session cookies in the OS keyring (Windows only for now —
+// see youtube.LaunchLoginFlow). Blocks until done or 5 minutes pass; the
+// frontend disables the button meanwhile. On success the running YouTube
+// chat is reconnected so it picks up the cookies (and the send endpoint).
+func (a *App) StartYouTubeLogin() string {
+	ctx, cancel := context.WithTimeout(a.ctx, ytLoginTimeout)
+	defer cancel()
+	creds, err := youtube.LaunchLoginFlow(ctx, ytLoginTimeout)
+	if err != nil {
+		log.Printf("[YT-LOGIN] %v", err)
+		return err.Error()
+	}
+	if err := youtube.SaveLoginCookies(creds); err != nil {
+		log.Printf("[YT-LOGIN] save failed: %v", err)
+		return err.Error()
+	}
+	log.Printf("[YT-LOGIN] cookies saved to OS keyring")
+	a.emit("youtubeLoginChanged", map[string]interface{}{"loggedIn": true})
+	go a.startYouTube()
+	return ""
+}
+
+// ytLoginTimeout: plenty for typing a password + 2FA in the login window.
+const ytLoginTimeout = 5 * time.Minute
+
+// LogoutYouTube removes the saved YouTube session.
+func (a *App) LogoutYouTube() string {
+	if err := youtube.ClearLoginCookies(); err != nil {
+		return err.Error()
+	}
+	a.emit("youtubeLoginChanged", map[string]interface{}{"loggedIn": false})
+	go a.startYouTube() // reconnect read-only, without the old cookies
+	return ""
+}
+
+// HasYouTubeLogin reports whether a usable YouTube session is saved.
+func (a *App) HasYouTubeLogin() bool {
+	c, err := youtube.LoadLoginCookies()
+	return err == nil && c.Valid()
+}
+
+// SendYouTubeMessage posts text into the YouTube live chat StreamerChat is
+// currently reading. Returns "" on success or a user-facing error. No local
+// echo: the InnerTube poller receives our own message back.
+func (a *App) SendYouTubeMessage(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if strings.HasPrefix(text, "/") {
+		return "slash commands only work for Twitch"
+	}
+	a.mu.Lock()
+	client := a.ytClient
+	a.mu.Unlock()
+	if client == nil {
+		return "YouTube chat not connected (stream not live or YouTube disabled)"
+	}
+	creds, err := youtube.LoadLoginCookies()
+	if err != nil || !creds.Valid() {
+		return "not logged in to YouTube — Settings → YouTube → Connect YouTube"
+	}
+	params := client.SendParams()
+	if params == "" {
+		return "YouTube chat doesn't accept messages from this account right now (log in again, or chat is restricted)"
+	}
+	if err := youtube.SendLiveChatMessage(creds, params, text); err != nil {
+		log.Printf("[YT-SEND] %v", err)
+		return err.Error()
+	}
 	return ""
 }
 

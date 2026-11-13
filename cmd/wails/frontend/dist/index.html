@@ -197,7 +197,18 @@
           <button class="btn" id="ytSaveBtn" data-i18n="save">Save</button>
         </div>
         <div class="settings-row">
-          <span id="ytStatus" class="settings-status">Read-only, no login needed. App polls /live every 30s and attaches automatically when you go live.</span>
+          <span id="ytStatus" class="settings-status">Reading needs no login. App polls /live every 30s and attaches automatically when you go live.</span>
+        </div>
+      </div>
+      <div class="settings-section">
+        <label data-i18n="ytLoginTitle">YouTube login (to send messages)</label>
+        <div class="settings-row">
+          <span id="ytAuthInfo" class="settings-status"></span>
+          <button class="btn btn-primary" id="ytLoginBtn" data-i18n="ytConnect">Connect YouTube</button>
+          <button class="btn hidden" id="ytLogoutBtn" data-i18n="ytDisconnect">Disconnect</button>
+        </div>
+        <div class="settings-row">
+          <span class="settings-status" data-i18n="ytLoginHint">Opens a Microsoft Edge window for the Google login (Windows only). The session is stored in the OS keyring, never in the config file. Switch the send target with F2.</span>
         </div>
       </div>
     </div>
