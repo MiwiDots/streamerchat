@@ -690,6 +690,14 @@ async function renderMessage(msg) {
   // this channel's own container, so other channels are never touched.
   if (msg.id) div.dataset.msgId = String(msg.id);
   div.dataset.user = (msg.username || '').toLowerCase();
+  // Twitch "first-msg": the user's very first message in this channel.
+  // Highlighted like Twitch does for the broadcaster/mods so new chatters
+  // can be welcomed. The label is a block line ABOVE the message, so it is
+  // inserted as the first child (the timestamp is already in the row).
+  if (msg.firstMsg) {
+    div.classList.add('first-msg');
+    div.insertBefore(el('div', { class: 'first-msg-label' }, '✦ ' + i18n.t('firstMessage')), div.firstChild);
+  }
 
   // Render real Twitch badge images if available, fall back to text
   if (msg.badges && msg.badges.length > 0) {
@@ -754,7 +762,7 @@ function markMessagesDeleted(state, username, msgId, all) {
     }
     const ts = row.querySelector('.ts');
     row.classList.add('deleted');
-    row.classList.remove('highlight');
+    row.classList.remove('highlight', 'first-msg');
     const note = el('span', { class: 'deleted-text' }, i18n.t('messageDeleted'));
     if (ts) row.replaceChildren(ts, note); else row.replaceChildren(note);
   }

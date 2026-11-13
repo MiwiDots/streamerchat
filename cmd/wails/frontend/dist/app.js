@@ -475,6 +475,11 @@ async function renderText(text, nativeEmotes) {
 function markDeleted(div) {
   if (div.classList.contains('deleted')) return;
   div.classList.add('deleted');
+  // A deleted first message is no longer worth highlighting; dropping the
+  // label also keeps the "first two children" rule below correct.
+  div.classList.remove('first-msg');
+  const firstLabel = div.querySelector('.first-msg-label');
+  if (firstLabel) firstLabel.remove();
   // Keep timestamp + platform badge (first two children), drop the rest
   // (username, emotes, text) so the deleted content is no longer shown.
   while (div.childNodes.length > 2) div.removeChild(div.lastChild);
@@ -559,6 +564,14 @@ async function renderMessage(msg, gen = renderGen) {
   if (msg.id) div.dataset.msgId = msg.id;
   div.dataset.user = (msg.username || '').toLowerCase();
   div.dataset.platform = msg.platform || 'twitch';
+  // Twitch "first-msg": the user's very first message in this channel.
+  // Highlighted like Twitch does for the broadcaster/mods so new chatters
+  // can be welcomed. The label is a block line ABOVE the message, so it is
+  // inserted as the first child (the timestamp is already in the row).
+  if (msg.firstMsg) {
+    div.classList.add('first-msg');
+    div.insertBefore(el('div', { class: 'first-msg-label' }, '✦ ' + i18n.t('firstMessage')), div.firstChild);
+  }
   if (msg.isSharedChat && msg.sourceChannel) {
     div.appendChild(el('span', { class: 'shared-tag' }, `[${msg.sourceChannel}]`));
   }

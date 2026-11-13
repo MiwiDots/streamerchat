@@ -2,6 +2,7 @@
 
 const STRINGS = {
   en: {
+    firstMessage: 'First message in this channel',
     emptyAdd: 'Click <strong>+</strong> to add a Twitch channel',
     emptyHint: 'Anonymous read-only by default. Login via the cog to send messages.',
     readOnly: 'read-only',
@@ -89,6 +90,7 @@ const STRINGS = {
     fontSizeHint: 'Tip: Ctrl + / Ctrl - / Ctrl 0 also work.',
   },
   de: {
+    firstMessage: 'Erste Nachricht im Channel',
     emptyAdd: 'Klicke auf <strong>+</strong> um einen Twitch-Channel hinzuzufügen',
     emptyHint: 'Standardmäßig anonym im Read-Only-Modus. Über das Zahnrad einloggen um Nachrichten zu senden.',
     readOnly: 'nur-lesen',

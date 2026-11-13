@@ -65,3 +65,17 @@ func TestUserNoticeText(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertPrivateMessageFirstMsg(t *testing.T) {
+	var msg twitch.PrivateMessage
+	msg.Tags = map[string]string{"first-msg": "1"}
+	if !convertPrivateMessage(msg, "c").IsFirstMessage {
+		t.Fatal("first-msg=1 not detected")
+	}
+	for _, v := range []string{"0", ""} {
+		msg.Tags = map[string]string{"first-msg": v}
+		if convertPrivateMessage(msg, "c").IsFirstMessage {
+			t.Fatalf("first-msg=%q wrongly flagged", v)
+		}
+	}
+}

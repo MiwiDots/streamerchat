@@ -1013,6 +1013,7 @@ func (a *App) chatToMap(msg chat.Message) map[string]interface{} {
 		"bits":            msg.Bits,
 		"sourceChannel":   msg.SourceChannel,
 		"isSharedChat":    msg.IsSharedChat,
+		"firstMsg":        msg.IsFirstMessage,
 		"superChatAmount": msg.SuperChatAmount,
 		"targetUsername":  msg.TargetUsername,
 	}

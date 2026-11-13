@@ -2,6 +2,7 @@
 
 const STRINGS = {
   en: {
+    firstMessage: 'First message in this channel',
     settings: 'Settings',
     general: 'General',
     sound: 'Sound',
@@ -68,6 +69,7 @@ const STRINGS = {
     usersCount: 'Users ({count})',
   },
   de: {
+    firstMessage: 'Erste Nachricht im Channel',
     settings: 'Einstellungen',
     general: 'Allgemein',
     sound: 'Ton',

@@ -399,6 +399,8 @@ func convertPrivateMessage(msg twitch.PrivateMessage, channel string) chat.Messa
 		Text:          msg.Message,
 		TwitchEmotes:  msg.Tags["emotes"],
 		Bits:          msg.Bits,
+		// Tag is "1" only on the user's first message ever in this channel.
+		IsFirstMessage: msg.Tags["first-msg"] == "1",
 	}
 
 	// Extract parsed emote positions from the library

@@ -71,6 +71,11 @@ type Message struct {
 	SourceChannel string // channel the message originated from (empty = local)
 	IsSharedChat  bool   // true if from another channel's shared chat
 
+	// IsFirstMessage is Twitch's "first-msg" tag: this is the user's very
+	// first message in this channel. Twitch highlights these for the
+	// broadcaster and mods ("First-time chat").
+	IsFirstMessage bool
+
 	// Platform-specific metadata
 	TwitchEmotes     string         // raw emote tag from IRC
 	TwitchEmoteRanges []EmoteRange  // parsed emote positions (rune-based)

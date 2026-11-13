@@ -593,3 +593,18 @@ body.no-ts .ts { display: none; }
   font-style: italic;
   color: #777;
 }
+
+/* First message of a user in this channel (Twitch "first-msg" tag).
+   Twitch-purple left bar + tint, like Twitch's own "First-time chat". */
+.msg.first-msg {
+  border-left: 3px solid #a970ff;
+  background: rgba(169, 112, 255, 0.12);
+  padding-left: 6px;
+}
+.first-msg-label {
+  font-size: 0.78em;
+  font-weight: 600;
+  color: #bf94ff;
+  letter-spacing: 0.02em;
+  margin-bottom: 1px;
+}
