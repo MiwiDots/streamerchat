@@ -8,82 +8,104 @@ import (
 	"github.com/miwi/streamerchat/internal/credstore"
 )
 
-// twitchTokens is the on-disk shape we store in the OS keyring for Twitch.
-// Mirrors the access_token + refresh_token fields the rest of the app
-// reads off cfg.AccessToken / cfg.RefreshToken in memory.
+// twitchTokens is the blob we store in the OS keyring for Twitch.
+// Mirrors cfg.AccessToken / cfg.RefreshToken, which are memory-only
+// (`json:"-"` on HubConfig).
 type twitchTokens struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 }
 
-// migrateTwitchTokensFromConfig is called once per startup. If the saved
-// config.json still has access/refresh tokens AND the keyring doesn't yet
-// have an entry, copy them into the keyring and wipe the config.json
-// fields. Existing users upgrading from <=0.3.x get their session moved
-// transparently; fresh installs / re-installs go straight to the keyring.
+// migrateTwitchTokensFromConfig runs once at startup and hydrates the
+// in-memory tokens.
+//
+// A plaintext copy in config.json WINS over the keyring when present. It
+// is never older than the keyring entry: pre-v0.5.2 code wrote config.json
+// first and the keyring second with the same tokens, and the current code
+// only writes it when the keyring write failed (so the keyring is the
+// stale one). Twitch rotates refresh tokens, so picking the stale one
+// would force a re-login. The plaintext copy is then moved into the
+// keyring and wiped from disk; if the keyring is still unavailable it is
+// kept so the user isn't logged out.
 func (a *App) migrateTwitchTokensFromConfig() {
 	if a.cfg == nil {
 		return
 	}
-	// Already migrated? Just hydrate the in-memory cfg from the keyring.
-	if blob, err := credstore.Get(credstore.Twitch); err == nil && blob != "" {
-		var t twitchTokens
-		if json.Unmarshal([]byte(blob), &t) == nil {
-			if t.AccessToken != "" {
-				a.cfg.AccessToken = t.AccessToken
-			}
-			if t.RefreshToken != "" {
-				a.cfg.RefreshToken = t.RefreshToken
-			}
+	if a.cfg.LegacyAccessToken != "" || a.cfg.LegacyRefreshToken != "" {
+		a.cfg.AccessToken = a.cfg.LegacyAccessToken
+		a.cfg.RefreshToken = a.cfg.LegacyRefreshToken
+		if a.saveTwitchTokens() {
+			log.Printf("[CREDSTORE] moved Twitch tokens from config.json to OS keyring")
 		}
 		return
 	}
-	// Migrate path: tokens currently in config.json (left over from a
-	// pre-credstore install).
-	if a.cfg.AccessToken == "" && a.cfg.RefreshToken == "" {
-		return
-	}
-	t := twitchTokens{AccessToken: a.cfg.AccessToken, RefreshToken: a.cfg.RefreshToken}
-	blob, err := json.Marshal(t)
+
+	blob, err := credstore.Get(credstore.Twitch)
 	if err != nil {
-		log.Printf("[CREDSTORE] twitch migrate marshal: %v", err)
+		if !errors.Is(err, credstore.ErrNotFound) {
+			log.Printf("[CREDSTORE] twitch keyring read failed: %v", err)
+		}
 		return
 	}
-	if err := credstore.Set(credstore.Twitch, string(blob)); err != nil {
-		log.Printf("[CREDSTORE] twitch migrate write: %v", err)
+	var t twitchTokens
+	if err := json.Unmarshal([]byte(blob), &t); err != nil {
+		log.Printf("[CREDSTORE] twitch keyring entry unreadable: %v", err)
 		return
 	}
-	// Wipe the plaintext copies from the config file. Keep them in memory
-	// so the running session keeps working; on next refresh we'll save
-	// the fresh tokens back to the keyring via saveTwitchTokens().
-	prevAT, prevRT := a.cfg.AccessToken, a.cfg.RefreshToken
-	a.cfg.AccessToken, a.cfg.RefreshToken = "", ""
-	_ = a.cfg.Save()
-	a.cfg.AccessToken, a.cfg.RefreshToken = prevAT, prevRT
-	log.Printf("[CREDSTORE] migrated Twitch tokens from config.json to OS keyring")
+	a.cfg.AccessToken = t.AccessToken
+	a.cfg.RefreshToken = t.RefreshToken
 }
 
-// saveTwitchTokens persists the current in-memory access/refresh tokens
-// into the OS keyring. Call this from anywhere we refresh / update them
-// instead of cfg.Save() for the auth fields.
-func (a *App) saveTwitchTokens() {
+// saveTwitchTokens persists the in-memory tokens. Call it after every
+// token change. Returns true if they landed in the keyring.
+//
+// Keyring OK   → any plaintext fallback copy is wiped from config.json.
+// Keyring fail → tokens are written to config.json (0600) as a fallback,
+//
+//	with a log line, so a broken keyring doesn't force a re-login on
+//	every start. This is the only path that writes tokens to disk.
+func (a *App) saveTwitchTokens() bool {
 	if a.cfg == nil || a.cfg.AccessToken == "" {
-		return
+		return false
 	}
 	t := twitchTokens{AccessToken: a.cfg.AccessToken, RefreshToken: a.cfg.RefreshToken}
 	blob, err := json.Marshal(t)
 	if err != nil {
 		log.Printf("[CREDSTORE] twitch save marshal: %v", err)
-		return
+		return false
 	}
 	if err := credstore.Set(credstore.Twitch, string(blob)); err != nil {
-		log.Printf("[CREDSTORE] twitch save: %v", err)
+		log.Printf("[CREDSTORE] twitch keyring write failed, falling back to config.json: %v", err)
+		a.cfg.LegacyAccessToken = t.AccessToken
+		a.cfg.LegacyRefreshToken = t.RefreshToken
+		if err := a.cfg.Save(); err != nil {
+			log.Printf("[CREDSTORE] fallback save failed, tokens only in memory: %v", err)
+		}
+		return false
 	}
+	if a.cfg.LegacyAccessToken != "" || a.cfg.LegacyRefreshToken != "" {
+		a.wipeLegacyTokens()
+	}
+	return true
 }
 
-// clearTwitchTokens drops the saved keyring entry (logout path).
+// wipeLegacyTokens removes the plaintext token copy from config.json.
+func (a *App) wipeLegacyTokens() {
+	a.cfg.LegacyAccessToken, a.cfg.LegacyRefreshToken = "", ""
+	if err := a.cfg.Save(); err != nil {
+		log.Printf("[CREDSTORE] wiping plaintext tokens from config.json failed: %v", err)
+		return
+	}
+	log.Printf("[CREDSTORE] removed plaintext Twitch tokens from config.json")
+}
+
+// clearTwitchTokens drops the saved tokens everywhere (logout path):
+// the keyring entry and any plaintext fallback copy.
 func (a *App) clearTwitchTokens() {
 	if err := credstore.Clear(credstore.Twitch); err != nil && !errors.Is(err, credstore.ErrNotFound) {
 		log.Printf("[CREDSTORE] twitch clear: %v", err)
+	}
+	if a.cfg != nil && (a.cfg.LegacyAccessToken != "" || a.cfg.LegacyRefreshToken != "") {
+		a.wipeLegacyTokens()
 	}
 }

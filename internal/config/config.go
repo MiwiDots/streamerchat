@@ -3,9 +3,19 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"sync"
+
+	"github.com/miwi/streamerchat/internal/fsutil"
 )
+
+// saveMu serializes Save() calls. Several goroutines save (token refresh,
+// IRC supervisor, UI-bound setters); without this two writes could
+// interleave. It does NOT make concurrent mutation of Config fields safe —
+// callers still need their own lock (App.mu) around changes.
+var saveMu sync.Mutex
 
 // Config holds all application configuration.
 //
@@ -33,6 +43,11 @@ type Config struct {
 
 	Profiles        []Profile `json:"profiles"`
 	ActiveProfileID string    `json:"active_profile_id"`
+
+	// LoadWarning is set (never persisted) when Load had to fall back to
+	// defaults because the file on disk was unreadable or corrupt. The app
+	// shows it to the user once so a silently "reset" config is explained.
+	LoadWarning string `json:"-"`
 }
 
 // Profile is one Twitch+YouTube account context the user can switch
@@ -108,6 +123,12 @@ func ConfigPath() (string, error) {
 // profiles schema, the legacy top-level Twitch+YouTube fields are
 // promoted into a synthetic "Default" profile so existing installs
 // keep their tokens transparently.
+//
+// A corrupt file (e.g. truncated by a crash in an older version that did
+// not write atomically) must not brick the app: the bytes are copied to
+// config.json.corrupt-<timestamp>, defaults are returned and LoadWarning
+// tells the user where their old settings went. Only a failure to even
+// determine the config path is returned as an error.
 func Load() (*Config, error) {
 	path, err := ConfigPath()
 	if err != nil {
@@ -116,17 +137,27 @@ func Load() (*Config, error) {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			cfg := DefaultConfig()
-			cfg.ensureProfile()
-			return cfg, nil
+		cfg := DefaultConfig()
+		cfg.ensureProfile()
+		if !os.IsNotExist(err) {
+			log.Printf("[CONFIG] read %s failed, using defaults: %v", path, err)
+			cfg.LoadWarning = fmt.Sprintf("Could not read config (%v) — running with default settings.", err)
 		}
-		return nil, fmt.Errorf("read config: %w", err)
+		return cfg, nil
 	}
 
 	cfg := DefaultConfig()
 	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
+		log.Printf("[CONFIG] parse %s failed: %v", path, err)
+		fresh := DefaultConfig()
+		fresh.ensureProfile()
+		if backup, bErr := fsutil.BackupCorrupt(path, data); bErr == nil {
+			fresh.LoadWarning = fmt.Sprintf("Config file was corrupt and has been reset. Your old file was saved as %s", backup)
+		} else {
+			log.Printf("[CONFIG] %v", bErr)
+			fresh.LoadWarning = "Config file was corrupt and has been reset (backup failed, see log)."
+		}
+		return fresh, nil
 	}
 	cfg.ensureProfile()
 	return cfg, nil
@@ -137,6 +168,8 @@ func Load() (*Config, error) {
 // in-session changes (token refresh, channel rename, ...) get
 // persisted to the right account slot.
 func (c *Config) Save() error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
 	c.syncActiveToProfile()
 
 	path, err := ConfigPath()
@@ -153,7 +186,8 @@ func (c *Config) Save() error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
-	return os.WriteFile(path, data, 0600)
+	// Atomic replace: a crash mid-write must never leave a truncated file.
+	return fsutil.WriteFileAtomic(path, data, 0600)
 }
 
 // ensureProfile guarantees Profiles is non-empty + ActiveProfileID

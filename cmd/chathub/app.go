@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/miwi/streamerchat/internal/chat"
+	"github.com/miwi/streamerchat/internal/fsutil"
 	"github.com/miwi/streamerchat/internal/selfupdate"
 	"github.com/miwi/streamerchat/internal/sevenTV"
 	"github.com/miwi/streamerchat/internal/twitch"
@@ -53,32 +54,76 @@ type HubConfig struct {
 	FontSize int `json:"font_size"`
 
 	// Optional Twitch auth for sending messages
-	ClientID     string `json:"client_id"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	Username     string `json:"username"`
-	UserID       string `json:"user_id"`
+	ClientID string `json:"client_id"`
+	Username string `json:"username"`
+	UserID   string `json:"user_id"`
+
+	// AccessToken / RefreshToken live in the OS keyring (see
+	// twitch_creds.go) and are only held in memory. `json:"-"` is
+	// load-bearing: before v0.5.2 they were tagged and every Save() wrote
+	// them back to config.json in plain text, undoing the keyring move.
+	AccessToken  string `json:"-"`
+	RefreshToken string `json:"-"`
+
+	// LegacyAccessToken / LegacyRefreshToken map the old plaintext JSON
+	// keys. They are read once for migration into the keyring and are
+	// otherwise empty (omitempty drops them from the file). The only time
+	// they are written is the explicit fallback in saveTwitchTokens when
+	// the OS keyring is unavailable — better than forcing a re-login on
+	// every start.
+	LegacyAccessToken  string `json:"access_token,omitempty"`
+	LegacyRefreshToken string `json:"refresh_token,omitempty"`
+
+	// LoadWarning is shown once to the user when the config could not be
+	// read and defaults were used. Never persisted.
+	LoadWarning string `json:"-"`
 }
+
+// hubSaveMu serializes HubConfig.Save calls (token refresh goroutine,
+// UI-bound setters, login goroutine all save). It does not protect
+// concurrent field mutation — that still needs App.mu.
+var hubSaveMu sync.Mutex
 
 func loadHubConfig() *HubConfig {
 	cfg := &HubConfig{Channels: []string{}, Theme: "dark"}
 	path := hubConfigPath()
 	log.Printf("[CONFIG] Loading from: %s", path)
-	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, cfg); err != nil {
-			log.Printf("[CONFIG] Parse error: %v", err)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[CONFIG] Read failed, using defaults: %v", err)
+			cfg.LoadWarning = fmt.Sprintf("Could not read config (%v) — running with default settings.", err)
 		} else {
-			log.Printf("[CONFIG] Loaded %d channels, %d highlights", len(cfg.Channels), len(cfg.Highlights))
+			log.Printf("[CONFIG] Not found (will create on save)")
 		}
-	} else {
-		log.Printf("[CONFIG] Not found (will create on save): %v", err)
+		return cfg
 	}
+	if err := json.Unmarshal(data, cfg); err != nil {
+		// A corrupt file must not be silently replaced by defaults on the
+		// next Save — that used to wipe every channel and highlight.
+		// Keep a copy next to it and tell the user.
+		log.Printf("[CONFIG] Parse error: %v", err)
+		fresh := &HubConfig{Channels: []string{}, Theme: "dark"}
+		if backup, bErr := fsutil.BackupCorrupt(path, data); bErr == nil {
+			fresh.LoadWarning = fmt.Sprintf("Config file was corrupt and has been reset. Your old file was saved as %s", backup)
+		} else {
+			log.Printf("[CONFIG] %v", bErr)
+			fresh.LoadWarning = "Config file was corrupt and has been reset (backup failed, see log)."
+		}
+		return fresh
+	}
+	log.Printf("[CONFIG] Loaded %d channels, %d highlights", len(cfg.Channels), len(cfg.Highlights))
 	return cfg
 }
 
+// Save writes the config atomically (temp file + rename) with 0600
+// permissions: a crash mid-write must never leave a truncated file, and
+// the file may hold a keyring-fallback token.
 func (c *HubConfig) Save() error {
+	hubSaveMu.Lock()
+	defer hubSaveMu.Unlock()
 	path := hubConfigPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		log.Printf("[CONFIG] MkdirAll failed: %v", err)
 		return err
 	}
@@ -87,8 +132,8 @@ func (c *HubConfig) Save() error {
 		log.Printf("[CONFIG] Marshal failed: %v", err)
 		return err
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		log.Printf("[CONFIG] WriteFile failed: %v (path=%s)", err, path)
+	if err := fsutil.WriteFileAtomic(path, data, 0600); err != nil {
+		log.Printf("[CONFIG] Write failed: %v (path=%s)", err, path)
 		return err
 	}
 	log.Printf("[CONFIG] Saved %d channels to %s", len(c.Channels), path)
@@ -386,7 +431,6 @@ func (a *App) refreshTokenSync() bool {
 	}
 	a.cfg.AccessToken = token.AccessToken
 	a.cfg.RefreshToken = token.RefreshToken
-	a.cfg.Save()
 	a.saveTwitchTokens()
 	log.Printf("[AUTH] Token refreshed successfully")
 	return true
@@ -1313,8 +1357,8 @@ func (a *App) StartLogin() map[string]interface{} {
 		a.cfg.Username = info.Login
 		a.cfg.UserID = info.UserID
 		a.cfg.Save()
-		// Tokens go straight into the OS keyring; the config.json copy is
-		// wiped by saveTwitchTokens on the next Save round-trip.
+		// Tokens are memory-only on HubConfig (json:"-"); this puts them
+		// into the OS keyring (or the logged plaintext fallback).
 		a.saveTwitchTokens()
 
 		// Start the authenticated sender so the user can post immediately.

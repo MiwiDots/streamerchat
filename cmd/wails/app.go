@@ -126,26 +126,43 @@ func (a *App) shutdown(_ context.Context) {
 }
 
 // bootSequence handles auth + initial connection.
+//
+// Profile-switch safety: every network call here can take seconds, and
+// SwitchProfile starts a NEW bootSequence for the incoming profile. All
+// writes back into cfg therefore go through commitTokens / the locked
+// block below, which drop the result if the profile changed meanwhile —
+// otherwise profile A's tokens would be saved into profile B's slot (and
+// A's single-use refresh token would be lost).
 func (a *App) bootSequence() {
 	if a.cfg == nil {
 		return
 	}
 
-	if a.cfg.Twitch.AccessToken == "" || a.cfg.Twitch.ClientID == "" {
+	a.mu.Lock()
+	profileID := a.cfg.ActiveProfileID
+	clientID := a.cfg.Twitch.ClientID
+	clientSecret := a.cfg.Twitch.ClientSecret
+	accessToken := a.cfg.Twitch.AccessToken
+	refreshToken := a.cfg.Twitch.RefreshToken
+	a.mu.Unlock()
+
+	if accessToken == "" || clientID == "" {
 		a.emitSystem("This profile has no Twitch token yet. Open Settings → Twitch and click Login to authenticate.")
 		runtime.EventsEmit(a.ctx, "authExpired", nil)
 		return
 	}
 
-	info, err := twitch.ValidateToken(a.cfg.Twitch.AccessToken)
+	info, err := twitch.ValidateToken(accessToken)
 	if err != nil {
 		log.Printf("[AUTH] Validate failed: %v", err)
-		if a.cfg.Twitch.RefreshToken != "" {
+		if refreshToken != "" {
 			log.Printf("[AUTH] Attempting refresh...")
-			if token, refErr := twitch.RefreshAccessToken(a.cfg.Twitch.ClientID, a.cfg.Twitch.ClientSecret, a.cfg.Twitch.RefreshToken); refErr == nil {
-				a.cfg.Twitch.AccessToken = token.AccessToken
-				a.cfg.Twitch.RefreshToken = token.RefreshToken
-				a.cfg.Save()
+			if token, refErr := twitch.RefreshAccessToken(clientID, clientSecret, refreshToken); refErr == nil {
+				if !a.commitTokens(profileID, token) {
+					log.Printf("[AUTH] Profile switched during boot refresh — aborting stale boot for %s", profileID)
+					return
+				}
+				accessToken = token.AccessToken
 				if validInfo, vErr := twitch.ValidateToken(token.AccessToken); vErr == nil {
 					info = validInfo
 					log.Printf("[AUTH] Refreshed and validated as %s", validInfo.Login)
@@ -161,11 +178,13 @@ func (a *App) bootSequence() {
 		// Proactively refresh even on validate-success so the new session
 		// starts with a freshly-issued token. Failure here is non-fatal —
 		// the validated token is still good for its remaining TTL.
-		if a.cfg.Twitch.RefreshToken != "" {
-			if tok, rerr := twitch.RefreshAccessToken(a.cfg.Twitch.ClientID, a.cfg.Twitch.ClientSecret, a.cfg.Twitch.RefreshToken); rerr == nil {
-				a.cfg.Twitch.AccessToken = tok.AccessToken
-				a.cfg.Twitch.RefreshToken = tok.RefreshToken
-				a.cfg.Save()
+		if refreshToken != "" {
+			if tok, rerr := twitch.RefreshAccessToken(clientID, clientSecret, refreshToken); rerr == nil {
+				if !a.commitTokens(profileID, tok) {
+					log.Printf("[AUTH] Profile switched during boot refresh — aborting stale boot for %s", profileID)
+					return
+				}
+				accessToken = tok.AccessToken
 				log.Printf("[AUTH] Token refreshed at boot")
 			} else {
 				log.Printf("[AUTH] Boot refresh failed (non-fatal): %v", rerr)
@@ -181,16 +200,21 @@ func (a *App) bootSequence() {
 		runtime.EventsEmit(a.ctx, "authExpired", nil)
 		return
 	}
-	if info != nil {
-		a.cfg.Twitch.Username = info.Login
-		a.cfg.Twitch.BotUserID = info.UserID
-	}
-	if a.cfg.Twitch.Channel == "" {
-		a.cfg.Twitch.Channel = a.cfg.Twitch.Username
-		a.cfg.Save()
-	}
 
-	a.helixClient, _ = twitch.NewHelixClient(a.cfg.Twitch.ClientID, a.cfg.Twitch.AccessToken, a.cfg.Twitch.BotUserID, a.cfg.Twitch.BotUserID)
+	a.mu.Lock()
+	if a.cfg.ActiveProfileID != profileID {
+		a.mu.Unlock()
+		log.Printf("[AUTH] Profile switched during boot — aborting stale boot for %s", profileID)
+		return
+	}
+	a.cfg.Twitch.Username = info.Login
+	a.cfg.Twitch.BotUserID = info.UserID
+	if a.cfg.Twitch.Channel == "" {
+		a.cfg.Twitch.Channel = info.Login
+	}
+	a.cfg.Save()
+	a.helixClient, _ = twitch.NewHelixClient(clientID, accessToken, info.UserID, info.UserID)
+	a.mu.Unlock()
 
 	// EventSub: per-profile, started here after auth so subscribes
 	// go out with the fresh access token. Any previous session for
@@ -325,19 +349,27 @@ func (a *App) RenameProfile(id, newName string) string {
 // with the new credentials. The frontend gets a "profileSwitched"
 // event so it can clear chat view + user list + badge cache.
 func (a *App) SwitchProfile(id string) string {
+	// The switch itself happens under a.mu: commitTokens and the boot /
+	// login goroutines compare ActiveProfileID under the same lock, so
+	// they either finish their write before the switch or see the new id
+	// and discard their (now foreign) tokens.
+	a.mu.Lock()
 	if id == a.cfg.ActiveProfileID {
+		a.mu.Unlock()
 		return ""
 	}
 	if err := a.cfg.SwitchProfile(id); err != nil {
+		a.mu.Unlock()
 		return err.Error()
 	}
-	_ = a.cfg.Save()
+	if err := a.cfg.Save(); err != nil {
+		log.Printf("[PROFILE] save after switch failed: %v", err)
+	}
 
 	// Tear down old connections. The supervisor's Connect() returns
 	// from Disconnect() and the next reconnect picks up the new
 	// cfg.Twitch.*. YT gets re-detected from the new profile's
 	// channel handle.
-	a.mu.Lock()
 	if a.ircClient != nil {
 		a.ircClient.Disconnect()
 	}
@@ -441,14 +473,9 @@ func (a *App) runIRCSupervisor() {
 			refreshToken := a.cfg.Twitch.RefreshToken
 			a.mu.Unlock()
 			if token, refErr := twitch.RefreshAccessToken(clientID, clientSecret, refreshToken); refErr == nil {
-				a.mu.Lock()
-				if a.cfg.ActiveProfileID == activeAtStart {
-					a.cfg.Twitch.AccessToken = token.AccessToken
-					a.cfg.Twitch.RefreshToken = token.RefreshToken
-					a.cfg.Save()
-					a.applyRefreshedToken(token.AccessToken)
+				if !a.commitTokens(activeAtStart, token) {
+					log.Printf("[AUTH] Profile switched during supervisor refresh — discarding tokens for %s", activeAtStart)
 				}
-				a.mu.Unlock()
 				backoff = 2 * time.Second
 				continue
 			}
@@ -527,17 +554,10 @@ func (a *App) tokenRefreshLoop() {
 			log.Printf("[AUTH] Token refresh failed: %v", err)
 			continue
 		}
-		a.mu.Lock()
-		if a.cfg.ActiveProfileID != activeAtStart {
-			a.mu.Unlock()
+		if !a.commitTokens(activeAtStart, token) {
 			log.Printf("[AUTH] Profile switched during refresh — discarding tokens for %s", activeAtStart)
 			continue
 		}
-		a.cfg.Twitch.AccessToken = token.AccessToken
-		a.cfg.Twitch.RefreshToken = token.RefreshToken
-		a.cfg.Save()
-		a.applyRefreshedToken(token.AccessToken)
-		a.mu.Unlock()
 		log.Printf("[AUTH] Token refreshed")
 		// Reload badges with the fresh token in case the previous load failed.
 		a.loadBadges()
@@ -584,6 +604,27 @@ func (a *App) startEventSub() {
 	a.esClient = client
 	a.mu.Unlock()
 	go client.Start()
+}
+
+// commitTokens stores freshly issued tokens for profileID, but only if
+// that profile is still the active one. Returns false (and writes nothing)
+// when the user switched profiles while the network call was in flight —
+// the flat cfg.Twitch now mirrors a different account and Save() would
+// copy the tokens into the wrong profile slot.
+// Must be called WITHOUT a.mu held.
+func (a *App) commitTokens(profileID string, tok *twitch.TokenResponse) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cfg.ActiveProfileID != profileID {
+		return false
+	}
+	a.cfg.Twitch.AccessToken = tok.AccessToken
+	a.cfg.Twitch.RefreshToken = tok.RefreshToken
+	if err := a.cfg.Save(); err != nil {
+		log.Printf("[AUTH] saving refreshed tokens failed: %v", err)
+	}
+	a.applyRefreshedToken(tok.AccessToken)
+	return true
 }
 
 // applyRefreshedToken pushes a freshly refreshed access token into every
@@ -1141,13 +1182,22 @@ func (a *App) StartLogin() map[string]interface{} {
 	if a.cfg.Twitch.ClientID == "" {
 		return map[string]interface{}{"error": "no client_id configured"}
 	}
-	device, err := twitch.RequestDeviceCode(a.cfg.Twitch.ClientID)
+	a.mu.Lock()
+	clientID := a.cfg.Twitch.ClientID
+	// The login belongs to the profile that was active when the user
+	// clicked Login. The device-code flow can take minutes (user approves
+	// in the browser); if they switch profiles meanwhile, writing the
+	// result would overwrite the OTHER profile's account.
+	profileID := a.cfg.ActiveProfileID
+	a.mu.Unlock()
+
+	device, err := twitch.RequestDeviceCode(clientID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
 	go func() {
-		token, err := twitch.PollForToken(a.cfg.Twitch.ClientID, device.DeviceCode, device.Interval)
+		token, err := twitch.PollForToken(clientID, device.DeviceCode, device.Interval)
 		if err != nil {
 			runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{"error": err.Error()})
 			return
@@ -1155,6 +1205,15 @@ func (a *App) StartLogin() map[string]interface{} {
 		info, err := twitch.ValidateToken(token.AccessToken)
 		if err != nil {
 			runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{"error": err.Error()})
+			return
+		}
+		a.mu.Lock()
+		if a.cfg.ActiveProfileID != profileID {
+			a.mu.Unlock()
+			log.Printf("[AUTH] Profile switched during device login — discarding login for %s", profileID)
+			runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{
+				"error": "Profile was switched during login. Please log in again on this profile.",
+			})
 			return
 		}
 		a.cfg.Twitch.AccessToken = token.AccessToken
@@ -1165,6 +1224,8 @@ func (a *App) StartLogin() map[string]interface{} {
 			a.cfg.Twitch.Channel = info.Login
 		}
 		a.cfg.Save()
+		a.helixClient, _ = twitch.NewHelixClient(clientID, token.AccessToken, info.UserID, info.UserID)
+		a.mu.Unlock()
 		log.Printf("[AUTH] Device-code login complete for %s", info.Login)
 
 		// Rebuild helix client and (re)start everything that depends on auth.
@@ -1172,9 +1233,12 @@ func (a *App) StartLogin() map[string]interface{} {
 		// have bailed out before starting these — so we (re)kick them here.
 		// Calling them again after a normal startup is idempotent enough
 		// (channelEmotesLoaded gates per-channel work, supervisor loops are
-		// single instances by construction).
-		a.helixClient, _ = twitch.NewHelixClient(a.cfg.Twitch.ClientID, a.cfg.Twitch.AccessToken, a.cfg.Twitch.BotUserID, a.cfg.Twitch.BotUserID)
+		// single instances by construction). The Helix client was rebuilt
+		// above under a.mu. EventSub is restarted so it subscribes with the
+		// new token — on a fresh install bootSequence never started it, and
+		// after a re-login the old session still holds the dead token.
 		a.loadBadges()
+		a.startEventSub()
 
 		// Tear down any existing IRC client so the supervisor reconnects
 		// with the fresh credentials, or starts cold if none was

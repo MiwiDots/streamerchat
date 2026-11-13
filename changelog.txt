@@ -1,3 +1,44 @@
+2026-11-13 19:00 - v0.5.2 (stable): tokens stay out of chathub's config.json,
+  config files are written atomically, and streamerchat no longer mixes
+  tokens between profiles. Updater still untouched.
+
+  - chathub: AccessToken/RefreshToken are now `json:"-"`. Before, the
+    keyring "migration" was undone by the very next Save() (token
+    validation, every 30-min refresh, login, any settings change),
+    which wrote both tokens back to config.json in plain text with
+    0644. The old JSON keys are read into Legacy* fields once, moved
+    to the keyring and wiped. If the keyring is unavailable the
+    tokens are kept in config.json as an explicit, logged fallback
+    (0600) instead of forcing a re-login every start. Logout clears
+    both places.
+  - New internal/fsutil.WriteFileAtomic (temp file in same dir ->
+    fsync -> rename, perms set before rename). Used by both apps'
+    config Save, which is now also serialized with a mutex. A crash
+    mid-save can no longer leave a truncated config.
+  - Corrupt config no longer bricks / wipes: streamerchat used to
+    return early from startup with cfg == nil (dead app), chathub
+    silently fell back to defaults and the next Save erased all
+    channels + highlights. Now the bad file is copied to
+    config.json.corrupt-<timestamp>, defaults are used, and a native
+    warning dialog (new OnDomReady hook) tells the user where the
+    backup is.
+  - chathub config is now written with 0600 / dir 0700 (was 0644/0755).
+  - streamerchat profile safety: bootSequence refreshes and the
+    device-code login wrote tokens into whatever profile was active
+    when the network call returned. Switching profiles mid-boot or
+    mid-login saved account A's tokens into profile B (and burned A's
+    single-use refresh token). All token writes now go through
+    App.commitTokens(profileID, ...) which drops the result if the
+    profile changed; SwitchProfile flips the profile under a.mu so
+    the check is race-free. A login interrupted by a profile switch
+    reports "Profile was switched during login" instead.
+  - streamerchat login now (re)starts EventSub: on a fresh install the
+    activity feed stayed empty until restart, and after a re-login
+    the old session kept the dead token.
+  - Tests: internal/fsutil, internal/config (corrupt-file backup,
+    save/load round trip), cmd/chathub (tokens never serialized,
+    legacy keys land in Legacy* fields).
+
 2026-11-13 18:43 - v0.5.1 (stable): Helix errors are no longer
   swallowed, /timeout 0 can't ban permanently anymore, and the Helix
   client + EventSub pick up refreshed tokens. Updater still untouched.
