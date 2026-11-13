@@ -41,7 +41,13 @@ type App struct {
 	emotes      *twitch.ThirdPartyEmotes
 	badges      *twitch.BadgeRegistry
 
-	ytChatCancel context.CancelFunc
+	// Per-profile background work. All guarded by mu, all cancelled in
+	// SwitchProfile — they used to run on a.ctx forever, so every profile
+	// switch / login / YouTube settings change leaked another copy, and a
+	// stale YouTube detector could take over the current profile's chat.
+	ytChatCancel   context.CancelFunc // running InnerTube chat poller
+	ytDetectCancel context.CancelFunc // running YouTube live detector
+	rolesCancel    context.CancelFunc // Helix chatter/role poller
 
 	// 7TV cosmetics over EventAPI: subscribes to entitlement events for
 	// this streamer's Twitch channel so paint/badge updates can be
@@ -251,20 +257,13 @@ func (a *App) bootSequence() {
 	}
 	a.mu.Unlock()
 
-	if a.helixClient != nil {
-		go a.loadChattersAndRoles()
-	}
-
-	if a.cfg.YouTube.VideoID != "" {
-		a.startYouTubeChat(a.cfg.YouTube.VideoID)
-	} else if a.cfg.YouTube.ChannelHandle != "" {
-		go a.startYouTubeAutoDetect(a.cfg.YouTube.ChannelHandle)
-	}
+	a.startChattersAndRoles()
+	a.startYouTube()
 
 	runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
 		"channel":        a.cfg.Twitch.Channel,
 		"username":       a.cfg.Twitch.Username,
-		"youtube":        a.cfg.YouTube.ChannelHandle != "" || a.cfg.YouTube.VideoID != "",
+		"youtube":        (a.cfg.YouTube.Enabled && a.cfg.YouTube.ChannelHandle != "") || a.cfg.YouTube.VideoID != "",
 		"showTimestamps": a.cfg.UI.ShowTimestamps,
 	})
 }
@@ -373,9 +372,10 @@ func (a *App) SwitchProfile(id string) string {
 	if a.ircClient != nil {
 		a.ircClient.Disconnect()
 	}
-	if a.ytChatCancel != nil {
-		a.ytChatCancel()
-		a.ytChatCancel = nil
+	a.stopYouTubeLocked()
+	if a.rolesCancel != nil {
+		a.rolesCancel()
+		a.rolesCancel = nil
 	}
 	if a.esCancel != nil {
 		a.esCancel()
@@ -416,9 +416,18 @@ func (a *App) activeProfileName() string {
 	return ""
 }
 
+// IRC supervisor reconnect timing. A connection that stayed up at least
+// ircHealthySessionMin resets the backoff; before, it only reset after a
+// token refresh, so after ~5 blips (or a few profile switches, which
+// disconnect on purpose) every reconnect waited the full minute.
+const (
+	ircBackoffMin        = 2 * time.Second
+	ircBackoffMax        = 60 * time.Second
+	ircHealthySessionMin = 30 * time.Second
+)
+
 func (a *App) runIRCSupervisor() {
-	backoff := 2 * time.Second
-	maxBackoff := 60 * time.Second
+	backoff := ircBackoffMin
 
 	for {
 		select {
@@ -428,14 +437,16 @@ func (a *App) runIRCSupervisor() {
 		}
 
 		client := twitch.NewIRCClient(a.cfg.Twitch.Username, a.cfg.Twitch.AccessToken, a.cfg.Twitch.Channel)
-		if a.helixClient != nil {
-			client.SetRoomResolver(func(roomID string) string {
-				if name, err := a.helixClient.GetChannelName(roomID); err == nil {
+		// The resolver looks the Helix client up on every call: it outlives
+		// profile switches (which nil the client) and token rebuilds.
+		client.SetRoomResolver(func(roomID string) string {
+			if h := a.helix(); h != nil {
+				if name, err := h.GetChannelName(roomID); err == nil {
 					return name
 				}
-				return roomID
-			})
-		}
+			}
+			return roomID
+		})
 		a.mu.Lock()
 		a.ircClient = client
 		a.mu.Unlock()
@@ -444,12 +455,16 @@ func (a *App) runIRCSupervisor() {
 		go a.forwardIRC(clientCtx, client)
 
 		log.Printf("[IRC] Connecting to #%s", a.cfg.Twitch.Channel)
+		started := time.Now()
 		err := client.Connect()
 		cancelClient()
 		client.Disconnect()
 
 		if a.ctx.Err() != nil {
 			return
+		}
+		if time.Since(started) >= ircHealthySessionMin {
+			backoff = ircBackoffMin
 		}
 
 		log.Printf("[IRC] Disconnected: %v", err)
@@ -476,7 +491,7 @@ func (a *App) runIRCSupervisor() {
 				if !a.commitTokens(activeAtStart, token) {
 					log.Printf("[AUTH] Profile switched during supervisor refresh — discarding tokens for %s", activeAtStart)
 				}
-				backoff = 2 * time.Second
+				backoff = ircBackoffMin
 				continue
 			}
 		}
@@ -487,8 +502,8 @@ func (a *App) runIRCSupervisor() {
 		case <-time.After(backoff):
 		}
 		backoff *= 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
+		if backoff > ircBackoffMax {
+			backoff = ircBackoffMax
 		}
 	}
 }
@@ -606,6 +621,16 @@ func (a *App) startEventSub() {
 	go client.Start()
 }
 
+// helix returns the current Helix client (nil when logged out or during a
+// profile switch). Always take a local snapshot through this and use only
+// that: a.helixClient is replaced / nil'd under a.mu by SwitchProfile,
+// login and boot, so reading the field twice can hit nil in between.
+func (a *App) helix() *twitch.HelixClient {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.helixClient
+}
+
 // commitTokens stores freshly issued tokens for profileID, but only if
 // that profile is still the active one. Returns false (and writes nothing)
 // when the user switched profiles while the network call was in flight —
@@ -642,6 +667,22 @@ func (a *App) applyRefreshedToken(accessToken string) {
 	}
 }
 
+// startChattersAndRoles (re)starts the Helix chatter/role poller for the
+// active profile, cancelling the previous one. No-op without a Helix client.
+func (a *App) startChattersAndRoles() {
+	if a.helix() == nil {
+		return
+	}
+	a.mu.Lock()
+	if a.rolesCancel != nil {
+		a.rolesCancel()
+	}
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.rolesCancel = cancel
+	a.mu.Unlock()
+	go a.loadChattersAndRoles(ctx)
+}
+
 // loadChattersAndRoles bootstraps the sidebar user list + moderator/vip
 // state from Helix, then starts a background loop that keeps everything
 // authoritative. Chatters get refreshed every 60s so users who left get
@@ -649,7 +690,7 @@ func (a *App) applyRefreshedToken(accessToken string) {
 // never fires) and Stream Together co-hosts / their chatters don't leak
 // into our sidebar. This is the pattern Chatterino uses: IRC is the
 // realtime feed, Helix is the ground truth.
-func (a *App) loadChattersAndRoles() {
+func (a *App) loadChattersAndRoles(ctx context.Context) {
 	a.refreshChatters()
 	a.refreshRoles(true)
 
@@ -659,7 +700,7 @@ func (a *App) loadChattersAndRoles() {
 	defer rolesTicker.Stop()
 	for {
 		select {
-		case <-a.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-chattersTicker.C:
 			a.refreshChatters()
@@ -684,10 +725,11 @@ func (a *App) loadChattersAndRoles() {
 //     sidebar would go blank every 60s. The visible chatters we
 //     already have (from IRC join + chat messages) stay.
 func (a *App) refreshChatters() {
-	if a.helixClient == nil {
+	h := a.helix()
+	if h == nil {
 		return
 	}
-	chatters, err := a.helixClient.GetChatters()
+	chatters, err := h.GetChatters()
 	if err != nil {
 		log.Printf("[CHATTERS] refresh failed: %v", err)
 		return
@@ -710,20 +752,21 @@ func (a *App) refreshChatters() {
 }
 
 func (a *App) refreshRoles(includeBots bool) {
-	if a.helixClient == nil {
+	h := a.helix()
+	if h == nil {
 		return
 	}
 	roles := map[string]interface{}{
 		"broadcaster": a.cfg.Twitch.Channel,
 	}
-	if mods, err := a.helixClient.GetModerators(); err == nil {
+	if mods, err := h.GetModerators(); err == nil {
 		roles["mods"] = mods
 	}
-	if vips, err := a.helixClient.GetVIPs(); err == nil {
+	if vips, err := h.GetVIPs(); err == nil {
 		roles["vips"] = vips
 	}
 	if includeBots {
-		chatters, _ := a.helixClient.GetChatters()
+		chatters, _ := h.GetChatters()
 		var botNames []string
 		for _, c := range chatters {
 			if a.botDetector.IsBot(c.UserLogin) {
@@ -735,12 +778,61 @@ func (a *App) refreshRoles(includeBots bool) {
 	runtime.EventsEmit(a.ctx, "roles", roles)
 }
 
-func (a *App) startYouTubeChat(videoID string) {
+// startYouTube (re)starts YouTube for the active profile from cfg,
+// stopping whatever ran before. A manual VideoID override connects
+// directly; otherwise the live detector runs only if YouTube is enabled
+// (the Enabled flag used to be ignored at boot, so "disable YouTube" came
+// back after every restart).
+func (a *App) startYouTube() {
 	a.mu.Lock()
+	a.stopYouTubeLocked()
+	videoID := a.cfg.YouTube.VideoID
+	handle := a.cfg.YouTube.ChannelHandle
+	enabled := a.cfg.YouTube.Enabled
+	var detectCtx context.Context
+	if videoID == "" && enabled && handle != "" {
+		var cancel context.CancelFunc
+		detectCtx, cancel = context.WithCancel(a.ctx)
+		a.ytDetectCancel = cancel
+	}
+	a.mu.Unlock()
+
+	switch {
+	case videoID != "":
+		a.startYouTubeChat(a.ctx, videoID)
+	case detectCtx != nil:
+		go a.runYouTubeDetector(detectCtx, handle)
+	}
+}
+
+// stopYouTubeLocked cancels the detector and the chat poller.
+// Caller must hold a.mu.
+func (a *App) stopYouTubeLocked() {
+	if a.ytDetectCancel != nil {
+		a.ytDetectCancel()
+		a.ytDetectCancel = nil
+	}
+	if a.ytChatCancel != nil {
+		a.ytChatCancel()
+		a.ytChatCancel = nil
+	}
+}
+
+// startYouTubeChat connects the InnerTube poller for videoID as a child of
+// parent (the detector's context, or a.ctx for a manual VideoID), replacing
+// any running chat. A parent that is already cancelled is ignored — that
+// is a stale detector firing after a profile switch, and it must not
+// cancel the current profile's chat.
+func (a *App) startYouTubeChat(parent context.Context, videoID string) {
+	a.mu.Lock()
+	if parent.Err() != nil {
+		a.mu.Unlock()
+		return
+	}
 	if a.ytChatCancel != nil {
 		a.ytChatCancel()
 	}
-	chatCtx, cancel := context.WithCancel(a.ctx)
+	chatCtx, cancel := context.WithCancel(parent)
 	a.ytChatCancel = cancel
 	a.mu.Unlock()
 
@@ -760,37 +852,36 @@ func (a *App) startYouTubeChat(videoID string) {
 	}()
 
 	go func() {
-		for attempt := 0; attempt < 5; attempt++ {
-			if chatCtx.Err() != nil {
-				return
-			}
-			if err := ytClient.Connect(chatCtx); err != nil {
-				select {
-				case <-chatCtx.Done():
-					return
-				case <-time.After(5 * time.Second):
-				}
-				continue
-			}
-			a.emitSystem(fmt.Sprintf("Connected to YouTube chat (video: %s)", videoID))
-			return
-		}
+		// On success Connect itself posts "Connected to live chat".
+		_ = ytClient.ConnectWithRetry(chatCtx, func(err error, wait time.Duration) {
+			log.Printf("[YT] connect to %s failed, retrying in %s: %v", videoID, wait, err)
+		})
 	}()
 }
 
-func (a *App) startYouTubeAutoDetect(handle string) {
+// runYouTubeDetector polls handle's live state until ctx is cancelled.
+// Its callbacks re-check ctx so a detector that was replaced (profile
+// switch, settings change) can't start or stop the current chat.
+func (a *App) runYouTubeDetector(ctx context.Context, handle string) {
 	detector := youtube.NewLiveDetector(
 		handle,
 		func(info youtube.LiveStreamInfo) {
+			if ctx.Err() != nil {
+				return
+			}
 			title := info.Title
 			if title == "" {
 				title = info.VideoID
 			}
 			a.emitSystem(fmt.Sprintf("YouTube stream detected: %s", title))
-			a.startYouTubeChat(info.VideoID)
+			a.startYouTubeChat(ctx, info.VideoID)
 		},
 		func() {
 			a.mu.Lock()
+			if ctx.Err() != nil {
+				a.mu.Unlock()
+				return
+			}
 			if a.ytChatCancel != nil {
 				a.ytChatCancel()
 				a.ytChatCancel = nil
@@ -799,7 +890,7 @@ func (a *App) startYouTubeAutoDetect(handle string) {
 			a.emitSystem("YouTube stream ended")
 		},
 	)
-	detector.Start(a.ctx)
+	detector.Start(ctx)
 }
 
 // === Event emitters ===
@@ -1158,6 +1249,7 @@ func (a *App) SetYouTubeConfig(enabled bool, channelHandle string) string {
 	if handle != "" && !strings.HasPrefix(handle, "@") {
 		handle = "@" + handle
 	}
+	a.mu.Lock()
 	a.cfg.YouTube.Enabled = enabled
 	a.cfg.YouTube.ChannelHandle = handle
 	// Channel ID is derived from the handle on demand; wipe any stale value
@@ -1166,16 +1258,12 @@ func (a *App) SetYouTubeConfig(enabled bool, channelHandle string) string {
 		a.cfg.YouTube.ChannelID = ""
 	}
 	a.cfg.Save()
+	a.mu.Unlock()
 	log.Printf("[YT] config updated: enabled=%v handle=%q", enabled, handle)
 
-	// Tear down any running YT goroutine and respawn if appropriate.
-	if a.ytChatCancel != nil {
-		a.ytChatCancel()
-		a.ytChatCancel = nil
-	}
-	if enabled && handle != "" {
-		go a.startYouTubeAutoDetect(handle)
-	}
+	// Stops the old detector + chat (they used to keep running alongside
+	// the new one) and starts whatever the new settings call for.
+	a.startYouTube()
 	return ""
 }
 
@@ -1264,16 +1352,15 @@ func (a *App) StartLogin() map[string]interface{} {
 			go a.runIRCSupervisor()
 			go a.tokenRefreshLoop()
 		}
-		if a.helixClient != nil {
-			go a.loadChattersAndRoles()
-		}
+		a.startChattersAndRoles()
 		// YouTube wasn't started in bootSequence either if we bailed early.
-		if a.ytChatCancel == nil {
-			if a.cfg.YouTube.VideoID != "" {
-				a.startYouTubeChat(a.cfg.YouTube.VideoID)
-			} else if a.cfg.YouTube.Enabled && a.cfg.YouTube.ChannelHandle != "" {
-				go a.startYouTubeAutoDetect(a.cfg.YouTube.ChannelHandle)
-			}
+		// Don't interrupt a YouTube session that is already running — a
+		// Twitch re-login has nothing to do with it.
+		a.mu.Lock()
+		ytRunning := a.ytChatCancel != nil || a.ytDetectCancel != nil
+		a.mu.Unlock()
+		if !ytRunning {
+			a.startYouTube()
 		}
 
 		// Re-emit ready so the frontend picks up the new username / channel
@@ -1281,7 +1368,7 @@ func (a *App) StartLogin() map[string]interface{} {
 		runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
 			"channel":        a.cfg.Twitch.Channel,
 			"username":       a.cfg.Twitch.Username,
-			"youtube":        a.cfg.YouTube.ChannelHandle != "" || a.cfg.YouTube.VideoID != "",
+			"youtube":        (a.cfg.YouTube.Enabled && a.cfg.YouTube.ChannelHandle != "") || a.cfg.YouTube.VideoID != "",
 			"showTimestamps": a.cfg.UI.ShowTimestamps,
 		})
 
@@ -1373,9 +1460,7 @@ func (a *App) SendMessage(text string) {
 	// Slash command? Route through Helix and surface the response as a
 	// system message in chat. The IRC connection stays untouched.
 	if strings.HasPrefix(text, "/") {
-		a.mu.Lock()
-		h := a.helixClient
-		a.mu.Unlock()
+		h := a.helix()
 		status, handled := twitch.HandleSlashCommand(h, text)
 		if handled {
 			a.emitChat(chat.Message{
@@ -1462,10 +1547,11 @@ func (a *App) LookupEmote(name string) map[string]interface{} {
 
 // GetUserInfo fetches user details + follow status.
 func (a *App) GetUserInfo(userID string) map[string]interface{} {
-	if a.helixClient == nil || userID == "" {
+	h := a.helix()
+	if h == nil || userID == "" {
 		return nil
 	}
-	info, err := a.helixClient.GetUserInfo(userID)
+	info, err := h.GetUserInfo(userID)
 	if err != nil {
 		return nil
 	}
@@ -1485,25 +1571,34 @@ func (a *App) GetUserInfo(userID string) map[string]interface{} {
 
 // ModAction performs a moderation action.
 func (a *App) ModAction(action, userID, msgID string) string {
-	if a.helixClient == nil {
+	// One snapshot for the whole action: SwitchProfile nils a.helixClient,
+	// and re-reading the field between the check and the call used to
+	// panic the app with a nil dereference.
+	h := a.helix()
+	if h == nil {
 		return "no helix client"
 	}
 	var err error
 	switch action {
 	case "ban":
-		err = a.helixClient.BanUser(userID, "Banned via StreamerChat")
+		err = h.BanUser(userID, "Banned via StreamerChat")
 	case "timeout_600":
-		err = a.helixClient.TimeoutUser(userID, 600, "Timed out")
+		err = h.TimeoutUser(userID, 600, "Timed out")
 	case "timeout_3600":
-		err = a.helixClient.TimeoutUser(userID, 3600, "Timed out")
+		err = h.TimeoutUser(userID, 3600, "Timed out")
 	case "timeout_86400":
-		err = a.helixClient.TimeoutUser(userID, 86400, "Timed out")
+		err = h.TimeoutUser(userID, 86400, "Timed out")
 	case "delete":
-		if msgID != "" {
-			err = a.helixClient.DeleteMessage(msgID)
+		// No id (card opened from the sidebar / a local echo): nothing
+		// to delete — say so instead of reporting a fake success.
+		if msgID == "" {
+			return "no message id — can only delete a message opened from chat"
 		}
+		err = h.DeleteMessage(msgID)
 	case "unban":
-		err = a.helixClient.UnbanUser(userID)
+		err = h.UnbanUser(userID)
+	default:
+		return "unknown action: " + action
 	}
 	if err != nil {
 		return err.Error()

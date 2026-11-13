@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+// sendClient bounds a chat send. http.DefaultClient has no timeout, so a
+// stalled connection used to hang the Wails-bound send (and the UI's send
+// promise) forever.
+var sendClient = &http.Client{Timeout: 15 * time.Second}
+
 // computeSAPISIDHASH builds the Authorization header value YouTube's web
 // client sends with authenticated InnerTube requests. Format:
 //
@@ -130,7 +135,7 @@ func SendLiveChatMessage(c LoginCookies, chatParams, text string) error {
 	req.Header.Set("Authorization", computeSAPISIDHASH(c.SAPISID, origin))
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := sendClient.Do(req)
 	if err != nil {
 		return err
 	}

@@ -12,14 +12,16 @@
 //  4. Server pushes notification messages; we normalize into Event
 //     and hand off to the caller.
 //  5. session_keepalive → ignore. session_reconnect → dial the new
-//     URL, then swap the connection with no missed events (Twitch
-//     keeps the old socket open for 30s during handoff).
+//     URL, keep draining the old socket until Twitch closes it, and
+//     continue on the new one without re-subscribing (subscriptions
+//     migrate). Duplicates are dropped by message_id.
 //  6. On unexpected disconnect / read error, exponential backoff
 //     then start over from step 1 (Twitch re-issues session id, so
 //     we re-subscribe).
 //
-// Deliberately simple: one goroutine reads, dispatches inline. The
-// caller's callback runs on the reader goroutine — keep it cheap.
+// One goroutine reads and dispatches inline; only during a reconnect
+// handoff a second goroutine drains the old socket, so the callback may
+// briefly be called concurrently — it must be goroutine-safe and cheap.
 package eventsub
 
 import (
@@ -37,8 +39,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const defaultWSURL = "wss://eventsub.wss.twitch.tv/ws"
-const subscriptionsURL = "https://api.twitch.tv/helix/eventsub/subscriptions"
+// Endpoints are vars only so tests can point them at a local server.
+var defaultWSURL = "wss://eventsub.wss.twitch.tv/ws"
+var subscriptionsURL = "https://api.twitch.tv/helix/eventsub/subscriptions"
 
 // EventType is the normalized activity kind the frontend renders.
 type EventType string
@@ -81,12 +84,15 @@ type Client struct {
 	// SetAccessToken from the app's token refresh goroutine).
 	mu        sync.Mutex
 	sessionID string
+	// seen / seenOrder dedupe notifications by message_id (bounded FIFO).
+	seen      map[string]struct{}
+	seenOrder []string
 }
 
 // New builds a Client. broadcasterID is the channel owner's Twitch
 // user id; moderatorID is who's asking (usually the same for
 // streamerchat since the broadcaster IS logged in). onEvent runs
-// on the reader goroutine — must not block.
+// on a reader goroutine — must not block and must be goroutine-safe.
 func New(ctx context.Context, clientID, accessToken, broadcasterID, moderatorID string, onEvent func(Event)) *Client {
 	return &Client{
 		ctx:           ctx,
@@ -114,16 +120,42 @@ func (c *Client) token() string {
 	return c.accessToken
 }
 
+// Reconnect / timing constants.
+const (
+	backoffMin = 2 * time.Second
+	backoffMax = 60 * time.Second
+	// welcomeTimeout bounds how long we wait for session_welcome after
+	// dialing (Twitch sends it immediately).
+	welcomeTimeout = 15 * time.Second
+	// readTimeout catches dead sockets. Twitch sends a keepalive every
+	// ~10s when idle, so 30s without any frame means the link is gone.
+	readTimeout = 30 * time.Second
+	// oldConnDrainTimeout: after session_reconnect, Twitch keeps
+	// delivering on the old socket until the new one is welcomed, then
+	// closes it. Stop draining after this long regardless.
+	oldConnDrainTimeout = 30 * time.Second
+	// seenIDsMax bounds the message_id dedupe set.
+	seenIDsMax = 512
+)
+
 // Start runs the session forever. Returns when ctx is cancelled.
-// Reconnects on any error with exponential backoff up to 60s.
+// Reconnects on any error with exponential backoff up to backoffMax.
+// The backoff resets once a session got far enough to deliver events —
+// before, it only ever grew, so after a few network blips every
+// reconnect waited the full 60s (and EventSub does not replay missed
+// events).
 func (c *Client) Start() {
-	backoff := 2 * time.Second
+	backoff := backoffMin
 	for {
 		if c.ctx.Err() != nil {
 			return
 		}
-		if err := c.runSession(defaultWSURL); err != nil {
+		healthy, err := c.runSession()
+		if err != nil {
 			log.Printf("[EVENTSUB] session error: %v", err)
+		}
+		if healthy {
+			backoff = backoffMin
 		}
 		select {
 		case <-c.ctx.Done():
@@ -131,58 +163,98 @@ func (c *Client) Start() {
 		case <-time.After(backoff):
 		}
 		backoff *= 2
-		if backoff > 60*time.Second {
-			backoff = 60 * time.Second
+		if backoff > backoffMax {
+			backoff = backoffMax
 		}
 	}
 }
 
-// runSession dials, welcomes, subscribes, then reads until an error
-// occurs. On session_reconnect it dials the new URL and swaps.
-func (c *Client) runSession(url string) error {
+// dial opens a websocket and waits for session_welcome.
+func (c *Client) dial(url string) (*websocket.Conn, string, error) {
 	conn, _, err := websocket.DefaultDialer.DialContext(c.ctx, url, nil)
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+		return nil, "", fmt.Errorf("dial: %w", err)
 	}
-	defer conn.Close()
-	log.Printf("[EVENTSUB] connected to %s", url)
-
-	// First message MUST be session_welcome. Give Twitch a bounded
-	// amount of time to send it before giving up on the connection.
-	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	// First message MUST be session_welcome.
+	_ = conn.SetReadDeadline(time.Now().Add(welcomeTimeout))
 	_, data, err := conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("read welcome: %w", err)
+		conn.Close()
+		return nil, "", fmt.Errorf("read welcome: %w", err)
 	}
 	var welcome wsMessage
 	if err := json.Unmarshal(data, &welcome); err != nil {
-		return fmt.Errorf("parse welcome: %w", err)
+		conn.Close()
+		return nil, "", fmt.Errorf("parse welcome: %w", err)
 	}
 	if welcome.Metadata.MessageType != "session_welcome" {
-		return fmt.Errorf("expected session_welcome, got %s", welcome.Metadata.MessageType)
+		conn.Close()
+		return nil, "", fmt.Errorf("expected session_welcome, got %s", welcome.Metadata.MessageType)
 	}
-	sessionID := welcome.Payload.Session.ID
-	c.mu.Lock()
-	c.sessionID = sessionID
-	c.mu.Unlock()
-	log.Printf("[EVENTSUB] session id: %s", sessionID)
+	return conn, welcome.Payload.Session.ID, nil
+}
 
-	// Subscribe. Failures here are fatal for this session — we bail
-	// so Start() reconnects with a fresh id.
+// runSession dials, subscribes once, then reads until an error occurs.
+// session_reconnect is handled in-loop: the new URL is dialed, the old
+// socket is drained in the background until Twitch closes it, and reading
+// continues on the new one WITHOUT re-subscribing (subscriptions migrate
+// with a reconnect; subscribing again only produced 409s). healthy
+// reports whether the session ever got past subscribing.
+func (c *Client) runSession() (healthy bool, err error) {
+	conn, sessionID, err := c.dial(defaultWSURL)
+	if err != nil {
+		return false, err
+	}
+	// conn changes on reconnect; close whichever is current on exit.
+	defer func() { conn.Close() }()
+	log.Printf("[EVENTSUB] connected, session id: %s", sessionID)
+	c.setSession(sessionID)
+
 	if err := c.subscribeAll(sessionID); err != nil {
-		return fmt.Errorf("subscribe: %w", err)
+		return false, fmt.Errorf("subscribe: %w", err)
 	}
+	healthy = true
 
-	// Twitch says keepalive comes every 10s by default. Use a 30s
-	// read deadline to catch dead sockets without being too twitchy.
+	// Closing the socket is the only way to unblock ReadMessage, so tie
+	// it to ctx cancellation (profile switch / app exit).
+	stop := context.AfterFunc(c.ctx, func() { conn.Close() })
+	defer func() { stop() }()
+
 	for {
 		if c.ctx.Err() != nil {
-			return nil
+			return healthy, nil
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		reconnectURL, err := c.readUntilReconnect(conn)
+		if err != nil {
+			if c.ctx.Err() != nil {
+				return healthy, nil
+			}
+			return healthy, err
+		}
+
+		log.Printf("[EVENTSUB] session_reconnect → %s", reconnectURL)
+		newConn, newID, err := c.dial(reconnectURL)
+		if err != nil {
+			// Couldn't take over: let Start do a full reconnect.
+			return healthy, fmt.Errorf("reconnect: %w", err)
+		}
+		old := conn
+		stop()
+		conn = newConn
+		stop = context.AfterFunc(c.ctx, func() { newConn.Close() })
+		c.setSession(newID)
+		go c.drainOld(old)
+	}
+}
+
+// readUntilReconnect reads and dispatches until a session_reconnect
+// arrives (returns its URL) or the connection fails (returns err).
+func (c *Client) readUntilReconnect(conn *websocket.Conn) (string, error) {
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
 		_, data, err := conn.ReadMessage()
 		if err != nil {
-			return fmt.Errorf("read: %w", err)
+			return "", fmt.Errorf("read: %w", err)
 		}
 		var msg wsMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
@@ -193,22 +265,67 @@ func (c *Client) runSession(url string) error {
 		case "session_keepalive":
 			// nothing to do — the read itself resets the deadline
 		case "notification":
-			c.dispatch(msg)
+			c.dispatchOnce(msg)
 		case "session_reconnect":
-			newURL := msg.Payload.Session.ReconnectURL
-			if newURL == "" {
-				return errors.New("session_reconnect without url")
+			if u := msg.Payload.Session.ReconnectURL; u != "" {
+				return u, nil
 			}
-			log.Printf("[EVENTSUB] reconnect to %s", newURL)
-			// Dial the new URL first; if that fails we let Start
-			// handle the full reconnect cycle.
-			return c.runSession(newURL)
+			return "", errors.New("session_reconnect without url")
 		case "revocation":
 			log.Printf("[EVENTSUB] subscription revoked: %+v", msg.Payload.Subscription)
 		default:
 			log.Printf("[EVENTSUB] unknown message type: %s", msg.Metadata.MessageType)
 		}
 	}
+}
+
+// drainOld keeps reading the pre-reconnect socket so notifications Twitch
+// still sends there during the handoff aren't lost, until Twitch closes it
+// or oldConnDrainTimeout passes.
+func (c *Client) drainOld(conn *websocket.Conn) {
+	defer conn.Close()
+	deadline := time.Now().Add(oldConnDrainTimeout)
+	for c.ctx.Err() == nil {
+		_ = conn.SetReadDeadline(deadline)
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			return // closed by Twitch (expected) or timed out
+		}
+		var msg wsMessage
+		if json.Unmarshal(data, &msg) == nil && msg.Metadata.MessageType == "notification" {
+			c.dispatchOnce(msg)
+		}
+	}
+}
+
+func (c *Client) setSession(id string) {
+	c.mu.Lock()
+	c.sessionID = id
+	c.mu.Unlock()
+}
+
+// dispatchOnce dispatches a notification unless its message_id was seen
+// before. Twitch documents at-least-once delivery, and during a reconnect
+// handoff the same event can arrive on both sockets.
+func (c *Client) dispatchOnce(msg wsMessage) {
+	if id := msg.Metadata.MessageID; id != "" {
+		c.mu.Lock()
+		if _, dup := c.seen[id]; dup {
+			c.mu.Unlock()
+			return
+		}
+		if c.seen == nil {
+			c.seen = make(map[string]struct{}, seenIDsMax)
+		}
+		c.seen[id] = struct{}{}
+		c.seenOrder = append(c.seenOrder, id)
+		if len(c.seenOrder) > seenIDsMax {
+			delete(c.seen, c.seenOrder[0])
+			c.seenOrder = c.seenOrder[1:]
+		}
+		c.mu.Unlock()
+	}
+	c.dispatch(msg)
 }
 
 // subscribeAll fires the individual subscribe calls in sequence.

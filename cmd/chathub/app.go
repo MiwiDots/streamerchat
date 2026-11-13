@@ -488,7 +488,10 @@ func (a *App) connectSendClient() {
 		return
 	}
 	primary := twitchChans[0]
-	send := twitch.NewIRCClient(a.cfg.Username, a.cfg.AccessToken, primary, twitchChans[1:]...)
+	// Send-only: chathub reads chat through a.irc (MultiIRCClient). The
+	// full client's event channels were never drained here, so after ~256
+	// events its parser blocked and the connection silently died.
+	send := twitch.NewSendOnlyIRCClient(a.cfg.Username, a.cfg.AccessToken, primary, twitchChans[1:]...)
 	a.send = send
 	a.mu.Unlock()
 
@@ -1094,22 +1097,9 @@ func (a *App) startYouTubeWatcher(handle string) {
 				}
 			}()
 			go func() {
-				for attempt := 0; attempt < 5; attempt++ {
-					if chatCtx.Err() != nil {
-						return
-					}
-					if err := ytClient.Connect(chatCtx); err != nil {
-						log.Printf("[YT] %s: connect attempt %d failed: %v", handle, attempt+1, err)
-						select {
-						case <-chatCtx.Done():
-							return
-						case <-time.After(5 * time.Second):
-						}
-						continue
-					}
-					return
-				}
-				log.Printf("[YT] %s: giving up after 5 connect attempts", handle)
+				_ = ytClient.ConnectWithRetry(chatCtx, func(err error, wait time.Duration) {
+					log.Printf("[YT] %s: connect failed, retrying in %s: %v", handle, wait, err)
+				})
 			}()
 		},
 		func() {

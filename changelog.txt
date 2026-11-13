@@ -1,3 +1,51 @@
+2026-11-13 19:08 - v0.5.4 (stable): concurrency + leak fixes — no more
+  profile-switch crash, no wedged IRC, no runaway goroutines.
+
+  - streamerchat crash: SwitchProfile nils the Helix client under the
+    lock, but refreshRoles / GetUserInfo / ModAction / the shared-chat
+    room resolver re-read the field without it between check and call
+    → nil pointer panic took the whole app down. All reads now go
+    through App.helix() (locked snapshot, used once).
+  - chathub sender froze after ~256 events: the full IRC client was
+    used only to send, nobody drained its event channels, the gempir
+    parser blocked, PONGs stopped, and each 30-min token refresh
+    leaked the wedged goroutines. New twitch.NewSendOnlyIRCClient (no
+    membership cap, no event handlers). IRC handler sends are now
+    non-blocking everywhere (dropped + logged when a consumer stalls).
+  - streamerchat goroutine leaks: the Helix chatter/role poller and the
+    YouTube live detector ran on the app context forever; every
+    profile switch / login / YouTube settings change started another
+    copy, and an old detector could hijack the current profile's
+    YouTube chat. Both now run on per-profile cancellable contexts
+    (rolesCancel / ytDetectCancel), stopped in SwitchProfile and on
+    restart; stale detector callbacks are ignored.
+  - "YouTube disabled" was ignored at boot (only the handle was
+    checked); auto-detect and the YT pill now respect Enabled.
+  - YouTube chat no longer dies for the whole stream when the first
+    ~25s of connects fail: new InnerTubeClient.ConnectWithRetry
+    (5s..60s backoff until cancelled), used by both apps. Duplicate
+    "Connected" line removed.
+  - InnerTube poll loop: sends are ctx-aware (no goroutine leak on
+    teardown), errors never block, failed continuation refreshes back
+    off 10s..2min instead of re-downloading the page every 10s
+    forever, sendParams is mutex-guarded (data race with the UI send).
+  - YouTube send has a 15s timeout (was http.DefaultClient, no limit).
+  - EventSub session_reconnect done per Twitch spec: dial new URL,
+    keep draining the old socket until Twitch closes it, continue on
+    the new one WITHOUT re-subscribing (was 10 x 409), loop instead
+    of recursion (no fd/stack pile-up), notifications deduped by
+    message_id. Backoff resets after a healthy session.
+  - Reconnect backoff resets after a session that stayed up >= 30s
+    (IRC supervisor, chathub MultiIRC). Before it only grew → 60s
+    waits after a few blips.
+  - chathub MultiIRC: the client pointer is swapped on reconnect
+    while Join/Part ran on other goroutines — now guarded by mu.
+  - Deleting a message without a message id now says so instead of
+    reporting success; unknown mod actions are rejected.
+  - Tests: EventSub reconnect handoff (no resubscribe, no dupes,
+    token swap), IRC push never blocks, InnerTube emit/emitErr/retry
+    cancellation.
+
 2026-11-13 19:02 - v0.5.3 (stable): self-updater hardening — verified
   downloads, no URL from the webview, working pre-release ordering.
 

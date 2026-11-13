@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miwi/streamerchat/internal/chat"
@@ -28,7 +29,9 @@ type InnerTubeClient struct {
 	// sendParams is the `sendLiveChatMessageEndpoint.params` value pulled
 	// from the initial chat-page render. It's required as the `params`
 	// field on the send_message request; the caller fetches it via
-	// SendParams() after Connect.
+	// SendParams() after Connect. Written by the poll goroutine (initial
+	// fetch + silent re-fetch), read by the UI's send call → guarded by mu.
+	mu         sync.Mutex
 	sendParams string
 	// cookies, when non-nil and valid, are attached to fetchInitialData so
 	// YouTube renders the authenticated chat view that includes the send
@@ -49,7 +52,32 @@ func (c *InnerTubeClient) SetCookies(cookies LoginCookies) {
 // SendParams returns the send-message endpoint params extracted from the
 // initial chat-page render, or empty if not available (stream not live,
 // chat disabled, etc.).
-func (c *InnerTubeClient) SendParams() string { return c.sendParams }
+func (c *InnerTubeClient) SendParams() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sendParams
+}
+
+// emit delivers a message unless ctx is done. A bare `c.messages <- m`
+// blocked forever once the consumer had returned on teardown, leaking the
+// poll goroutine (and its buffer) on every reconnect.
+func (c *InnerTubeClient) emit(ctx context.Context, m chat.Message) bool {
+	select {
+	case c.messages <- m:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// emitErr reports an error without ever blocking: errors are diagnostic
+// only, so if nobody is draining them (or the buffer is full) we drop.
+func (c *InnerTubeClient) emitErr(err error) {
+	select {
+	case c.errors <- err:
+	default:
+	}
+}
 
 // NewInnerTubeClient creates a new YouTube chat client for the given video.
 func NewInnerTubeClient(videoID string) *InnerTubeClient {
@@ -79,6 +107,43 @@ func (c *InnerTubeClient) Connect(ctx context.Context) error {
 
 	go c.pollLoop(ctx)
 	return nil
+}
+
+// Connect retry backoff for ConnectWithRetry.
+const (
+	connectRetryMin = 5 * time.Second
+	connectRetryMax = 60 * time.Second
+)
+
+// ConnectWithRetry calls Connect until it succeeds or ctx is cancelled,
+// backing off from connectRetryMin to connectRetryMax. Right at stream
+// start the chat often isn't available yet; LiveDetector fires onLive only
+// once per video, so a caller that gave up after a few attempts (both apps
+// used 5 × 5s) left the stream without chat until it ended. onRetry (may
+// be nil) is called before each wait, e.g. for logging.
+func (c *InnerTubeClient) ConnectWithRetry(ctx context.Context, onRetry func(err error, wait time.Duration)) error {
+	wait := connectRetryMin
+	for {
+		err := c.Connect(ctx)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if onRetry != nil {
+			onRetry(err, wait)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+		wait *= 2
+		if wait > connectRetryMax {
+			wait = connectRetryMax
+		}
+	}
 }
 
 // fetchInitialData loads the live_chat page, extracts the continuation
@@ -136,18 +201,30 @@ func (c *InnerTubeClient) fetchInitialData(ctx context.Context, silent bool) err
 	// Best-effort: extract send-message params for authenticated chat
 	// posting. Missing params is non-fatal (stream may not accept input,
 	// or chat may be sub-only — the read path still works).
-	c.sendParams = extractSendParams(initialData)
+	params := extractSendParams(initialData)
+	c.mu.Lock()
+	c.sendParams = params
+	c.mu.Unlock()
 
 	if !silent {
-		c.messages <- chat.Message{
+		c.emit(ctx, chat.Message{
 			Platform:  chat.PlatformYouTube,
 			Type:      chat.MessageTypeSystem,
 			Timestamp: time.Now(),
 			Text:      fmt.Sprintf("Connected to live chat (video: %s)", c.videoID),
-		}
+		})
 	}
 	return nil
 }
+
+// Poll error backoff: starts at pollErrorBackoffMin and doubles on every
+// consecutive failure up to pollErrorBackoffMax. Before, a failed
+// continuation refresh (stream over, chat closed) re-downloaded the full
+// live_chat page every 10s forever.
+const (
+	pollErrorBackoffMin = 10 * time.Second
+	pollErrorBackoffMax = 2 * time.Minute
+)
 
 func (c *InnerTubeClient) pollLoop(ctx context.Context) {
 	// Consecutive "no liveChatContinuation" failures. After a threshold we
@@ -156,34 +233,47 @@ func (c *InnerTubeClient) pollLoop(ctx context.Context) {
 	// "Chat hört nach einer Weile auf" symptom.
 	emptyStreak := 0
 	const emptyStreakThreshold = 3
+	errBackoff := pollErrorBackoffMin
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		default:
 		}
 
+		wait := time.Duration(0)
 		timeoutMs, err := c.fetchMessages(ctx)
-		if err != nil {
+		if err == nil {
+			emptyStreak = 0
+			errBackoff = pollErrorBackoffMin
+			wait = time.Duration(timeoutMs) * time.Millisecond
+		} else {
+			if ctx.Err() != nil {
+				return
+			}
+			c.emitErr(fmt.Errorf("poll: %w", err))
 			if strings.Contains(err.Error(), "no liveChatContinuation") {
 				emptyStreak++
 				if emptyStreak >= emptyStreakThreshold {
 					if refreshErr := c.fetchInitialData(ctx, true); refreshErr != nil {
-						c.errors <- fmt.Errorf("refresh continuation: %w", refreshErr)
+						c.emitErr(fmt.Errorf("refresh continuation: %w", refreshErr))
 					} else {
+						// Fresh token: poll again right away.
 						emptyStreak = 0
+						errBackoff = pollErrorBackoffMin
+						continue
 					}
 				}
 			}
-			c.errors <- fmt.Errorf("poll: %w", err)
-			// Back off on error
-			timeoutMs = 10000
+			wait = errBackoff
+			errBackoff *= 2
+			if errBackoff > pollErrorBackoffMax {
+				errBackoff = pollErrorBackoffMax
+			}
 		}
 
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
+		case <-time.After(wait):
 		}
 	}
 }
@@ -275,7 +365,9 @@ func (c *InnerTubeClient) fetchMessages(ctx context.Context) (int, error) {
 	if actions, ok := contMap["actions"].([]interface{}); ok {
 		for _, action := range actions {
 			if msg := c.parseAction(action); msg != nil {
-				c.messages <- *msg
+				if !c.emit(ctx, *msg) {
+					return timeoutMs, ctx.Err()
+				}
 			}
 		}
 	}

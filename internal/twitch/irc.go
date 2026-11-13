@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/miwi/streamerchat/internal/chat"
@@ -22,6 +23,30 @@ type IRCClient struct {
 	errors       chan error
 	roomNames    map[string]string           // roomID -> channel name cache
 	resolveRoom  func(roomID string) string  // callback to resolve room IDs
+
+	// dropped counts events discarded because a consumer channel was full
+	// (see push). Logged every dropLogEvery drops.
+	dropped atomic.Int64
+}
+
+// dropLogEvery throttles the "event dropped" log line.
+const dropLogEvery = 100
+
+// push hands an event to a consumer channel WITHOUT blocking.
+//
+// The gempir handlers run on the library's single parser goroutine. A
+// blocking send there wedges the whole connection once a buffer is full:
+// PONGs stop, the socket times out, and Connect() never returns, so even
+// Disconnect() can't recover it. Dropping (and logging) an event when the
+// consumer is gone or stalled is strictly better.
+func push[T any](c *IRCClient, ch chan T, v T) {
+	select {
+	case ch <- v:
+	default:
+		if n := c.dropped.Add(1); n%dropLogEvery == 1 {
+			log.Printf("[IRC] consumer for #%s not keeping up — dropped %d event(s) so far", c.channel, n)
+		}
+	}
 }
 
 // NewIRCClient creates a new Twitch IRC client. extraChannels are joined
@@ -29,22 +54,50 @@ type IRCClient struct {
 // "connected" — this replaces a race where a goroutine sleeps 2s after
 // Connect() and then issues Join() calls that may land before the IRC
 // server has authenticated us.
+//
+// The caller MUST drain Messages(), Joins() and Settings(); events are
+// dropped (not blocked on) once a buffer is full. A client that only sends
+// should use NewSendOnlyIRCClient instead.
 func NewIRCClient(username, oauthToken, channel string, extraChannels ...string) *IRCClient {
-	client := twitch.NewClient(username, "oauth:"+strings.TrimPrefix(oauthToken, "oauth:"))
-
-	// Explicitly request all capabilities including membership for JOIN/PART
-	client.Capabilities = []string{
+	irc := newIRCClient(username, oauthToken, channel, extraChannels, []string{
 		"twitch.tv/tags",
 		"twitch.tv/commands",
+		// membership = JOIN/PART events (core requirement for the chatter list)
 		"twitch.tv/membership",
-	}
+	})
+	irc.registerHandlers()
+	return irc
+}
+
+// NewSendOnlyIRCClient creates a client used purely to PRIVMSG into the
+// given channels (chathub reads chat through MultiIRCClient). It does not
+// request the membership capability and registers no event handlers, so
+// nothing accumulates in its channels; NOTICE rejections and connects are
+// logged. Messages()/Joins()/Settings() never deliver anything.
+func NewSendOnlyIRCClient(username, oauthToken, channel string, extraChannels ...string) *IRCClient {
+	irc := newIRCClient(username, oauthToken, channel, extraChannels, []string{
+		"twitch.tv/tags",
+		"twitch.tv/commands",
+	})
+	irc.client.OnNoticeMessage(func(msg twitch.NoticeMessage) {
+		log.Printf("[SEND] NOTICE %s in #%s: %s", msg.MsgID, msg.Channel, msg.Message)
+	})
+	irc.client.OnConnect(func() {
+		log.Printf("[SEND] send-only client connected (primary=#%s extras=%v)", irc.channel, irc.extraJoins)
+	})
+	return irc
+}
+
+func newIRCClient(username, oauthToken, channel string, extraChannels, caps []string) *IRCClient {
+	client := twitch.NewClient(username, "oauth:"+strings.TrimPrefix(oauthToken, "oauth:"))
+	client.Capabilities = caps
 
 	extras := make([]string, 0, len(extraChannels))
 	for _, ch := range extraChannels {
 		extras = append(extras, strings.TrimPrefix(ch, "#"))
 	}
 
-	irc := &IRCClient{
+	return &IRCClient{
 		client:     client,
 		channel:    strings.TrimPrefix(channel, "#"),
 		extraJoins: extras,
@@ -54,9 +107,6 @@ func NewIRCClient(username, oauthToken, channel string, extraChannels ...string)
 		errors:     make(chan error, 16),
 		roomNames:  make(map[string]string),
 	}
-
-	irc.registerHandlers()
-	return irc
 }
 
 // Messages returns the channel for incoming chat messages.
@@ -138,29 +188,29 @@ func (c *IRCClient) registerHandlers() {
 		if m.IsSharedChat && m.SourceChannel == msg.Source.RoomID {
 			m.SourceChannel = c.resolveRoomName(msg.Source.RoomID)
 		}
-		c.messages <- m
+		push(c, c.messages, m)
 	})
 
 	c.client.OnUserJoinMessage(func(msg twitch.UserJoinMessage) {
 		log.Printf("[IRC] JOIN %s in #%s", msg.User, msg.Channel)
-		c.joins <- chat.UserJoinPart{
+		push(c, c.joins, chat.UserJoinPart{
 			Platform: chat.PlatformTwitch,
 			Channel:  msg.Channel,
 			Username: msg.User,
 			IsJoin:   true,
 			Time:     time.Now(),
-		}
+		})
 	})
 
 	c.client.OnUserPartMessage(func(msg twitch.UserPartMessage) {
 		log.Printf("[IRC] PART %s from #%s", msg.User, msg.Channel)
-		c.joins <- chat.UserJoinPart{
+		push(c, c.joins, chat.UserJoinPart{
 			Platform: chat.PlatformTwitch,
 			Channel:  msg.Channel,
 			Username: msg.User,
 			IsJoin:   false,
 			Time:     time.Now(),
-		}
+		})
 	})
 
 	c.client.OnClearChatMessage(func(msg twitch.ClearChatMessage) {
@@ -170,7 +220,7 @@ func (c *IRCClient) registerHandlers() {
 			if msg.BanDuration > 0 {
 				msgType = chat.MessageTypeTimeout
 			}
-			c.messages <- chat.Message{
+			push(c, c.messages, chat.Message{
 				Platform:       chat.PlatformTwitch,
 				Type:           msgType,
 				Channel:        msg.Channel,
@@ -178,21 +228,21 @@ func (c *IRCClient) registerHandlers() {
 				TargetUsername: msg.TargetUsername,
 				BanDuration:    msg.BanDuration,
 				Text:           fmt.Sprintf("%s was %s", msg.TargetUsername, banText(msg.BanDuration)),
-			}
+			})
 		} else {
 			// Chat was cleared
-			c.messages <- chat.Message{
+			push(c, c.messages, chat.Message{
 				Platform:  chat.PlatformTwitch,
 				Type:      chat.MessageTypeClearChat,
 				Channel:   msg.Channel,
 				Timestamp: time.Now(),
 				Text:      "Chat was cleared by a moderator",
-			}
+			})
 		}
 	})
 
 	c.client.OnClearMessage(func(msg twitch.ClearMessage) {
-		c.messages <- chat.Message{
+		push(c, c.messages, chat.Message{
 			Platform:       chat.PlatformTwitch,
 			Type:           chat.MessageTypeDeletedMessage,
 			Channel:        msg.Channel,
@@ -200,7 +250,7 @@ func (c *IRCClient) registerHandlers() {
 			TargetUsername: msg.Login,
 			Text:           msg.Message,
 			ID:             msg.TargetMsgID,
-		}
+		})
 	})
 
 	c.client.OnUserNoticeMessage(func(msg twitch.UserNoticeMessage) {
@@ -229,7 +279,7 @@ func (c *IRCClient) registerHandlers() {
 			m.Type = chat.MessageTypeSystem
 		}
 
-		c.messages <- m
+		push(c, c.messages, m)
 	})
 
 	// OnNoticeMessage covers Twitch's NOTICE replies — these are how the
@@ -240,13 +290,13 @@ func (c *IRCClient) registerHandlers() {
 	c.client.OnNoticeMessage(func(msg twitch.NoticeMessage) {
 		msgID := msg.MsgID
 		log.Printf("[SEND] NOTICE %s in #%s: %s", msgID, msg.Channel, msg.Message)
-		c.messages <- chat.Message{
+		push(c, c.messages, chat.Message{
 			Platform:  chat.PlatformTwitch,
 			Type:      chat.MessageTypeSystem,
 			Channel:   strings.TrimPrefix(msg.Channel, "#"),
 			Timestamp: time.Now(),
 			Text:      fmt.Sprintf("Twitch: %s", msg.Message),
-		}
+		})
 	})
 
 	c.client.OnRoomStateMessage(func(msg twitch.RoomStateMessage) {
@@ -256,27 +306,27 @@ func (c *IRCClient) registerHandlers() {
 			EmoteOnly:    msg.Tags["emote-only"] == "1",
 			FollowerOnly: msg.Tags["followers-only"] != "-1" && msg.Tags["followers-only"] != "",
 		}
-		c.settings <- s
+		push(c, c.settings, s)
 	})
 
 	c.client.OnReconnectMessage(func(_ twitch.ReconnectMessage) {
 		log.Printf("[SEND] OnReconnectMessage: Twitch told us to reconnect (#%s)", c.channel)
-		c.messages <- chat.Message{
+		push(c, c.messages, chat.Message{
 			Platform:  chat.PlatformTwitch,
 			Type:      chat.MessageTypeSystem,
 			Timestamp: time.Now(),
 			Text:      "Reconnecting...",
-		}
+		})
 	})
 
 	c.client.OnConnect(func() {
 		log.Printf("[SEND] OnConnect: authed + joined for primary=#%s extras=%v", c.channel, c.extraJoins)
-		c.messages <- chat.Message{
+		push(c, c.messages, chat.Message{
 			Platform:  chat.PlatformTwitch,
 			Type:      chat.MessageTypeSystem,
 			Timestamp: time.Now(),
 			Text:      fmt.Sprintf("Connected to #%s", c.channel),
-		}
+		})
 	})
 }
 

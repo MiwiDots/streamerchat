@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -17,9 +16,11 @@ import (
 // MultiIRCClient connects anonymously to Twitch IRC and reads from multiple channels.
 // Used by ChatHub viewer. No write access (anonymous accounts can't send messages).
 type MultiIRCClient struct {
-	client *twitch.Client
-
+	// mu guards client and channels. client is replaced on every
+	// reconnect while Join/Part are called from Wails-bound methods on
+	// other goroutines, so it must never be read without mu.
 	mu       sync.RWMutex
+	client   *twitch.Client
 	channels map[string]bool
 
 	onMessage  func(channel string, msg chat.Message)
@@ -35,23 +36,35 @@ type MultiIRCClient struct {
 // NewMultiIRCClient creates an anonymous IRC client.
 // Twitch allows anonymous read-only login with username "justinfan<number>".
 func NewMultiIRCClient() *MultiIRCClient {
-	anonName := fmt.Sprintf("justinfan%d", rand.Intn(99999)+10000)
-	client := twitch.NewAnonymousClient()
-	_ = anonName
-	client.Capabilities = []string{
+	m := &MultiIRCClient{
+		channels:  make(map[string]bool),
+		roomNames: make(map[string]string),
+	}
+	m.client = m.newClient()
+	return m
+}
+
+// newClient builds an anonymous (justinfan) read-only client with all
+// handlers registered on it.
+func (m *MultiIRCClient) newClient() *twitch.Client {
+	c := twitch.NewAnonymousClient()
+	c.Capabilities = []string{
 		"twitch.tv/tags",
 		"twitch.tv/commands",
 		"twitch.tv/membership",
 	}
-
-	m := &MultiIRCClient{
-		client:    client,
-		channels:  make(map[string]bool),
-		roomNames: make(map[string]string),
-	}
-	m.registerHandlers()
-	return m
+	m.registerHandlers(c)
+	return c
 }
+
+// Reconnect timing. A connection that stayed up at least
+// healthySessionMin counts as healthy and resets the backoff — before, the
+// backoff only grew, so after a few blips every reconnect took 60s.
+const (
+	reconnectBackoffMin = 2 * time.Second
+	reconnectBackoffMax = 60 * time.Second
+	healthySessionMin   = 30 * time.Second
+)
 
 func (m *MultiIRCClient) OnMessage(fn func(channel string, msg chat.Message))     { m.onMessage = fn }
 func (m *MultiIRCClient) OnJoinPart(fn func(channel string, jp chat.UserJoinPart)) { m.onJoinPart = fn }
@@ -101,9 +114,10 @@ func (m *MultiIRCClient) JoinChannel(channel string) {
 	m.mu.Lock()
 	already := m.channels[channel]
 	m.channels[channel] = true
+	client := m.client
 	m.mu.Unlock()
 	if !already {
-		m.client.Join(channel)
+		client.Join(channel)
 	}
 }
 
@@ -112,8 +126,9 @@ func (m *MultiIRCClient) PartChannel(channel string) {
 	channel = strings.ToLower(strings.TrimPrefix(channel, "#"))
 	m.mu.Lock()
 	delete(m.channels, channel)
+	client := m.client
 	m.mu.Unlock()
-	m.client.Depart(channel)
+	client.Depart(channel)
 	if m.onSystem != nil {
 		m.onSystem(channel, fmt.Sprintf("Left #%s", channel))
 	}
@@ -121,20 +136,27 @@ func (m *MultiIRCClient) PartChannel(channel string) {
 
 // Connect starts the IRC connection. Reconnects automatically on disconnect.
 func (m *MultiIRCClient) Connect(ctx context.Context) {
-	backoff := 2 * time.Second
-	maxBackoff := 60 * time.Second
+	backoff := reconnectBackoffMin
 
 	for {
+		m.mu.RLock()
+		client := m.client
+		m.mu.RUnlock()
+
 		select {
 		case <-ctx.Done():
-			m.client.Disconnect()
+			client.Disconnect()
 			return
 		default:
 		}
 
-		err := m.client.Connect()
+		started := time.Now()
+		err := client.Connect()
 		if ctx.Err() != nil {
 			return
+		}
+		if time.Since(started) >= healthySessionMin {
+			backoff = reconnectBackoffMin
 		}
 
 		// Connection ended - notify all channels
@@ -152,28 +174,24 @@ func (m *MultiIRCClient) Connect(ctx context.Context) {
 		case <-time.After(backoff):
 		}
 		backoff *= 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
+		if backoff > reconnectBackoffMax {
+			backoff = reconnectBackoffMax
 		}
 
-		// Re-join all channels after reconnect
-		m.client = twitch.NewAnonymousClient()
-		m.client.Capabilities = []string{
-			"twitch.tv/tags",
-			"twitch.tv/commands",
-			"twitch.tv/membership",
-		}
-		m.registerHandlers()
-		m.mu.RLock()
+		// Fresh client, re-join all channels. Swap + joins happen under
+		// mu so a concurrent JoinChannel either lands in m.channels before
+		// the loop (joined here) or sees the new client.
+		m.mu.Lock()
+		m.client = m.newClient()
 		for ch := range m.channels {
 			m.client.Join(ch)
 		}
-		m.mu.RUnlock()
+		m.mu.Unlock()
 	}
 }
 
-func (m *MultiIRCClient) registerHandlers() {
-	m.client.OnPrivateMessage(func(msg twitch.PrivateMessage) {
+func (m *MultiIRCClient) registerHandlers(c *twitch.Client) {
+	c.OnPrivateMessage(func(msg twitch.PrivateMessage) {
 		converted := convertPrivateMessage(msg, msg.Channel)
 		if converted.IsSharedChat && converted.SourceChannel == msg.Source.RoomID {
 			converted.SourceChannel = m.resolveRoomName(msg.Source.RoomID)
@@ -183,7 +201,7 @@ func (m *MultiIRCClient) registerHandlers() {
 		}
 	})
 
-	m.client.OnUserJoinMessage(func(msg twitch.UserJoinMessage) {
+	c.OnUserJoinMessage(func(msg twitch.UserJoinMessage) {
 		if m.onJoinPart != nil {
 			m.onJoinPart(msg.Channel, chat.UserJoinPart{
 				Platform: chat.PlatformTwitch,
@@ -195,7 +213,7 @@ func (m *MultiIRCClient) registerHandlers() {
 		}
 	})
 
-	m.client.OnUserPartMessage(func(msg twitch.UserPartMessage) {
+	c.OnUserPartMessage(func(msg twitch.UserPartMessage) {
 		if m.onJoinPart != nil {
 			m.onJoinPart(msg.Channel, chat.UserJoinPart{
 				Platform: chat.PlatformTwitch,
@@ -207,7 +225,7 @@ func (m *MultiIRCClient) registerHandlers() {
 		}
 	})
 
-	m.client.OnClearChatMessage(func(msg twitch.ClearChatMessage) {
+	c.OnClearChatMessage(func(msg twitch.ClearChatMessage) {
 		if m.onMessage == nil {
 			return
 		}
@@ -236,7 +254,7 @@ func (m *MultiIRCClient) registerHandlers() {
 		}
 	})
 
-	m.client.OnClearMessage(func(msg twitch.ClearMessage) {
+	c.OnClearMessage(func(msg twitch.ClearMessage) {
 		if m.onMessage != nil {
 			m.onMessage(msg.Channel, chat.Message{
 				Platform:       chat.PlatformTwitch,
@@ -250,7 +268,7 @@ func (m *MultiIRCClient) registerHandlers() {
 		}
 	})
 
-	m.client.OnUserNoticeMessage(func(msg twitch.UserNoticeMessage) {
+	c.OnUserNoticeMessage(func(msg twitch.UserNoticeMessage) {
 		if m.onMessage == nil {
 			return
 		}
@@ -280,7 +298,7 @@ func (m *MultiIRCClient) registerHandlers() {
 		m.onMessage(msg.Channel, out)
 	})
 
-	m.client.OnRoomStateMessage(func(msg twitch.RoomStateMessage) {
+	c.OnRoomStateMessage(func(msg twitch.RoomStateMessage) {
 		if m.onSettings != nil {
 			m.onSettings(msg.Channel, chat.ChatSettings{
 				SlowMode:     msg.Tags["slow"] != "0" && msg.Tags["slow"] != "",
@@ -291,7 +309,7 @@ func (m *MultiIRCClient) registerHandlers() {
 		}
 	})
 
-	m.client.OnConnect(func() {
+	c.OnConnect(func() {
 		// IRC connection is implicit — at startup this would fire one
 		// "Connected to #channel" line per watched channel, drowning the
 		// historical messages we just loaded. The connect lifecycle
