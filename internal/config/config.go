@@ -48,6 +48,10 @@ type Config struct {
 	// defaults because the file on disk was unreadable or corrupt. The app
 	// shows it to the user once so a silently "reset" config is explained.
 	LoadWarning string `json:"-"`
+
+	// savedTokens remembers what is already in the keyring per profile id
+	// so Save only touches the keyring when tokens actually changed.
+	savedTokens map[string]tokenPair
 }
 
 // Profile is one Twitch+YouTube account context the user can switch
@@ -60,12 +64,21 @@ type Profile struct {
 }
 
 // TwitchConfig holds Twitch-specific settings.
+//
+// AccessToken / RefreshToken are memory-only (`json:"-"`): they live in
+// the OS keyring, one entry per profile (see tokens.go). Load hydrates
+// them, Save writes changed ones back. LegacyAccessToken /
+// LegacyRefreshToken map the old plaintext JSON keys — read once for the
+// migration, and written only as an explicit fallback when the keyring is
+// unavailable.
 type TwitchConfig struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	Username     string `json:"username"`
+	ClientID           string `json:"client_id"`
+	ClientSecret       string `json:"client_secret"`
+	AccessToken        string `json:"-"`
+	RefreshToken       string `json:"-"`
+	LegacyAccessToken  string `json:"access_token,omitempty"`
+	LegacyRefreshToken string `json:"refresh_token,omitempty"`
+	Username           string `json:"username"`
 	Channel      string `json:"channel"` // channel to join (without #)
 	BotUserID    string `json:"bot_user_id"`
 }
@@ -160,6 +173,7 @@ func Load() (*Config, error) {
 		return fresh, nil
 	}
 	cfg.ensureProfile()
+	cfg.loadTokens()
 	return cfg, nil
 }
 
@@ -171,6 +185,7 @@ func (c *Config) Save() error {
 	saveMu.Lock()
 	defer saveMu.Unlock()
 	c.syncActiveToProfile()
+	c.storeTokens()
 
 	path, err := ConfigPath()
 	if err != nil {
@@ -307,6 +322,7 @@ func (c *Config) RemoveProfile(id string) error {
 	for i, p := range c.Profiles {
 		if p.ID == id {
 			c.Profiles = append(c.Profiles[:i], c.Profiles[i+1:]...)
+			c.deleteTokens(id)
 			return nil
 		}
 	}

@@ -1,3 +1,26 @@
+2026-11-13 19:27 - v0.5.8 (stable): streamerchat keeps Twitch tokens in the
+  OS keyring, one entry per profile.
+
+  - TwitchConfig.AccessToken / RefreshToken are now memory-only
+    (`json:"-"`). Config.Load hydrates every profile from the keyring
+    (credstore service "streamerchat-twitch-<profile-id>"), Config.Save
+    writes only tokens that changed, RemoveProfile deletes the entry,
+    and logging out (empty tokens) clears it. Before, every profile's
+    tokens sat in config.json in plain text.
+  - Migration: plaintext tokens found in config.json win over the
+    keyring (they are never older — Twitch rotates refresh tokens),
+    are moved into the keyring and wiped from disk on the next save.
+  - If the keyring is unavailable the tokens stay in config.json
+    (0600) as a logged fallback instead of logging the user out.
+  - The flat top-level "twitch" block never carries its own token copy.
+  - credstore.StreamerChatTwitch validates the profile id (it becomes
+    a file name on Windows).
+  - Note: on macOS an unsigned build may show one Keychain access
+    prompt per profile after updating.
+  - Tests use an in-memory store (never the real keyring): keyring
+    round trip, legacy migration incl. stale keyring entry, keyring
+    failure fallback, per-profile isolation, removal and logout.
+
 2026-11-13 19:25 - v0.5.7 (stable): chathub history keeps deletions + stays
   small, per-channel 3rd-party emotes, YouTube login/send on Windows,
   dead code removed.

@@ -10,7 +10,10 @@
 // you'll forget to delete it on logout.
 package credstore
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Service is a small enum-ish wrapper so call sites use named constants
 // rather than free strings. Add new entries here when adding a new
@@ -22,6 +25,22 @@ const (
 	YouTube Service = "chathub-youtube"
 	Kick    Service = "chathub-kick"
 )
+
+// StreamerChatTwitch is the per-profile service for streamerchat's Twitch
+// tokens. profileID must be a config profile slug ([a-z0-9_-]); anything
+// else is rejected because the service name becomes a file name on
+// Windows.
+func StreamerChatTwitch(profileID string) (Service, error) {
+	if profileID == "" {
+		return "", errors.New("credstore: empty profile id")
+	}
+	for _, r := range profileID {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return "", fmt.Errorf("credstore: invalid profile id %q", profileID)
+		}
+	}
+	return Service("streamerchat-twitch-" + profileID), nil
+}
 
 // defaultAcct is the keyring "account" name used on macOS / Linux.
 // Windows uses files instead so doesn't reference this — the //go:build !windows
