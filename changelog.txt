@@ -1,3 +1,10 @@
+2026-11-13 19:32 - returning chatters are marked too (Twitch "returning-chatter"
+  tag → chat.Message.IsReturningChatter → "returningChatter"). Subtler
+  than first messages: thin teal bar + small "↺ Returning chatter" /
+  "↺ Wiederkehrender Zuschauer" label, no tint. A message carries at
+  most one of the two markers (first message wins); both are removed
+  when the message is deleted. Test for the tag parsing.
+
 2026-11-13 19:30 - v0.5.9 (stable): first-time chatters are highlighted, like
   Twitch's "First-time chat".
 

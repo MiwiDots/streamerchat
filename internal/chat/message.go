@@ -76,6 +76,11 @@ type Message struct {
 	// broadcaster and mods ("First-time chat").
 	IsFirstMessage bool
 
+	// IsReturningChatter is Twitch's "returning-chatter" tag: a viewer who
+	// has chatted in this channel before and is coming back. Shown more
+	// subtly than a first message.
+	IsReturningChatter bool
+
 	// Platform-specific metadata
 	TwitchEmotes     string         // raw emote tag from IRC
 	TwitchEmoteRanges []EmoteRange  // parsed emote positions (rune-based)

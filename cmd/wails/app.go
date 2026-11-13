@@ -1014,6 +1014,7 @@ func (a *App) chatToMap(msg chat.Message) map[string]interface{} {
 		"sourceChannel":   msg.SourceChannel,
 		"isSharedChat":    msg.IsSharedChat,
 		"firstMsg":        msg.IsFirstMessage,
+		"returningChatter": msg.IsReturningChatter,
 		"superChatAmount": msg.SuperChatAmount,
 		"targetUsername":  msg.TargetUsername,
 	}

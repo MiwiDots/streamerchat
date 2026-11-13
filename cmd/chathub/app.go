@@ -833,6 +833,7 @@ func (a *App) chatToMap(channel string, msg chat.Message) map[string]interface{}
 		"sourceChannel":  msg.SourceChannel,
 		"isSharedChat":   msg.IsSharedChat,
 		"firstMsg":       msg.IsFirstMessage,
+		"returningChatter": msg.IsReturningChatter,
 	}
 }
 

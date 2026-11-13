@@ -79,3 +79,15 @@ func TestConvertPrivateMessageFirstMsg(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertPrivateMessageReturningChatter(t *testing.T) {
+	var msg twitch.PrivateMessage
+	msg.Tags = map[string]string{"returning-chatter": "1"}
+	if !convertPrivateMessage(msg, "c").IsReturningChatter {
+		t.Fatal("returning-chatter=1 not detected")
+	}
+	msg.Tags = map[string]string{"returning-chatter": "0"}
+	if convertPrivateMessage(msg, "c").IsReturningChatter {
+		t.Fatal("returning-chatter=0 wrongly flagged")
+	}
+}

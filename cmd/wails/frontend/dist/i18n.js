@@ -3,6 +3,7 @@
 const STRINGS = {
   en: {
     firstMessage: 'First message in this channel',
+    returningChatter: 'Returning chatter',
     settings: 'Settings',
     general: 'General',
     sound: 'Sound',
@@ -70,6 +71,7 @@ const STRINGS = {
   },
   de: {
     firstMessage: 'Erste Nachricht im Channel',
+    returningChatter: 'Wiederkehrender Zuschauer',
     settings: 'Einstellungen',
     general: 'Allgemein',
     sound: 'Ton',

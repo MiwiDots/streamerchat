@@ -608,3 +608,15 @@ body.no-ts .ts { display: none; }
   letter-spacing: 0.02em;
   margin-bottom: 1px;
 }
+
+/* Returning chatter (Twitch "returning-chatter" tag): subtler than a
+   first message — thin teal bar and a small label, no background tint. */
+.msg.returning-chatter {
+  border-left: 2px solid #2bb3a3;
+  padding-left: 7px;
+}
+.returning-chatter-label {
+  font-size: 0.75em;
+  color: #5fcfc1;
+  margin-bottom: 1px;
+}

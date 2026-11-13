@@ -477,9 +477,8 @@ function markDeleted(div) {
   div.classList.add('deleted');
   // A deleted first message is no longer worth highlighting; dropping the
   // label also keeps the "first two children" rule below correct.
-  div.classList.remove('first-msg');
-  const firstLabel = div.querySelector('.first-msg-label');
-  if (firstLabel) firstLabel.remove();
+  div.classList.remove('first-msg', 'returning-chatter');
+  for (const label of div.querySelectorAll('.first-msg-label, .returning-chatter-label')) label.remove();
   // Keep timestamp + platform badge (first two children), drop the rest
   // (username, emotes, text) so the deleted content is no longer shown.
   while (div.childNodes.length > 2) div.removeChild(div.lastChild);
@@ -571,6 +570,11 @@ async function renderMessage(msg, gen = renderGen) {
   if (msg.firstMsg) {
     div.classList.add('first-msg');
     div.insertBefore(el('div', { class: 'first-msg-label' }, '✦ ' + i18n.t('firstMessage')), div.firstChild);
+  } else if (msg.returningChatter) {
+    // Twitch "returning-chatter": a viewer coming back. Subtler marker
+    // than a first message (thin bar + small label, no tint).
+    div.classList.add('returning-chatter');
+    div.insertBefore(el('div', { class: 'returning-chatter-label' }, '↺ ' + i18n.t('returningChatter')), div.firstChild);
   }
   if (msg.isSharedChat && msg.sourceChannel) {
     div.appendChild(el('span', { class: 'shared-tag' }, `[${msg.sourceChannel}]`));

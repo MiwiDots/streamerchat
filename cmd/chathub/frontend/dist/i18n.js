@@ -3,6 +3,7 @@
 const STRINGS = {
   en: {
     firstMessage: 'First message in this channel',
+    returningChatter: 'Returning chatter',
     emptyAdd: 'Click <strong>+</strong> to add a Twitch channel',
     emptyHint: 'Anonymous read-only by default. Login via the cog to send messages.',
     readOnly: 'read-only',
@@ -91,6 +92,7 @@ const STRINGS = {
   },
   de: {
     firstMessage: 'Erste Nachricht im Channel',
+    returningChatter: 'Wiederkehrender Zuschauer',
     emptyAdd: 'Klicke auf <strong>+</strong> um einen Twitch-Channel hinzuzufügen',
     emptyHint: 'Standardmäßig anonym im Read-Only-Modus. Über das Zahnrad einloggen um Nachrichten zu senden.',
     readOnly: 'nur-lesen',

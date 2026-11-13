@@ -697,6 +697,11 @@ async function renderMessage(msg) {
   if (msg.firstMsg) {
     div.classList.add('first-msg');
     div.insertBefore(el('div', { class: 'first-msg-label' }, '✦ ' + i18n.t('firstMessage')), div.firstChild);
+  } else if (msg.returningChatter) {
+    // Twitch "returning-chatter": a viewer coming back. Subtler marker
+    // than a first message (thin bar + small label, no tint).
+    div.classList.add('returning-chatter');
+    div.insertBefore(el('div', { class: 'returning-chatter-label' }, '↺ ' + i18n.t('returningChatter')), div.firstChild);
   }
 
   // Render real Twitch badge images if available, fall back to text
@@ -762,7 +767,7 @@ function markMessagesDeleted(state, username, msgId, all) {
     }
     const ts = row.querySelector('.ts');
     row.classList.add('deleted');
-    row.classList.remove('highlight', 'first-msg');
+    row.classList.remove('highlight', 'first-msg', 'returning-chatter');
     const note = el('span', { class: 'deleted-text' }, i18n.t('messageDeleted'));
     if (ts) row.replaceChildren(ts, note); else row.replaceChildren(note);
   }
