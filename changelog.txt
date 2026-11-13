@@ -1,3 +1,6 @@
+2026-11-13 22:41 - v0.6.2 (stable): RELEASE — streamerchat boot resilience +
+  log location (see the entry below).
+
 2026-11-13 22:33 - streamerchat: chat sometimes never connected after a (re)start,
   with no log (unreleased, next version).
 
