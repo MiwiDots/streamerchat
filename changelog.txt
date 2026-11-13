@@ -1,3 +1,7 @@
+2026-11-13 23:02 - v0.6.3 (stable): RELEASE — streamerchat reads chat
+  anonymously (see the entry below). v0.6.2 confirmed working by the
+  user before this release.
+
 2026-11-13 22:53 - streamerchat reads chat ANONYMOUSLY, like chathub (unreleased,
   next version).
 
