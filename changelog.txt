@@ -1,3 +1,41 @@
+2026-11-13 22:33 - streamerchat: chat sometimes never connected after a (re)start,
+  with no log (unreleased, next version).
+
+  Root causes (all pre-existing):
+  - bootSequence treated EVERY token-validation failure as "login
+    expired": no network yet after Windows boot/autostart, a DNS hiccup
+    or a Twitch 5xx made it return without ever starting IRC and
+    without retrying. New App.authenticate retries transient errors
+    with backoff (2s..60s); only a 400/401 from Twitch
+    (twitch.ErrTokenRejected / IsTokenRejected) means expired. The
+    user sees "Can't reach Twitch right now — retrying…" and later
+    "Twitch reachable again — connecting chat…".
+  - id.twitch.tv calls (validate, refresh, device login) had NO HTTP
+    timeout → a stalled connection hung the boot forever, silently.
+    authHTTPClient now has a 15s timeout. chathub's direct Helix calls
+    (incl. channel-id resolution used by badge lookups) got one too.
+  - Events emitted during startup (auth notices, "ready", first chat
+    lines) were dropped because the page wasn't listening yet. All
+    streamerchat events now go through App.emit, which buffers until
+    the frontend calls App.FrontendReady() after registering ALL
+    listeners. The frontend registers listeners via whenRuntime() + one
+    boot runner; the loginResult/authExpired listeners used to be
+    registered only if the runtime existed at script-eval time, with no
+    retry.
+  - Logs were written next to the .exe (often not writable → nothing
+    logged at all) and truncated on every start (restarting to check
+    wiped the bad run). New internal/applog: log in the config dir
+    (%APPDATA%\streamerchat\ / ~/.config/streamerchat/), previous run
+    kept as *.prev.log, exe dir / temp as fallbacks, also to stderr,
+    microsecond timestamps. Same for chathub.
+  - Safety net: emote/badge lookups awaited in the render chain time out
+    after 3s (both apps), so a hung lookup can't freeze chat rendering.
+  - chathub decides "token expired" via IsTokenRejected instead of
+    string matching ("invalid" also matched JSON parse errors).
+  - Tests: boot retries transient errors / rejects only 400-401 / stops
+    on shutdown, startup event buffer, auth status classification, log
+    rotation + fallback.
+
 2026-11-13 21:46 - v0.6.1 (stable): RELEASE — watch-streak highlighting (see
   the entry below).
 

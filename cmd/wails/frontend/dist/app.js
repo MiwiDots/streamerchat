@@ -43,6 +43,31 @@ function missActive(m, key) {
 // are rendered through a single promise chain: DOM order == arrival order.
 // renderGen is bumped on profile switch so renders still pending for the old
 // profile are dropped instead of appearing in the new profile's chat.
+// Every Wails event listener is registered through whenRuntime(). The
+// boot runner at the very end of this file waits for the Wails runtime,
+// runs all registrations in order, and only THEN calls
+// App.FrontendReady() — the backend buffers events until that call, so
+// nothing emitted during startup (auth problems, "ready", first chat
+// lines) is lost. Before, some listeners were registered only if the
+// runtime happened to exist at script-eval time and were never retried.
+const runtimeReadyCallbacks = [];
+function whenRuntime(fn) { runtimeReadyCallbacks.push(fn); }
+
+// Go lookups (emotes/badges) are awaited inside the serialized render
+// chain; if one never answered, every later message would wait forever
+// and chat would silently freeze. withTimeout resolves to `fallback`
+// after `ms` instead.
+const LOOKUP_TIMEOUT_MS = 3000;
+function withTimeout(promise, ms, fallback) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    Promise.resolve(promise).then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      () => { clearTimeout(timer); resolve(fallback); },
+    );
+  });
+}
+
 let renderGen = 0;
 let renderChain = Promise.resolve();
 // "Both" send target: the "YouTube sending not supported" notice is shown
@@ -370,7 +395,7 @@ async function lookupBadge(setID, version) {
   if (missActive(badgeMiss, key)) return '';
   const gen = renderGen;
   let url = '';
-  try { url = await window.go.main.App.LookupBadge('', setID, version); } catch (e) {}
+  try { url = await withTimeout(window.go.main.App.LookupBadge('', setID, version), LOOKUP_TIMEOUT_MS, ''); } catch (e) {}
   // A profile switch while the lookup was in flight invalidates the answer.
   if (gen !== renderGen) return url;
   if (url) {
@@ -401,7 +426,7 @@ async function lookupEmote(name) {
   const gen = renderGen;
   let result = null;
   try {
-    const info = await window.go.main.App.LookupEmote(name);
+    const info = await withTimeout(window.go.main.App.LookupEmote(name), LOOKUP_TIMEOUT_MS, null);
     if (info && info.url) result = info;
   } catch (e) {}
   if (gen !== renderGen) return result;
@@ -930,10 +955,6 @@ document.addEventListener('keydown', (e) => {
 // === Wails events ===
 
 function setupEvents() {
-  if (!window.runtime) {
-    setTimeout(setupEvents, 100);
-    return;
-  }
 
   window.runtime.EventsOn('ready', (data) => {
     // No dedicated "emotes/badges loaded" event exists; "ready" is the
@@ -1113,7 +1134,7 @@ function setupEvents() {
   });
 }
 
-setupEvents();
+whenRuntime(setupEvents);
 updateInputLabel();
 inputEl.focus();
 
@@ -1530,10 +1551,6 @@ if (newProfileNameEl) {
 // progress. The fresh "ready" event arrives moments later from the
 // new profile's bootSequence.
 function setupProfileSwitchedListener() {
-  if (!window.runtime || !window.runtime.EventsOn) {
-    setTimeout(setupProfileSwitchedListener, 100);
-    return;
-  }
   window.runtime.EventsOn('profileSwitched', () => {
     // Drop renders still pending for the old profile, and everything that
     // was resolved against the old profile's channel/roles/emotes.
@@ -1560,7 +1577,7 @@ function setupProfileSwitchedListener() {
     renderActivity();
   });
 }
-setupProfileSwitchedListener();
+whenRuntime(setupProfileSwitchedListener);
 // Initial hydrate (delayed so wails runtime is up).
 setTimeout(refreshProfiles, 200);
 
@@ -1869,7 +1886,7 @@ if (logoutBtn) {
 }
 
 // Backend tells us when device-code polling finished.
-if (window.runtime && window.runtime.EventsOn) {
+whenRuntime(() => {
   window.runtime.EventsOn('loginResult', (data) => {
     if (!data) return;
     if (data.error) {
@@ -1898,7 +1915,7 @@ if (window.runtime && window.runtime.EventsOn) {
     document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === 'twitch'));
     document.querySelectorAll('.settings-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === 'twitch'));
   });
-}
+});
 
 if (autostartCheckbox) {
   autostartCheckbox.addEventListener('change', async () => {
@@ -1915,3 +1932,18 @@ if (autostartCheckbox) {
     }
   });
 }
+
+// Boot runner (keep at the very END of the file so every whenRuntime()
+// registration above is queued): wait for the Wails runtime + bindings,
+// register all listeners, then tell the backend to flush its buffered
+// startup events.
+(function bootFrontend() {
+  if (!window.runtime || !window.runtime.EventsOn || !window.go || !window.go.main) {
+    setTimeout(bootFrontend, 50);
+    return;
+  }
+  for (const fn of runtimeReadyCallbacks) {
+    try { fn(); } catch (e) { console.error('listener setup failed', e); }
+  }
+  window.go.main.App.FrontendReady().catch((e) => console.error('FrontendReady failed', e));
+})();

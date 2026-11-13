@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/miwi/streamerchat/internal/applog"
 	"github.com/miwi/streamerchat/internal/chat"
 	"github.com/miwi/streamerchat/internal/config"
 	"github.com/miwi/streamerchat/internal/eventsub"
@@ -68,6 +69,11 @@ type App struct {
 	// trigger reconnects via ircClient.Disconnect() rather than
 	// spawning fresh supervisors.
 	supervisorsStarted bool
+
+	// Startup event buffer (see emit / FrontendReady in lifecycle.go).
+	uiMu      sync.Mutex
+	uiReady   bool
+	uiPending []uiEvent
 }
 
 func NewApp() *App {
@@ -78,15 +84,17 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
-	// Open log file next to executable
-	logPath := "streamerchat.log"
+	// Log into the config dir (always writable), keeping the previous run
+	// as streamerchat.prev.log; next to the exe only as a fallback.
+	var logDirs []string
+	if p, err := config.ConfigPath(); err == nil {
+		logDirs = append(logDirs, filepath.Dir(p))
+	}
 	if exe, err := os.Executable(); err == nil {
-		logPath = filepath.Join(filepath.Dir(exe), "streamerchat.log")
+		logDirs = append(logDirs, filepath.Dir(exe))
 	}
-	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
-		log.SetOutput(f)
-		log.Printf("[BOOT] StreamerChat v%s (Wails) started, log: %s", version.Version, logPath)
-	}
+	logPath := applog.Setup("streamerchat", logDirs...)
+	log.Printf("[BOOT] StreamerChat v%s (Wails) started, log: %s", version.Version, logPath)
 
 	// Remove leftover <exe>.old from a previous self-update.
 	selfupdate.CleanupPrevious()
@@ -156,56 +164,21 @@ func (a *App) bootSequence() {
 
 	if accessToken == "" || clientID == "" {
 		a.emitSystem("This profile has no Twitch token yet. Open Settings → Twitch and click Login to authenticate.")
-		runtime.EventsEmit(a.ctx, "authExpired", nil)
+		a.emit("authExpired", nil)
 		return
 	}
 
-	info, err := twitch.ValidateToken(accessToken)
-	if err != nil {
-		log.Printf("[AUTH] Validate failed: %v", err)
-		if refreshToken != "" {
-			log.Printf("[AUTH] Attempting refresh...")
-			if token, refErr := twitch.RefreshAccessToken(clientID, clientSecret, refreshToken); refErr == nil {
-				if !a.commitTokens(profileID, token) {
-					log.Printf("[AUTH] Profile switched during boot refresh — aborting stale boot for %s", profileID)
-					return
-				}
-				accessToken = token.AccessToken
-				if validInfo, vErr := twitch.ValidateToken(token.AccessToken); vErr == nil {
-					info = validInfo
-					log.Printf("[AUTH] Refreshed and validated as %s", validInfo.Login)
-				} else {
-					log.Printf("[AUTH] Validate after refresh failed: %v", vErr)
-				}
-			} else {
-				log.Printf("[AUTH] Refresh failed: %v", refErr)
-			}
-		}
-	} else {
-		log.Printf("[AUTH] Token valid for %s", info.Login)
-		// Proactively refresh even on validate-success so the new session
-		// starts with a freshly-issued token. Failure here is non-fatal —
-		// the validated token is still good for its remaining TTL.
-		if refreshToken != "" {
-			if tok, rerr := twitch.RefreshAccessToken(clientID, clientSecret, refreshToken); rerr == nil {
-				if !a.commitTokens(profileID, tok) {
-					log.Printf("[AUTH] Profile switched during boot refresh — aborting stale boot for %s", profileID)
-					return
-				}
-				accessToken = tok.AccessToken
-				log.Printf("[AUTH] Token refreshed at boot")
-			} else {
-				log.Printf("[AUTH] Boot refresh failed (non-fatal): %v", rerr)
-			}
-		}
-	}
-	// If after validate + refresh we still have nothing usable, surface this
-	// to the frontend and don't spin up IRC/Helix with a dead token (which
-	// would just hammer Twitch with 401s forever).
-	if info == nil {
-		log.Printf("[AUTH] No valid token after refresh — emitting authExpired, awaiting re-login")
+	info, accessToken, outcome := a.authenticate(profileID, clientID, clientSecret, accessToken, refreshToken)
+	switch outcome {
+	case authStale:
+		log.Printf("[AUTH] Profile switched / app closing during boot — aborting stale boot for %s", profileID)
+		return
+	case authExpired:
+		// Twitch definitively rejected the tokens: don't spin up IRC/Helix
+		// with a dead token (it would just hammer Twitch with 401s).
+		log.Printf("[AUTH] Tokens rejected by Twitch — emitting authExpired, awaiting re-login")
 		a.emitSystem("Authentication expired - please re-login via the settings gear")
-		runtime.EventsEmit(a.ctx, "authExpired", nil)
+		a.emit("authExpired", nil)
 		return
 	}
 
@@ -240,7 +213,7 @@ func (a *App) bootSequence() {
 	// broadcaster id (single-channel app, so this fires once).
 	if a.stv == nil && a.cfg.Twitch.BotUserID != "" {
 		a.stv = sevenTV.NewClient(a.ctx, func(c sevenTV.Cosmetic) {
-			runtime.EventsEmit(a.ctx, "sevenTVCosmetic", map[string]interface{}{
+			a.emit("sevenTVCosmetic", map[string]interface{}{
 				"userID":    c.UserID,
 				"paintCSS":  c.PaintCSS,
 				"badgeURL":  c.BadgeURL,
@@ -269,7 +242,7 @@ func (a *App) bootSequence() {
 	a.startChattersAndRoles()
 	a.startYouTube()
 
-	runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
+	a.emit("ready", map[string]interface{}{
 		"channel":        a.cfg.Twitch.Channel,
 		"username":       a.cfg.Twitch.Username,
 		"youtube":        (a.cfg.YouTube.Enabled && a.cfg.YouTube.ChannelHandle != "") || a.cfg.YouTube.VideoID != "",
@@ -395,7 +368,7 @@ func (a *App) SwitchProfile(id string) string {
 	a.mu.Unlock()
 	// Frontend's activity list is per-profile — tell it to reset
 	// so the incoming profile starts with a clean feed.
-	runtime.EventsEmit(a.ctx, "activityReset", nil)
+	a.emit("activityReset", nil)
 
 	// New 7TV client per profile would mean a new EventAPI WS — but
 	// the existing one is a single shared connection that fans out
@@ -404,7 +377,7 @@ func (a *App) SwitchProfile(id string) string {
 
 	// Notify the UI so it clears chat + user list before reconnect
 	// chatter starts streaming in.
-	runtime.EventsEmit(a.ctx, "profileSwitched", map[string]interface{}{
+	a.emit("profileSwitched", map[string]interface{}{
 		"id":   id,
 		"name": a.activeProfileName(),
 	})
@@ -536,7 +509,7 @@ func (a *App) forwardIRC(ctx context.Context, client *twitch.IRCClient) {
 			if !ok {
 				return
 			}
-			runtime.EventsEmit(a.ctx, "settings", settings)
+			a.emit("settings", settings)
 		case err, ok := <-client.Errors():
 			if !ok {
 				return
@@ -614,7 +587,7 @@ func (a *App) startEventSub() {
 		if a.ctx == nil {
 			return
 		}
-		runtime.EventsEmit(a.ctx, "activity", map[string]interface{}{
+		a.emit("activity", map[string]interface{}{
 			"type":      string(ev.Type),
 			"user":      ev.User,
 			"userId":    ev.UserID,
@@ -638,6 +611,113 @@ func (a *App) helix() *twitch.HelixClient {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.helixClient
+}
+
+// Twitch auth calls used by authenticate; vars so tests can fake them.
+var (
+	validateToken      = twitch.ValidateToken
+	refreshAccessToken = twitch.RefreshAccessToken
+)
+
+// authOutcome is the result of App.authenticate.
+type authOutcome int
+
+const (
+	authOK      authOutcome = iota // info + usable access token returned
+	authExpired                    // Twitch rejected the tokens → re-login needed
+	authStale                      // profile switched / app closing → abandon
+)
+
+// Boot authentication retry backoff for transient failures.
+const (
+	authRetryMin = 2 * time.Second
+	authRetryMax = 60 * time.Second
+)
+
+// authenticate validates (and refreshes) the profile's Twitch tokens,
+// RETRYING transient failures until it succeeds, Twitch rejects the tokens,
+// or the boot becomes stale.
+//
+// Before, ANY validate failure — including "no network yet" right after
+// Windows boot / autostart, a DNS hiccup or a Twitch 5xx — was treated as
+// an expired login: bootSequence returned without ever connecting chat or
+// retrying, and the "Authentication expired" notice was emitted before the
+// window had loaded, so the user saw an empty chat and nothing else. Only
+// a 400/401 from Twitch (twitch.IsTokenRejected) now counts as expired.
+func (a *App) authenticate(profileID, clientID, clientSecret, accessToken, refreshToken string) (*twitch.ValidateResponse, string, authOutcome) {
+	backoff := authRetryMin
+	notified := false
+	for {
+		if a.ctx.Err() != nil || !a.isActiveProfile(profileID) {
+			return nil, "", authStale
+		}
+
+		info, err := validateToken(accessToken)
+		if err == nil {
+			log.Printf("[AUTH] Token valid for %s", info.Login)
+			// Proactively refresh so the session starts with a fresh token.
+			// Non-fatal: the validated token is good for its remaining TTL.
+			if refreshToken != "" {
+				if tok, rerr := refreshAccessToken(clientID, clientSecret, refreshToken); rerr == nil {
+					if !a.commitTokens(profileID, tok) {
+						return nil, "", authStale
+					}
+					accessToken = tok.AccessToken
+					log.Printf("[AUTH] Token refreshed at boot")
+				} else {
+					log.Printf("[AUTH] Boot refresh failed (non-fatal): %v", rerr)
+				}
+			}
+			if notified {
+				a.emitSystem("Twitch reachable again — connecting chat…")
+			}
+			return info, accessToken, authOK
+		}
+
+		if twitch.IsTokenRejected(err) {
+			log.Printf("[AUTH] Access token rejected: %v", err)
+			if refreshToken == "" {
+				return nil, "", authExpired
+			}
+			tok, rerr := refreshAccessToken(clientID, clientSecret, refreshToken)
+			if rerr == nil {
+				if !a.commitTokens(profileID, tok) {
+					return nil, "", authStale
+				}
+				log.Printf("[AUTH] Refreshed after rejected access token; validating again")
+				accessToken, refreshToken = tok.AccessToken, tok.RefreshToken
+				backoff = authRetryMin
+				continue
+			}
+			if twitch.IsTokenRejected(rerr) {
+				log.Printf("[AUTH] Refresh token rejected too: %v", rerr)
+				return nil, "", authExpired
+			}
+			err = rerr // transient refresh failure → retry below
+		}
+
+		log.Printf("[AUTH] Twitch not reachable (%v) — retrying in %s", err, backoff)
+		if !notified {
+			a.emitSystem(fmt.Sprintf("Can't reach Twitch right now (%v) — retrying automatically…", err))
+			notified = true
+		}
+		select {
+		case <-a.ctx.Done():
+			return nil, "", authStale
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > authRetryMax {
+			backoff = authRetryMax
+		}
+	}
+}
+
+// isActiveProfile reports whether profileID is still the active profile.
+func (a *App) isActiveProfile(profileID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.cfg.ActiveProfileID == profileID
 }
 
 // commitTokens stores freshly issued tokens for profileID, but only if
@@ -757,7 +837,7 @@ func (a *App) refreshChatters() {
 			"userId":   c.UserID,
 		})
 	}
-	runtime.EventsEmit(a.ctx, "chattersAuthoritative", entries)
+	a.emit("chattersAuthoritative", entries)
 }
 
 func (a *App) refreshRoles(includeBots bool) {
@@ -784,7 +864,7 @@ func (a *App) refreshRoles(includeBots bool) {
 		}
 		roles["bots"] = botNames
 	}
-	runtime.EventsEmit(a.ctx, "roles", roles)
+	a.emit("roles", roles)
 }
 
 // startYouTube (re)starts YouTube for the active profile from cfg,
@@ -913,14 +993,14 @@ func (a *App) emitChat(msg chat.Message) {
 	if a.stv != nil && msg.Platform == chat.PlatformTwitch && msg.UserID != "" {
 		a.stv.LookupUser(msg.UserID)
 	}
-	runtime.EventsEmit(a.ctx, "chat", a.chatToMap(msg))
+	a.emit("chat", a.chatToMap(msg))
 }
 
 func (a *App) emitJoinPart(jp chat.UserJoinPart) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "joinPart", map[string]interface{}{
+	a.emit("joinPart", map[string]interface{}{
 		"username": jp.Username,
 		"isJoin":   jp.IsJoin,
 		"platform": string(jp.Platform),
@@ -931,7 +1011,7 @@ func (a *App) emitSystem(text string) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "chat", map[string]interface{}{
+	a.emit("chat", map[string]interface{}{
 		"type":      "system",
 		"text":      text,
 		"timestamp": time.Now().UnixMilli(),
@@ -1307,19 +1387,19 @@ func (a *App) StartLogin() map[string]interface{} {
 	go func() {
 		token, err := twitch.PollForToken(clientID, device.DeviceCode, device.Interval)
 		if err != nil {
-			runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{"error": err.Error()})
+			a.emit("loginResult", map[string]interface{}{"error": err.Error()})
 			return
 		}
 		info, err := twitch.ValidateToken(token.AccessToken)
 		if err != nil {
-			runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{"error": err.Error()})
+			a.emit("loginResult", map[string]interface{}{"error": err.Error()})
 			return
 		}
 		a.mu.Lock()
 		if a.cfg.ActiveProfileID != profileID {
 			a.mu.Unlock()
 			log.Printf("[AUTH] Profile switched during device login — discarding login for %s", profileID)
-			runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{
+			a.emit("loginResult", map[string]interface{}{
 				"error": "Profile was switched during login. Please log in again on this profile.",
 			})
 			return
@@ -1379,14 +1459,14 @@ func (a *App) StartLogin() map[string]interface{} {
 
 		// Re-emit ready so the frontend picks up the new username / channel
 		// and any UI that gates on it (TW/YT pills, login pill) updates.
-		runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
+		a.emit("ready", map[string]interface{}{
 			"channel":        a.cfg.Twitch.Channel,
 			"username":       a.cfg.Twitch.Username,
 			"youtube":        (a.cfg.YouTube.Enabled && a.cfg.YouTube.ChannelHandle != "") || a.cfg.YouTube.VideoID != "",
 			"showTimestamps": a.cfg.UI.ShowTimestamps,
 		})
 
-		runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{
+		a.emit("loginResult", map[string]interface{}{
 			"success":  true,
 			"username": info.Login,
 		})

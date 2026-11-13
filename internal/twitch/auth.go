@@ -2,12 +2,37 @@ package twitch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
+
+// authHTTPClient bounds every call to id.twitch.tv. These used to go
+// through http.DefaultClient / http.PostForm with NO timeout: a stalled
+// connection (typical right after Windows boot / wake from sleep) hung
+// bootSequence forever, so chat never connected and nothing was logged.
+var authHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+// ErrTokenRejected means Twitch actively refused the token (HTTP 400/401):
+// it is expired, revoked or invalid, and retrying won't help — the user
+// has to log in again. Every OTHER error from ValidateToken /
+// RefreshAccessToken (network down, DNS, timeout, 5xx, 429) is transient
+// and must be retried, never treated as "logged out".
+var ErrTokenRejected = errors.New("token rejected by Twitch")
+
+// IsTokenRejected reports whether err means the token is definitively bad.
+func IsTokenRejected(err error) bool { return errors.Is(err, ErrTokenRejected) }
+
+// authStatusErr classifies a non-200 answer from id.twitch.tv.
+func authStatusErr(op string, status int) error {
+	if status == http.StatusBadRequest || status == http.StatusUnauthorized {
+		return fmt.Errorf("%s: %w (status %d)", op, ErrTokenRejected, status)
+	}
+	return fmt.Errorf("%s: twitch answered status %d", op, status)
+}
 
 // Required OAuth scopes for full mod support.
 var requiredScopes = []string{
@@ -86,7 +111,7 @@ func RequestDeviceCode(clientID string) (*DeviceCodeResponse, error) {
 		"scopes":    {strings.Join(requiredScopes, " ")},
 	}
 
-	resp, err := http.PostForm("https://id.twitch.tv/oauth2/device", data)
+	resp, err := authHTTPClient.PostForm("https://id.twitch.tv/oauth2/device", data)
 	if err != nil {
 		return nil, fmt.Errorf("request device code: %w", err)
 	}
@@ -123,7 +148,7 @@ func PollForToken(clientID, deviceCode string, interval int) (*TokenResponse, er
 			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
 		}
 
-		resp, err := http.PostForm("https://id.twitch.tv/oauth2/token", data)
+		resp, err := authHTTPClient.PostForm("https://id.twitch.tv/oauth2/token", data)
 		if err != nil {
 			return nil, fmt.Errorf("poll token: %w", err)
 		}
@@ -171,14 +196,14 @@ func ValidateToken(accessToken string) (*ValidateResponse, error) {
 	}
 	req.Header.Set("Authorization", "OAuth "+accessToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := authHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("validate token: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token invalid or expired (status %d)", resp.StatusCode)
+		return nil, authStatusErr("validate token", resp.StatusCode)
 	}
 
 	var result ValidateResponse
@@ -201,14 +226,14 @@ func RefreshAccessToken(clientID, clientSecret, refreshToken string) (*TokenResp
 		data.Set("client_secret", clientSecret)
 	}
 
-	resp, err := http.PostForm("https://id.twitch.tv/oauth2/token", data)
+	resp, err := authHTTPClient.PostForm("https://id.twitch.tv/oauth2/token", data)
 	if err != nil {
 		return nil, fmt.Errorf("refresh token: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("refresh failed (status %d)", resp.StatusCode)
+		return nil, authStatusErr("refresh token", resp.StatusCode)
 	}
 
 	var token TokenResponse

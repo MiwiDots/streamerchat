@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/miwi/streamerchat/internal/applog"
 	"github.com/miwi/streamerchat/internal/chat"
 	"github.com/miwi/streamerchat/internal/fsutil"
 	"github.com/miwi/streamerchat/internal/selfupdate"
@@ -78,6 +79,12 @@ type HubConfig struct {
 	// read and defaults were used. Never persisted.
 	LoadWarning string `json:"-"`
 }
+
+// helixHTTPClient bounds chathub's direct Helix calls (live status,
+// chatters, channel-id resolution, user card). http.DefaultClient has no
+// timeout; resolveChannelID runs inside the frontend's badge lookup, so a
+// stalled request could freeze a channel's chat rendering.
+var helixHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // hubSaveMu serializes HubConfig.Save calls (token refresh goroutine,
 // UI-bound setters, login goroutine all save). It does not protect
@@ -182,7 +189,8 @@ func (c ChannelRef) String() string {
 }
 
 type App struct {
-	ctx    context.Context
+	ctx     context.Context
+	logPath string // current log file (see applog.Setup)
 	cfg    *HubConfig
 	mu     sync.Mutex
 	irc    *twitch.MultiIRCClient
@@ -232,14 +240,10 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
-	logPath := "chathub.log"
-	if exe, err := os.Executable(); err == nil {
-		logPath = filepath.Join(filepath.Dir(exe), "chathub.log")
-	}
-	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
-		log.SetOutput(f)
-		log.Printf("[BOOT] ChatHub v%s started, log: %s", version.Version, logPath)
-	}
+	// Log into the config dir (always writable), keeping the previous
+	// run as chathub.prev.log; next to the exe only as a fallback.
+	a.logPath = applog.Setup("chathub", filepath.Dir(hubConfigPath()), exeDir())
+	log.Printf("[BOOT] ChatHub v%s started, log: %s", version.Version, a.logPath)
 
 	// Remove leftover <exe>.old from a previous self-update.
 	selfupdate.CleanupPrevious()
@@ -390,11 +394,9 @@ func (a *App) validateAndConnect() {
 		return
 	}
 
-	// Only attempt refresh on explicit 401 expired errors
-	errStr := err.Error()
-	isExpired := strings.Contains(errStr, "401") || strings.Contains(strings.ToLower(errStr), "expired") || strings.Contains(strings.ToLower(errStr), "invalid")
-
-	if !isExpired {
+	// Only refresh when Twitch actively rejected the token (400/401).
+	// Network errors / timeouts / 5xx keep the saved login.
+	if !twitch.IsTokenRejected(err) {
 		log.Printf("[AUTH] Validate failed (network/server?), keeping saved login: %v", err)
 		// Try to connect anyway - the IRC supervisor will handle real auth failures
 		a.connectSendClient()
@@ -582,7 +584,7 @@ func (a *App) fetchStreamInfo(channel string) map[string]interface{} {
 	req.Header.Set("Client-Id", a.cfg.ClientID)
 	req.Header.Set("Authorization", "Bearer "+a.cfg.AccessToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := helixHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("[LIVE] %s: http error: %v", channel, err)
 		return nil
@@ -649,7 +651,7 @@ func (a *App) GetChannelChatters(channel string) map[string]interface{} {
 	}
 	req.Header.Set("Client-Id", a.cfg.ClientID)
 	req.Header.Set("Authorization", "Bearer "+a.cfg.AccessToken)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := helixHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("[CHATTERS] %s: http error: %v", channel, err)
 		return out
@@ -924,7 +926,7 @@ func (a *App) resolveChannelID(channel string) string {
 	}
 	req.Header.Set("Client-Id", a.cfg.ClientID)
 	req.Header.Set("Authorization", "Bearer "+a.cfg.AccessToken)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := helixHTTPClient.Do(req)
 	if err != nil {
 		return ""
 	}
@@ -1464,11 +1466,15 @@ func (a *App) GetConfigPath() string {
 
 // GetLogPath returns the log file path.
 func (a *App) GetLogPath() string {
-	logPath := "chathub.log"
+	return a.logPath
+}
+
+// exeDir returns the directory of the running executable ("" if unknown).
+func exeDir() string {
 	if exe, err := os.Executable(); err == nil {
-		logPath = filepath.Join(filepath.Dir(exe), "chathub.log")
+		return filepath.Dir(exe)
 	}
-	return logPath
+	return ""
 }
 
 // TestSave forces a config save and returns the error string if any.
@@ -1839,7 +1845,7 @@ func (a *App) helixGet(url string) (map[string]interface{}, int) {
 	}
 	req.Header.Set("Client-Id", a.cfg.ClientID)
 	req.Header.Set("Authorization", "Bearer "+a.cfg.AccessToken)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := helixHTTPClient.Do(req)
 	if err != nil {
 		return nil, 0
 	}

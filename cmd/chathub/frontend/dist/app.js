@@ -164,6 +164,20 @@ function el(tag, attrs, ...children) {
 // EventAPI WebSocket learns about a paint or badge entitlement.
 const sevenTVByUser = new Map();
 
+// Go lookups (emotes/badges) are awaited inside the per-channel render
+// chain; if one never answered, every later message of that channel would
+// wait forever. withTimeout resolves to `fallback` after `ms` instead.
+const LOOKUP_TIMEOUT_MS = 3000;
+function withTimeout(promise, ms, fallback) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    Promise.resolve(promise).then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      () => { clearTimeout(timer); resolve(fallback); },
+    );
+  });
+}
+
 // === Channel tabs ===
 // renderMessage is async (Go lookups per uncached word / badge), so messages
 // must be rendered through a per-channel promise chain or they would append
@@ -484,7 +498,7 @@ async function lookupEmote(channel, name) {
   const epoch = emoteEpoch;
   let result = null;
   try {
-    const info = await window.go.main.App.LookupEmote(channel, name);
+    const info = await withTimeout(window.go.main.App.LookupEmote(channel, name), LOOKUP_TIMEOUT_MS, null);
     if (info && info.url) result = info;
   } catch (e) { return null; } // don't cache transient failures
   // A lookup that started before emotes finished loading may carry a stale
@@ -512,7 +526,7 @@ async function lookupBadge(channel, setID, version) {
   if (badgeCache.has(key)) return badgeCache.get(key);
   let url = '';
   try {
-    url = await window.go.main.App.LookupBadge(channel || '', setID, version);
+    url = await withTimeout(window.go.main.App.LookupBadge(channel || '', setID, version), LOOKUP_TIMEOUT_MS, '');
   } catch (e) {}
   badgeCache.set(key, url);
   return url;
