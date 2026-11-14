@@ -1,3 +1,6 @@
+2026-11-15 01:59 - v0.6.6 (stable): RELEASE — GIFs in Twitch chat are shown as
+  images (see the entry below).
+
 2026-11-15 01:58 - GIFs posted in Twitch chat are shown as images (unreleased,
   next version). Before, only the placeholder text appeared, e.g.
   "[legat GIF by Sixt]" or "[GIF]".
