@@ -1,3 +1,6 @@
+2026-11-15 01:35 - v0.6.5 (stable): RELEASE — channel points in chat (see the
+  entry below).
+
 2026-11-15 00:56 - channel points in chat (unreleased, next version).
 
   - StreamerChat: every channel-points redemption (EventSub, already
