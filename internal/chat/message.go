@@ -51,6 +51,15 @@ type EmoteRange struct {
 	End   int
 }
 
+// GifRange is a GIF posted in Twitch chat, replacing the placeholder text
+// at rune positions Start..End (inclusive) — e.g. "[Yes GIF by …]".
+type GifRange struct {
+	Start int
+	End   int
+	ID    string
+	URL   string // must be used as-is (Twitch requirement)
+}
+
 // Message is the unified message type for all platforms.
 type Message struct {
 	ID        string
@@ -105,6 +114,7 @@ type Message struct {
 	// Platform-specific metadata
 	TwitchEmotes     string         // raw emote tag from IRC
 	TwitchEmoteRanges []EmoteRange  // parsed emote positions (rune-based)
+	Gifs             []GifRange     // GIFs posted in chat (Twitch "gifs" tag)
 	Bits             int            // Twitch bits
 
 	// YouTube-specific

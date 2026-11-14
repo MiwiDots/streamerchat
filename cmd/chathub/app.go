@@ -32,12 +32,12 @@ import (
 var defaultClientID = "opez5azi81po1xb4hb581ikw3xo04y"
 
 type HubConfig struct {
-	Channels       []string `json:"channels"`
-	Highlights     []string `json:"highlights"`
-	Theme          string   `json:"theme"`
-	OnlyShowLive   bool     `json:"only_show_live"`
-	Locale         string   `json:"locale"`
-	NotifSound     string   `json:"notif_sound"`
+	Channels     []string `json:"channels"`
+	Highlights   []string `json:"highlights"`
+	Theme        string   `json:"theme"`
+	OnlyShowLive bool     `json:"only_show_live"`
+	Locale       string   `json:"locale"`
+	NotifSound   string   `json:"notif_sound"`
 	// HideTimestamps stores the inverse so that the zero value (false)
 	// keeps the historic default of "timestamps visible". A simple
 	// ShowTimestamps would silently invert for users who upgrade.
@@ -160,6 +160,7 @@ func hubConfigPath() string {
 //   - "miwitv"          -> Twitch channel "miwitv"
 //   - "yt:@DEmiwitv"    -> YouTube channel handle "@DEmiwitv"
 //   - "yt:UCxxxxxxxxxx" -> YouTube channel by UC… ID
+//
 // Twitch is the default platform when no prefix is present.
 type ChannelRef struct {
 	Platform string // "twitch" | "youtube"
@@ -189,12 +190,12 @@ func (c ChannelRef) String() string {
 }
 
 type App struct {
-	ctx     context.Context
-	logPath string // current log file (see applog.Setup)
-	cfg    *HubConfig
-	mu     sync.Mutex
-	irc    *twitch.MultiIRCClient
-	send   *twitch.IRCClient
+	ctx         context.Context
+	logPath     string // current log file (see applog.Setup)
+	cfg         *HubConfig
+	mu          sync.Mutex
+	irc         *twitch.MultiIRCClient
+	send        *twitch.IRCClient
 	emotes      *twitch.ThirdPartyEmotes
 	badges      *twitch.BadgeRegistry
 	botDetector *twitch.BotDetector
@@ -353,15 +354,15 @@ func (a *App) startup(ctx context.Context) {
 	go a.tokenRefreshLoop()
 
 	runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
-		"channels":     a.cfg.Channels,
-		"highlights":   a.cfg.Highlights,
-		"theme":        a.cfg.Theme,
-		"onlyShowLive": a.cfg.OnlyShowLive,
-		"loggedIn":     a.cfg.AccessToken != "",
-		"username":     a.cfg.Username,
-		"configPath":   hubConfigPath(),
-		"locale":       a.cfg.Locale,
-		"notifSound":   a.cfg.NotifSound,
+		"channels":       a.cfg.Channels,
+		"highlights":     a.cfg.Highlights,
+		"theme":          a.cfg.Theme,
+		"onlyShowLive":   a.cfg.OnlyShowLive,
+		"loggedIn":       a.cfg.AccessToken != "",
+		"username":       a.cfg.Username,
+		"configPath":     hubConfigPath(),
+		"locale":         a.cfg.Locale,
+		"notifSound":     a.cfg.NotifSound,
 		"showTimestamps": !a.cfg.HideTimestamps,
 	})
 }
@@ -780,6 +781,16 @@ func (a *App) chatToMap(channel string, msg chat.Message) map[string]interface{}
 		})
 	}
 
+	gifs := make([]map[string]interface{}, 0, len(msg.Gifs))
+	for _, g := range msg.Gifs {
+		gifs = append(gifs, map[string]interface{}{
+			"start": g.Start,
+			"end":   g.End,
+			"id":    g.ID,
+			"url":   g.URL,
+		})
+	}
+
 	badges := make([]map[string]string, 0, len(msg.Badges))
 	for _, b := range msg.Badges {
 		badges = append(badges, map[string]string{
@@ -819,26 +830,27 @@ func (a *App) chatToMap(channel string, msg chat.Message) map[string]interface{}
 	}
 
 	return map[string]interface{}{
-		"id":             msg.ID,
-		"channel":        channel,
-		"type":           typeStr,
-		"timestamp":      ts.UnixMilli(),
-		"userId":         msg.UserID,
-		"username":       msg.Username,
-		"displayName":    msg.DisplayName,
-		"color":          msg.Color,
-		"isMod":          msg.IsMod,
-		"isVIP":          msg.IsVIP,
-		"isSub":          msg.IsSub,
-		"isBroadcaster":  msg.IsBroadcaster,
-		"text":           msg.Text,
-		"twitchEmotes":   emoteRanges,
-		"badges":         badges,
-		"bits":           msg.Bits,
-		"targetUsername": msg.TargetUsername,
-		"sourceChannel":  msg.SourceChannel,
-		"isSharedChat":   msg.IsSharedChat,
-		"firstMsg":       msg.IsFirstMessage,
+		"id":               msg.ID,
+		"channel":          channel,
+		"type":             typeStr,
+		"timestamp":        ts.UnixMilli(),
+		"userId":           msg.UserID,
+		"username":         msg.Username,
+		"displayName":      msg.DisplayName,
+		"color":            msg.Color,
+		"isMod":            msg.IsMod,
+		"isVIP":            msg.IsVIP,
+		"isSub":            msg.IsSub,
+		"isBroadcaster":    msg.IsBroadcaster,
+		"text":             msg.Text,
+		"twitchEmotes":     emoteRanges,
+		"gifs":             gifs,
+		"badges":           badges,
+		"bits":             msg.Bits,
+		"targetUsername":   msg.TargetUsername,
+		"sourceChannel":    msg.SourceChannel,
+		"isSharedChat":     msg.IsSharedChat,
+		"firstMsg":         msg.IsFirstMessage,
 		"returningChatter": msg.IsReturningChatter,
 		"streak":           msg.StreakCount,
 		"rewardTitle":      msg.RewardTitle,
@@ -1410,15 +1422,15 @@ func (a *App) StartLogin() map[string]interface{} {
 		// Re-emit "ready" so the frontend (which subscribed during startup)
 		// can refresh anything that depended on the username being known.
 		runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
-			"channels":     a.cfg.Channels,
-			"highlights":   a.cfg.Highlights,
-			"theme":        a.cfg.Theme,
-			"onlyShowLive": a.cfg.OnlyShowLive,
-			"loggedIn":     true,
-			"username":     info.Login,
-			"configPath":   hubConfigPath(),
-			"locale":       a.cfg.Locale,
-			"notifSound":   a.cfg.NotifSound,
+			"channels":       a.cfg.Channels,
+			"highlights":     a.cfg.Highlights,
+			"theme":          a.cfg.Theme,
+			"onlyShowLive":   a.cfg.OnlyShowLive,
+			"loggedIn":       true,
+			"username":       info.Login,
+			"configPath":     hubConfigPath(),
+			"locale":         a.cfg.Locale,
+			"notifSound":     a.cfg.NotifSound,
 			"showTimestamps": !a.cfg.HideTimestamps,
 		})
 
@@ -1450,16 +1462,16 @@ func (a *App) GetInitialState() map[string]interface{} {
 	a.mu.Unlock()
 
 	return map[string]interface{}{
-		"channels":     a.cfg.Channels,
-		"highlights":   a.cfg.Highlights,
-		"theme":        a.cfg.Theme,
-		"onlyShowLive": a.cfg.OnlyShowLive,
-		"loggedIn":     a.cfg.AccessToken != "",
-		"username":     a.cfg.Username,
-		"configPath":   hubConfigPath(),
-		"liveStatus":   liveMap,
-		"locale":       a.cfg.Locale,
-		"notifSound":   a.cfg.NotifSound,
+		"channels":       a.cfg.Channels,
+		"highlights":     a.cfg.Highlights,
+		"theme":          a.cfg.Theme,
+		"onlyShowLive":   a.cfg.OnlyShowLive,
+		"loggedIn":       a.cfg.AccessToken != "",
+		"username":       a.cfg.Username,
+		"configPath":     hubConfigPath(),
+		"liveStatus":     liveMap,
+		"locale":         a.cfg.Locale,
+		"notifSound":     a.cfg.NotifSound,
 		"showTimestamps": !a.cfg.HideTimestamps,
 		"fontSize":       a.GetFontSize(),
 	}

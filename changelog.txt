@@ -1,3 +1,29 @@
+2026-11-15 01:58 - GIFs posted in Twitch chat are shown as images (unreleased,
+  next version). Before, only the placeholder text appeared, e.g.
+  "[legat GIF by Sixt]" or "[GIF]".
+
+  - Twitch's GIFs-in-chat feature (changelog 2026-07-16/17) adds the
+    documented PRIVMSG tag `gifs`: comma-separated
+    "<start>-<end>|<gifID>|<gifURL>" with zero-based positions covering
+    the placeholder text. New parseGifsTag (robust against commas in
+    the URL query; https only; invalid ranges skipped) →
+    chat.Message.Gifs ([]GifRange) → payload "gifs" in both apps.
+  - Both frontends replace the placeholder range with the GIF in
+    renderText, using the URL unmodified as Twitch requires. Rendered
+    via el()/setAttribute (no HTML injection). Fixed 112px height
+    (width by aspect ratio, object-fit: contain, max 240px) so a GIF
+    loading after the row was appended can't break stick-to-bottom
+    scrolling. chathub history keeps the gifs field, so GIFs survive
+    the replay after a restart.
+  - Both cmd/*/app.go were run through gofmt (whitespace-only
+    alignment changes in addition to the feature).
+  - Verified: Twitch's emote CDN "default" format returns an animated
+    GIF for animated emotes (and PNG for static ones; "animated" 404s
+    on static emotes), so animated (incl. tier 2/3) sub emotes already
+    animate — no change needed there.
+  - Tests: docs example, multiple GIFs, comma in URL, rejects
+    non-https / inverted ranges / garbage, wiring into the message.
+
 2026-11-15 01:35 - v0.6.5 (stable): RELEASE — channel points in chat (see the
   entry below).
 

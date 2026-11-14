@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -47,10 +47,10 @@ type App struct {
 	// SwitchProfile — they used to run on a.ctx forever, so every profile
 	// switch / login / YouTube settings change leaked another copy, and a
 	// stale YouTube detector could take over the current profile's chat.
-	ytChatCancel   context.CancelFunc // running InnerTube chat poller
+	ytChatCancel   context.CancelFunc       // running InnerTube chat poller
 	ytClient       *youtube.InnerTubeClient // the live chat being read; needed to send
-	ytDetectCancel context.CancelFunc // running YouTube live detector
-	rolesCancel    context.CancelFunc // Helix chatter/role poller
+	ytDetectCancel context.CancelFunc       // running YouTube live detector
+	rolesCancel    context.CancelFunc       // Helix chatter/role poller
 
 	// 7TV cosmetics over EventAPI: subscribes to entitlement events for
 	// this streamer's Twitch channel so paint/badge updates can be
@@ -1084,6 +1084,16 @@ func (a *App) chatToMap(msg chat.Message) map[string]interface{} {
 		})
 	}
 
+	gifs := make([]map[string]interface{}, 0, len(msg.Gifs))
+	for _, g := range msg.Gifs {
+		gifs = append(gifs, map[string]interface{}{
+			"start": g.Start,
+			"end":   g.End,
+			"id":    g.ID,
+			"url":   g.URL,
+		})
+	}
+
 	badges := make([]map[string]string, 0, len(msg.Badges))
 	for _, b := range msg.Badges {
 		badges = append(badges, map[string]string{
@@ -1127,34 +1137,35 @@ func (a *App) chatToMap(msg chat.Message) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"id":              msg.ID,
-		"platform":        string(msg.Platform),
-		"type":            typeStr,
-		"channel":         msg.Channel,
-		"timestamp":       ts.UnixMilli(),
-		"userId":          msg.UserID,
-		"username":        msg.Username,
-		"displayName":     msg.DisplayName,
-		"color":           msg.Color,
-		"isMod":           msg.IsMod,
-		"isVIP":           msg.IsVIP,
-		"isSub":           msg.IsSub,
-		"isBroadcaster":   msg.IsBroadcaster,
-		"text":            msg.Text,
-		"twitchEmotes":    emoteRanges,
-		"badges":          badges,
-		"bits":            msg.Bits,
-		"sourceChannel":   msg.SourceChannel,
-		"isSharedChat":    msg.IsSharedChat,
-		"firstMsg":        msg.IsFirstMessage,
+		"id":               msg.ID,
+		"platform":         string(msg.Platform),
+		"type":             typeStr,
+		"channel":          msg.Channel,
+		"timestamp":        ts.UnixMilli(),
+		"userId":           msg.UserID,
+		"username":         msg.Username,
+		"displayName":      msg.DisplayName,
+		"color":            msg.Color,
+		"isMod":            msg.IsMod,
+		"isVIP":            msg.IsVIP,
+		"isSub":            msg.IsSub,
+		"isBroadcaster":    msg.IsBroadcaster,
+		"text":             msg.Text,
+		"twitchEmotes":     emoteRanges,
+		"gifs":             gifs,
+		"badges":           badges,
+		"bits":             msg.Bits,
+		"sourceChannel":    msg.SourceChannel,
+		"isSharedChat":     msg.IsSharedChat,
+		"firstMsg":         msg.IsFirstMessage,
 		"returningChatter": msg.IsReturningChatter,
 		"streak":           msg.StreakCount,
 		"rewardTitle":      msg.RewardTitle,
 		"rewardCost":       msg.RewardCost,
 		"rewardId":         msg.RewardID,
 		"highlighted":      msg.IsHighlighted,
-		"superChatAmount": msg.SuperChatAmount,
-		"targetUsername":  msg.TargetUsername,
+		"superChatAmount":  msg.SuperChatAmount,
+		"targetUsername":   msg.TargetUsername,
 	}
 }
 
@@ -1652,7 +1663,6 @@ func (a *App) SetAutostart(enabled bool) string {
 	log.Printf("[AUTOSTART] enabled=%v", enabled)
 	return ""
 }
-
 
 // LookupBadge returns the image URL for a badge in the context of `channel`.
 // Channel-specific artwork (sub tiers, custom badges) wins over global.

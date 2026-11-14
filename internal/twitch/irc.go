@@ -3,6 +3,7 @@ package twitch
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -465,6 +466,42 @@ func applyWatchStreak(m *chat.Message, msg twitch.UserNoticeMessage) bool {
 	return true
 }
 
+// gifEntryRe matches one entry of the PRIVMSG "gifs" tag. Documented
+// format (dev.twitch.tv/docs/irc/tags): a comma-separated list of
+// "<start>-<end>|<gifID>|<gifURL>" with zero-based positions. URLs carry
+// query strings, so entries are matched by their "<n>-<n>|" prefix instead
+// of blindly splitting on commas.
+var gifEntryRe = regexp.MustCompile(`(\d+)-(\d+)\|([^|,]+)\|(https://.+?)(?:,(?:\d+-\d+\|)|$)`)
+
+// parseGifsTag parses the "gifs" tag (Twitch GIFs in chat). Entries with a
+// non-https URL or invalid positions are skipped.
+func parseGifsTag(tag string) []chat.GifRange {
+	if tag == "" {
+		return nil
+	}
+	var out []chat.GifRange
+	for rest := tag; rest != ""; {
+		m := gifEntryRe.FindStringSubmatchIndex(rest)
+		if m == nil {
+			break
+		}
+		start, _ := strconv.Atoi(rest[m[2]:m[3]])
+		end, _ := strconv.Atoi(rest[m[4]:m[5]])
+		if end >= start {
+			out = append(out, chat.GifRange{
+				Start: start,
+				End:   end,
+				ID:    rest[m[6]:m[7]],
+				URL:   rest[m[8]:m[9]],
+			})
+		}
+		// Continue right after this entry's URL (the lookahead consumed the
+		// next entry's "<n>-<n>|" prefix, which must be re-read).
+		rest = strings.TrimPrefix(rest[m[9]:], ",")
+	}
+	return out
+}
+
 // emoteRanges flattens the library's parsed native emotes into rune ranges.
 func emoteRanges(emotes []*twitch.Emote) []chat.EmoteRange {
 	var out []chat.EmoteRange
@@ -522,6 +559,7 @@ func convertPrivateMessage(msg twitch.PrivateMessage, channel string) chat.Messa
 		// Channel points: text typed for a reward, and "Highlight My Message".
 		RewardID:      msg.Tags["custom-reward-id"],
 		IsHighlighted: msg.Tags["msg-id"] == "highlighted-message",
+		Gifs:          parseGifsTag(msg.Tags["gifs"]),
 	}
 
 	// Extract parsed emote positions from the library

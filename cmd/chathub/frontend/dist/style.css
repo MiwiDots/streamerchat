@@ -735,3 +735,19 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
   color: #8fbcff;
   margin-bottom: 1px;
 }
+
+/* GIFs posted in Twitch chat (gifs tag). FIXED height: the GIF loads
+   over the network after the row is appended; a fixed height means the
+   row doesn't grow on load, so "stick to bottom" scrolling stays correct.
+   Width follows the aspect ratio (object-fit avoids distortion when the
+   max-width cap kicks in). */
+.chat-gif {
+  display: inline-block;
+  height: 112px;
+  width: auto;
+  max-width: min(240px, 60%);
+  object-fit: contain;
+  vertical-align: middle;
+  border-radius: 4px;
+  margin: 2px 0;
+}

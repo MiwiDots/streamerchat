@@ -440,7 +440,7 @@ async function lookupEmote(name) {
 // Render text with emote substitution.
 // Native Twitch emotes come from msg.twitchEmotes positions (rune-indexed).
 // 3rd party emotes (7TV/BTTV/FFZ) matched by word lookup.
-async function renderText(text, nativeEmotes) {
+async function renderText(text, nativeEmotes, gifs) {
   const fragment = document.createDocumentFragment();
   const runes = Array.from(text);
 
@@ -453,9 +453,25 @@ async function renderText(text, nativeEmotes) {
       }
     }
   }
+  // GIFs posted in chat (Twitch "gifs" tag): the placeholder text range
+  // ("[Yes GIF by …]") is replaced by the image. Twitch requires using the
+  // URL exactly as provided; only https URLs are accepted.
+  if (gifs) {
+    for (const g of gifs) {
+      if (g && g.start >= 0 && g.end < runes.length && typeof g.url === 'string' && g.url.startsWith('https://')) {
+        nativeMap.set(g.start, { end: g.end, gifUrl: g.url, alt: runes.slice(g.start, g.end + 1).join('') });
+      }
+    }
+  }
 
   let i = 0;
   while (i < runes.length) {
+    if (nativeMap.has(i) && nativeMap.get(i).gifUrl) {
+      const g = nativeMap.get(i);
+      fragment.appendChild(el('img', { class: 'chat-gif', src: g.gifUrl, alt: g.alt, title: g.alt }));
+      i = g.end + 1;
+      continue;
+    }
     // Native emote at this position?
     if (nativeMap.has(i)) {
       const e = nativeMap.get(i);
@@ -667,7 +683,7 @@ async function renderMessage(msg, gen = renderGen) {
   div.appendChild(usernameEl);
   if (type !== 'watchstreak' || msg.text) div.appendChild(document.createTextNode(': '));
 
-  const textFragment = await renderText(msg.text || '', msg.twitchEmotes);
+  const textFragment = await renderText(msg.text || '', msg.twitchEmotes, msg.gifs);
   div.appendChild(textFragment);
 
   if (msg.bits > 0) {

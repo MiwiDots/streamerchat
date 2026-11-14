@@ -173,3 +173,34 @@ func TestConvertPrivateMessageChannelPoints(t *testing.T) {
 		t.Fatalf("other msg-ids must not count as highlighted: %+v", m)
 	}
 }
+
+func TestParseGifsTag(t *testing.T) {
+	// Example from dev.twitch.tv/docs/irc/tags (query string shortened).
+	docs := "0-33|joSNxeswxuc74Juo8X|https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=abc&rid=giphy.gif&ct=g"
+	got := parseGifsTag(docs)
+	if len(got) != 1 || got[0].Start != 0 || got[0].End != 33 || got[0].ID != "joSNxeswxuc74Juo8X" ||
+		got[0].URL != "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=abc&rid=giphy.gif&ct=g" {
+		t.Fatalf("docs example parsed wrong: %+v", got)
+	}
+
+	// Two GIFs; the first URL even contains a comma — must not split there.
+	two := "0-5|a1|https://x.example/a.gif?q=1,2,7-9|b2|https://y.example/b.gif"
+	got = parseGifsTag(two)
+	if len(got) != 2 || got[0].URL != "https://x.example/a.gif?q=1,2" || got[1].Start != 7 || got[1].End != 9 || got[1].URL != "https://y.example/b.gif" {
+		t.Fatalf("multi parse wrong: %+v", got)
+	}
+
+	// Non-https URL, inverted range and garbage are ignored.
+	for _, bad := range []string{"", "0-5|id|http://insecure.example/x.gif", "9-2|id|https://x.example/x.gif", "nonsense"} {
+		if g := parseGifsTag(bad); len(g) != 0 {
+			t.Errorf("parseGifsTag(%q) = %+v, want none", bad, g)
+		}
+	}
+
+	// convertPrivateMessage wires it through.
+	var msg twitch.PrivateMessage
+	msg.Tags = map[string]string{"gifs": docs}
+	if m := convertPrivateMessage(msg, "c"); len(m.Gifs) != 1 {
+		t.Fatalf("gifs not on message: %+v", m.Gifs)
+	}
+}
