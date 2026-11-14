@@ -473,7 +473,9 @@ func (c *Client) dispatch(msg wsMessage) {
 		ev.User = getStr(e, "user_name")
 		ev.UserID = getStr(e, "user_id")
 		ev.Message = getStr(e, "user_input")
+		ev.Meta["login"] = getStr(e, "user_login")
 		if r, ok := e["reward"].(map[string]interface{}); ok {
+			ev.Meta["rewardId"] = getStr(r, "id")
 			ev.Meta["reward"] = getStr(r, "title")
 			ev.Meta["cost"] = getNum(r, "cost")
 		}

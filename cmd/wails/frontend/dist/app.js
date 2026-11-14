@@ -499,8 +499,8 @@ function markDeleted(div) {
   div.classList.add('deleted');
   // A deleted first message is no longer worth highlighting; dropping the
   // label also keeps the "first two children" rule below correct.
-  div.classList.remove('first-msg', 'returning-chatter', 'watch-streak');
-  for (const label of div.querySelectorAll('.first-msg-label, .returning-chatter-label, .watch-streak-label')) label.remove();
+  div.classList.remove('first-msg', 'returning-chatter', 'watch-streak', 'highlighted-msg', 'reward-msg');
+  for (const label of div.querySelectorAll('.first-msg-label, .returning-chatter-label, .watch-streak-label, .highlighted-msg-label, .reward-msg-label')) label.remove();
   // Keep timestamp + platform badge (first two children), drop the rest
   // (username, emotes, text) so the deleted content is no longer shown.
   while (div.childNodes.length > 2) div.removeChild(div.lastChild);
@@ -555,6 +555,22 @@ async function renderMessage(msg, gen = renderGen) {
     commit(div);
     return;
   }
+  if (type === 'redemption') {
+    // Channel-points redemption (EventSub): "🎁 Max redeemed Hydrate! · 500".
+    // The viewer's typed text (if the reward asks for it) arrives as its
+    // own chat message with a reward marker, so it isn't repeated here.
+    div.classList.add('redemption');
+    div.dataset.user = (msg.username || '').toLowerCase();
+    const who = msg.displayName || msg.username || '?';
+    div.appendChild(el('span', { class: 'redemption-icon' }, '🎁 '));
+    div.appendChild(el('span', { class: 'redemption-text' },
+      i18n.t('redeemed', { user: who, reward: msg.rewardTitle || '?' })));
+    if (msg.rewardCost > 0) {
+      div.appendChild(el('span', { class: 'redemption-cost' }, ' · ' + i18n.t('redeemedCost', { n: msg.rewardCost.toLocaleString() })));
+    }
+    commit(div);
+    return;
+  }
   if (type === 'ban' || type === 'timeout') {
     if (gen === renderGen && msg.targetUsername) {
       const target = msg.targetUsername.toLowerCase();
@@ -596,6 +612,14 @@ async function renderMessage(msg, gen = renderGen) {
     div.classList.add('watch-streak');
     const label = msg.streak > 0 ? i18n.t('watchStreak', { n: msg.streak }) : i18n.t('watchStreakNoCount');
     div.insertBefore(el('div', { class: 'watch-streak-label' }, '🔥 ' + label), div.firstChild);
+  } else if (msg.highlighted) {
+    // "Highlight My Message" channel-points reward — as loud as on Twitch.
+    div.classList.add('highlighted-msg');
+    div.insertBefore(el('div', { class: 'highlighted-msg-label' }, '✨ ' + i18n.t('highlightedMessage')), div.firstChild);
+  } else if (msg.rewardId) {
+    // Text a viewer typed for a channel-points reward (custom-reward-id).
+    div.classList.add('reward-msg');
+    div.insertBefore(el('div', { class: 'reward-msg-label' }, '🎁 ' + i18n.t('rewardMessage')), div.firstChild);
   } else if (msg.firstMsg) {
     div.classList.add('first-msg');
     div.insertBefore(el('div', { class: 'first-msg-label' }, '✦ ' + i18n.t('firstMessage')), div.firstChild);

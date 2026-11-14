@@ -609,6 +609,9 @@ func (a *App) startEventSub() {
 			"meta":      ev.Meta,
 			"timestamp": ev.Timestamp.UnixMilli(),
 		})
+		if ev.Type == eventsub.EventReward {
+			a.emitChat(redemptionMessage(ev, a.cfg.Twitch.Channel))
+		}
 	})
 	a.mu.Lock()
 	a.esCancel = cancel
@@ -753,6 +756,30 @@ func (a *App) commitTokens(profileID string, tok *twitch.TokenResponse) bool {
 	}
 	a.applyRefreshedToken(tok.AccessToken)
 	return true
+}
+
+// redemptionMessage turns an EventSub channel-points redemption into a chat
+// line ("Max redeemed Hydrate! · 500"). The viewer's typed text is NOT
+// repeated: for rewards with input Twitch also sends that text as a normal
+// chat message (tag custom-reward-id), which gets its own reward marker —
+// so nothing is lost if EventSub isn't running, and nothing is duplicated.
+func redemptionMessage(ev eventsub.Event, channel string) chat.Message {
+	title, _ := ev.Meta["reward"].(string)
+	cost, _ := ev.Meta["cost"].(float64)
+	login, _ := ev.Meta["login"].(string)
+	rewardID, _ := ev.Meta["rewardId"].(string)
+	return chat.Message{
+		Platform:    chat.PlatformTwitch,
+		Type:        chat.MessageTypeRedemption,
+		Channel:     channel,
+		Timestamp:   ev.Timestamp,
+		UserID:      ev.UserID,
+		Username:    login,
+		DisplayName: ev.User,
+		RewardTitle: title,
+		RewardCost:  int(cost),
+		RewardID:    rewardID,
+	}
 }
 
 // applyRefreshedToken pushes a freshly refreshed access token into every
@@ -1093,6 +1120,8 @@ func (a *App) chatToMap(msg chat.Message) map[string]interface{} {
 		typeStr = "announcement"
 	case chat.MessageTypeWatchStreak:
 		typeStr = "watchstreak"
+	case chat.MessageTypeRedemption:
+		typeStr = "redemption"
 	case chat.MessageTypeSystem:
 		typeStr = "system"
 	}
@@ -1120,6 +1149,10 @@ func (a *App) chatToMap(msg chat.Message) map[string]interface{} {
 		"firstMsg":        msg.IsFirstMessage,
 		"returningChatter": msg.IsReturningChatter,
 		"streak":           msg.StreakCount,
+		"rewardTitle":      msg.RewardTitle,
+		"rewardCost":       msg.RewardCost,
+		"rewardId":         msg.RewardID,
+		"highlighted":      msg.IsHighlighted,
 		"superChatAmount": msg.SuperChatAmount,
 		"targetUsername":  msg.TargetUsername,
 	}

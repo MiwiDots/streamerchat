@@ -708,3 +708,30 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
   color: #ffa766;
   margin-bottom: 1px;
 }
+
+/* "Highlight My Message" channel-points reward: the loudest marker, a
+   strong Twitch-purple fill (first messages only get a light tint). */
+.msg.highlighted-msg {
+  border-left: 3px solid #9146ff;
+  background: rgba(145, 70, 255, 0.30);
+  padding-left: 6px;
+}
+.highlighted-msg-label {
+  font-size: 0.78em;
+  font-weight: 600;
+  color: #d4bfff;
+  margin-bottom: 1px;
+}
+
+/* Text typed for a channel-points reward (custom-reward-id). */
+.msg.reward-msg {
+  border-left: 3px solid #5c9dff;
+  background: rgba(92, 157, 255, 0.10);
+  padding-left: 6px;
+}
+.reward-msg-label {
+  font-size: 0.78em;
+  font-weight: 600;
+  color: #8fbcff;
+  margin-bottom: 1px;
+}

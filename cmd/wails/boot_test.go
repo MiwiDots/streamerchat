@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/miwi/streamerchat/internal/chat"
 	"github.com/miwi/streamerchat/internal/config"
+	"github.com/miwi/streamerchat/internal/eventsub"
 	"github.com/miwi/streamerchat/internal/twitch"
 )
 
@@ -117,5 +119,20 @@ func TestSendYouTubeMessageGuards(t *testing.T) {
 	// No live YouTube chat attached → clear error, no keyring access.
 	if got := a.SendYouTubeMessage("hello"); got == "" {
 		t.Fatal("sending without a YouTube chat must fail with a message")
+	}
+}
+
+func TestRedemptionMessage(t *testing.T) {
+	ev := eventsub.Event{
+		Type: eventsub.EventReward, User: "MaxMustermann", UserID: "42", Message: "typed text",
+		Meta: map[string]interface{}{"reward": "Hydrate!", "cost": float64(500), "login": "maxmustermann", "rewardId": "r1"},
+	}
+	m := redemptionMessage(ev, "miwitv")
+	if m.Type != chat.MessageTypeRedemption || m.RewardTitle != "Hydrate!" || m.RewardCost != 500 ||
+		m.Username != "maxmustermann" || m.DisplayName != "MaxMustermann" || m.Channel != "miwitv" {
+		t.Fatalf("unexpected message: %+v", m)
+	}
+	if m.Text != "" {
+		t.Fatal("typed text must not be repeated in the redemption line (it arrives as its own chat message)")
 	}
 }

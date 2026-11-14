@@ -519,6 +519,9 @@ func convertPrivateMessage(msg twitch.PrivateMessage, channel string) chat.Messa
 		IsFirstMessage: msg.Tags["first-msg"] == "1",
 		// "1" when a returning viewer chats again (Twitch "returning-chatter").
 		IsReturningChatter: msg.Tags["returning-chatter"] == "1",
+		// Channel points: text typed for a reward, and "Highlight My Message".
+		RewardID:      msg.Tags["custom-reward-id"],
+		IsHighlighted: msg.Tags["msg-id"] == "highlighted-message",
 	}
 
 	// Extract parsed emote positions from the library

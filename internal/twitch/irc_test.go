@@ -160,3 +160,16 @@ func TestAnonymousClientNeedsNoToken(t *testing.T) {
 		t.Fatalf("reader needs tags+commands+membership caps, got %v", c.client.Capabilities)
 	}
 }
+
+func TestConvertPrivateMessageChannelPoints(t *testing.T) {
+	var msg twitch.PrivateMessage
+	msg.Tags = map[string]string{"custom-reward-id": "r-123", "msg-id": "highlighted-message"}
+	m := convertPrivateMessage(msg, "c")
+	if m.RewardID != "r-123" || !m.IsHighlighted {
+		t.Fatalf("reward/highlight tags not parsed: %+v", m)
+	}
+	msg.Tags = map[string]string{"msg-id": "skip-subs-mode-message"}
+	if m := convertPrivateMessage(msg, "c"); m.IsHighlighted || m.RewardID != "" {
+		t.Fatalf("other msg-ids must not count as highlighted: %+v", m)
+	}
+}

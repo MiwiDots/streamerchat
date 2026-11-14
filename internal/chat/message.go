@@ -31,6 +31,9 @@ const (
 	// MessageTypeWatchStreak: a viewer shared their Twitch watch streak
 	// (USERNOTICE msg-id=viewermilestone, category watch-streak).
 	MessageTypeWatchStreak
+	// MessageTypeRedemption: a viewer redeemed a channel-points reward
+	// (from EventSub; carries RewardTitle / RewardCost).
+	MessageTypeRedemption
 )
 
 // Badge represents a user badge (mod, sub, vip, etc.).
@@ -87,6 +90,17 @@ type Message struct {
 	// StreakCount is the number of consecutive streams watched, set on
 	// MessageTypeWatchStreak messages.
 	StreakCount int
+
+	// Channel points. On MessageTypeRedemption: the reward redeemed. On a
+	// chat message: RewardID is Twitch's "custom-reward-id" tag — the text a
+	// viewer typed for a reward that requires input.
+	RewardTitle string
+	RewardCost  int
+	RewardID    string
+
+	// IsHighlighted is Twitch's msg-id=highlighted-message: the viewer used
+	// the "Highlight My Message" channel-points reward.
+	IsHighlighted bool
 
 	// Platform-specific metadata
 	TwitchEmotes     string         // raw emote tag from IRC

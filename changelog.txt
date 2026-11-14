@@ -1,3 +1,24 @@
+2026-11-15 00:56 - channel points in chat (unreleased, next version).
+
+  - StreamerChat: every channel-points redemption (EventSub, already
+    shown in the Activity tab) now also appears as a blue chat line:
+    "🎁 Max redeemed Hydrate! · 500 points" /
+    "🎁 Max hat Hydrate! eingelöst · 500 Punkte". New
+    chat.MessageTypeRedemption (RewardTitle/RewardCost/RewardID) built
+    by redemptionMessage(); EventSub now also forwards user_login and
+    the reward id. The typed text is deliberately not repeated: for
+    rewards with input Twitch sends it as a normal chat message too.
+  - Both apps: that chat message (IRC tag custom-reward-id →
+    chat.Message.RewardID) gets a blue "🎁 Channel points reward" /
+    "Kanalpunkte-Belohnung" marker; "Highlight My Message" (msg-id=
+    highlighted-message → IsHighlighted) gets a strong purple fill and
+    "✨ Highlighted message" / "Hervorgehobene Nachricht" label, like on
+    Twitch. One marker per message (watch streak > highlighted > reward
+    text > first message > returning chatter); markers are removed when
+    a message is deleted.
+  - Payload fields: rewardTitle, rewardCost, rewardId, highlighted.
+  - Tests: reward/highlight tag parsing, redemption line mapping.
+
 2026-11-13 23:32 - v0.6.4 (stable): RELEASE — StreamerChat sends to YouTube
   chat (see the entry below; GitHub issue #1).
 

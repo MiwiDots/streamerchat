@@ -715,6 +715,14 @@ async function renderMessage(msg) {
     div.classList.add('watch-streak');
     const label = msg.streak > 0 ? i18n.t('watchStreak', { n: msg.streak }) : i18n.t('watchStreakNoCount');
     div.insertBefore(el('div', { class: 'watch-streak-label' }, '🔥 ' + label), div.firstChild);
+  } else if (msg.highlighted) {
+    // "Highlight My Message" channel-points reward — as loud as on Twitch.
+    div.classList.add('highlighted-msg');
+    div.insertBefore(el('div', { class: 'highlighted-msg-label' }, '✨ ' + i18n.t('highlightedMessage')), div.firstChild);
+  } else if (msg.rewardId) {
+    // Text a viewer typed for a channel-points reward (custom-reward-id).
+    div.classList.add('reward-msg');
+    div.insertBefore(el('div', { class: 'reward-msg-label' }, '🎁 ' + i18n.t('rewardMessage')), div.firstChild);
   } else if (msg.firstMsg) {
     div.classList.add('first-msg');
     div.insertBefore(el('div', { class: 'first-msg-label' }, '✦ ' + i18n.t('firstMessage')), div.firstChild);
@@ -788,7 +796,7 @@ function markMessagesDeleted(state, username, msgId, all) {
     }
     const ts = row.querySelector('.ts');
     row.classList.add('deleted');
-    row.classList.remove('highlight', 'first-msg', 'returning-chatter', 'watch-streak');
+    row.classList.remove('highlight', 'first-msg', 'returning-chatter', 'watch-streak', 'highlighted-msg', 'reward-msg');
     const note = el('span', { class: 'deleted-text' }, i18n.t('messageDeleted'));
     if (ts) row.replaceChildren(ts, note); else row.replaceChildren(note);
   }
