@@ -2,6 +2,8 @@
 
 const STRINGS = {
   en: {
+    replyingTo: 'Replying to @{user}',
+    reply: 'Reply',
     searchPlaceholder: 'Search…  from:user  has:link  is:first-msg  !from:bot',
     searchCount: '{n} found',
     liveNotifyTitle: '{channel} is live',
@@ -107,6 +109,8 @@ const STRINGS = {
     fontSizeHint: 'Tip: Ctrl + / Ctrl - / Ctrl 0 also work.',
   },
   de: {
+    replyingTo: 'Antwort an @{user}',
+    reply: 'Antworten',
     searchPlaceholder: 'Suchen…  from:user  has:link  is:first-msg  !from:bot',
     searchCount: '{n} Treffer',
     liveNotifyTitle: '{channel} ist live',

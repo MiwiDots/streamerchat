@@ -69,14 +69,14 @@ type Message struct {
 	Timestamp time.Time
 
 	// User info
-	UserID      string
-	Username    string
-	DisplayName string
-	Color       string // hex color for username
-	Badges      []Badge
-	IsMod       bool
-	IsVIP       bool
-	IsSub       bool
+	UserID        string
+	Username      string
+	DisplayName   string
+	Color         string // hex color for username
+	Badges        []Badge
+	IsMod         bool
+	IsVIP         bool
+	IsSub         bool
 	IsBroadcaster bool
 
 	// Message content
@@ -111,16 +111,21 @@ type Message struct {
 	// the "Highlight My Message" channel-points reward.
 	IsHighlighted bool
 
+	// Reply threads (IRC reply-parent-* tags): the message this one answers.
+	ReplyParentID   string
+	ReplyParentUser string // display name of the parent's author
+	ReplyParentBody string
+
 	// Platform-specific metadata
-	TwitchEmotes     string         // raw emote tag from IRC
-	TwitchEmoteRanges []EmoteRange  // parsed emote positions (rune-based)
-	Gifs             []GifRange     // GIFs posted in chat (Twitch "gifs" tag)
-	Bits             int            // Twitch bits
+	TwitchEmotes      string       // raw emote tag from IRC
+	TwitchEmoteRanges []EmoteRange // parsed emote positions (rune-based)
+	Gifs              []GifRange   // GIFs posted in chat (Twitch "gifs" tag)
+	Bits              int          // Twitch bits
 
 	// YouTube-specific
-	SuperChatAmount  string // formatted amount e.g. "$5.00"
+	SuperChatAmount   string // formatted amount e.g. "$5.00"
 	SuperChatCurrency string
-	MembershipMonths int
+	MembershipMonths  int
 
 	// Mod action metadata
 	TargetUserID   string
@@ -139,11 +144,11 @@ type UserJoinPart struct {
 
 // ChatSettings represents current chat mode settings.
 type ChatSettings struct {
-	SlowMode         bool
-	SlowModeWait     int // seconds
-	SubOnly          bool
-	EmoteOnly        bool
-	FollowerOnly     bool
-	FollowerMinutes  int
-	UniqueChat       bool
+	SlowMode        bool
+	SlowModeWait    int // seconds
+	SubOnly         bool
+	EmoteOnly       bool
+	FollowerOnly    bool
+	FollowerMinutes int
+	UniqueChat      bool
 }

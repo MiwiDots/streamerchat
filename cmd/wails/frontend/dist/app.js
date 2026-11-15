@@ -619,6 +619,7 @@ async function renderMessage(msg, gen = renderGen) {
   if (msg.id) div.dataset.msgId = msg.id;
   div.dataset.user = (msg.username || '').toLowerCase();
   div.dataset.platform = msg.platform || 'twitch';
+  addReplyContext(div, msg);
   // Twitch "first-msg": the user's very first message in this channel.
   // Highlighted like Twitch does for the broadcaster/mods so new chatters
   // can be welcomed. The label is a block line ABOVE the message, so it is
@@ -692,6 +693,7 @@ async function renderMessage(msg, gen = renderGen) {
     div.appendChild(el('span', { class: 'bits' }, ` [${msg.bits} bits]`));
   }
 
+  addReplyButton(div, msg);
   commit(div);
 }
 
@@ -954,7 +956,9 @@ inputEl.addEventListener('keydown', async (e) => {
       // system lines in chat.
       if (target !== 'YouTube') {
         try {
-          await window.go.main.App.SendMessage(text);
+          // Reply target applies to Twitch only (YouTube has no threads).
+          if (replyTarget) await window.go.main.App.SendReply(text, replyTarget.id);
+          else await window.go.main.App.SendMessage(text);
         } catch (err) {
           console.error(err);
           failed = true;
@@ -975,10 +979,13 @@ inputEl.addEventListener('keydown', async (e) => {
         }
       }
       if (failed && !inputEl.value) inputEl.value = text;
+      if (!failed) clearReplyTarget();
     }
   } else if (e.key === 'Escape') {
     if (!modalBgEl.classList.contains('hidden')) {
       closeModal();
+    } else if (replyTarget) {
+      clearReplyTarget();
     }
   }
 });
@@ -1597,6 +1604,7 @@ function setupProfileSwitchedListener() {
     // was resolved against the old profile's channel/roles/emotes.
     renderGen++;
     chatEl.replaceChildren();
+    clearReplyTarget();
     roles = { mods: new Set(), vips: new Set(), bots: new Set(), broadcaster: '' };
     badgeCache.clear();
     badgeMiss.clear();
@@ -2080,6 +2088,7 @@ function searchTermMatches(row, t) {
         case 'watchstreak': case 'streak': return type === 'watchstreak';
         case 'system': return type === 'system' || type === 'join' || type === 'part' || !row.dataset.user;
         case 'mention': return searchIsMention(row, text);
+        case 'reply': return !!row.querySelector('.reply-context');
         default: return false;
       }
     default: return text.includes(t.value);
@@ -2170,6 +2179,62 @@ function searchContainer() { return chatEl; }
 function searchIsMention(row, text) {
   const me = (authState && authState.username || '').toLowerCase();
   return !!me && row.dataset.user !== me && new RegExp('(^|[^a-z0-9_])@?' + me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^a-z0-9_])').test(text);
+}
+
+// === Reply threads ===
+// Messages that answer another message get a "↪ @user: original" line
+// (click jumps to the original if it's still in the chat). Hovering a
+// Twitch message shows a ↩ button; the next message is then sent as a
+// reply (chip above the input, ✕ or Esc cancels).
+let replyTarget = null; // { id, user, text, channel }
+const replyChipEl = el('div', { class: 'reply-chip hidden' });
+inputEl.closest('.input-row').parentElement.insertBefore(replyChipEl, inputEl.closest('.input-row'));
+
+function setReplyTarget(t) { replyTarget = t; renderReplyChip(); inputEl.focus(); }
+function clearReplyTarget() { replyTarget = null; renderReplyChip(); }
+function renderReplyChip() {
+  if (!replyTarget) { replyChipEl.classList.add('hidden'); replyChipEl.replaceChildren(); return; }
+  const x = el('span', { class: 'reply-chip-close', title: 'Esc' }, '✕');
+  x.addEventListener('click', clearReplyTarget);
+  replyChipEl.replaceChildren(
+    el('span', { class: 'reply-chip-label' }, '↩ ' + i18n.t('replyingTo', { user: replyTarget.user })),
+    el('span', { class: 'reply-chip-text' }, replyTarget.text), x);
+  replyChipEl.classList.remove('hidden');
+}
+if (i18n.onLocaleChange) i18n.onLocaleChange(renderReplyChip);
+
+// Context line on a reply. Inserted first, so marker labels (inserted
+// later at the top) end up above it.
+function addReplyContext(div, msg) {
+  if (!msg.replyParentUser && !msg.replyParentId) return;
+  const body = msg.replyParentBody || '';
+  const ctx = el('div', { class: 'reply-context', title: body },
+    '↪ @' + (msg.replyParentUser || '?') + (body ? ': ' + body : ''));
+  if (msg.replyParentId) ctx.addEventListener('click', () => jumpToMessage(div.parentElement, msg.replyParentId));
+  div.insertBefore(ctx, div.firstChild);
+}
+
+// ↩ button at the end of a Twitch chat message.
+function addReplyButton(div, msg) {
+  if (msg.platform !== 'twitch' || !msg.id || msg.historical) return;
+  const b = el('span', { class: 'reply-btn', title: i18n.t('reply') }, '↩');
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setReplyTarget({ id: msg.id, user: msg.displayName || msg.username || '?', text: msg.text || '', channel: msg.channel });
+  });
+  div.appendChild(b);
+}
+
+function jumpToMessage(container, id) {
+  if (!container) return;
+  for (const row of container.querySelectorAll('.msg')) {
+    if (row.dataset.msgId === id) {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      row.classList.add('flash');
+      setTimeout(() => row.classList.remove('flash'), 1600);
+      return;
+    }
+  }
 }
 
 // Boot runner (keep at the very END of the file so every whenRuntime()

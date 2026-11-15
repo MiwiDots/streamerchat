@@ -28,7 +28,10 @@ var ErrSendNotAuthorized = errors.New("not authorized to send via Helix")
 // Required scope on the user access token: user:write:chat (newer than
 // the old chat:edit scope — accounts will be re-prompted to grant it
 // on next login if missing).
-func SendChatMessage(clientID, accessToken, broadcasterID, senderID, message string) error {
+//
+// replyParentID (optional) sends the message as a reply to that message id
+// (Twitch reply threads; "reply_parent_message_id" in the API).
+func SendChatMessage(clientID, accessToken, broadcasterID, senderID, message, replyParentID string) error {
 	if broadcasterID == "" {
 		return fmt.Errorf("twitch: broadcaster_id missing")
 	}
@@ -40,6 +43,9 @@ func SendChatMessage(clientID, accessToken, broadcasterID, senderID, message str
 		"broadcaster_id": broadcasterID,
 		"sender_id":      senderID,
 		"message":        message,
+	}
+	if replyParentID != "" {
+		body["reply_parent_message_id"] = replyParentID
 	}
 	buf, err := json.Marshal(body)
 	if err != nil {

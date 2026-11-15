@@ -715,3 +715,41 @@ body.no-ts .ts { display: none; }
 .chat-search-close { cursor: pointer; color: #777; }
 .chat-search-close:hover { color: #fff; }
 .msg.search-hidden { display: none !important; }
+
+/* Reply threads. */
+.reply-context {
+  font-size: 0.8em;
+  color: #8a8aa0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  margin-bottom: 1px;
+}
+.reply-context:hover { color: #c9c9dd; }
+.reply-btn {
+  margin-left: 6px;
+  color: #9146ff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms;
+  user-select: none;
+}
+.msg:hover .reply-btn { opacity: 0.85; }
+.reply-btn:hover { opacity: 1; }
+.msg.flash { animation: msg-flash 1.6s ease-out; }
+@keyframes msg-flash { from { background: rgba(145, 70, 255, 0.45); } to { background: transparent; } }
+.reply-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: #18181f;
+  border-top: 1px solid #2c2c3a;
+  font-size: 12px;
+}
+.reply-chip.hidden { display: none; }
+.reply-chip-label { color: #bf94ff; font-weight: 600; white-space: nowrap; }
+.reply-chip-text { color: #9a9ab0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-chip-close { cursor: pointer; color: #777; }
+.reply-chip-close:hover { color: #fff; }

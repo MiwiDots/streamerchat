@@ -204,3 +204,19 @@ func TestParseGifsTag(t *testing.T) {
 		t.Fatalf("gifs not on message: %+v", m.Gifs)
 	}
 }
+
+func TestConvertPrivateMessageReply(t *testing.T) {
+	var msg twitch.PrivateMessage
+	msg.Tags = map[string]string{
+		"reply-parent-msg-id": "p1", "reply-parent-user-login": "alice",
+		"reply-parent-display-name": "Alice", "reply-parent-msg-body": "wer spielt mit?",
+	}
+	m := convertPrivateMessage(msg, "c")
+	if m.ReplyParentID != "p1" || m.ReplyParentUser != "Alice" || m.ReplyParentBody != "wer spielt mit?" {
+		t.Fatalf("reply tags not parsed: %+v", m)
+	}
+	delete(msg.Tags, "reply-parent-display-name")
+	if m := convertPrivateMessage(msg, "c"); m.ReplyParentUser != "alice" {
+		t.Fatalf("login fallback missing: %q", m.ReplyParentUser)
+	}
+}

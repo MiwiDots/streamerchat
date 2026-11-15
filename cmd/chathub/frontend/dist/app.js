@@ -346,6 +346,7 @@ function searchTermMatches(row, t) {
         case 'watchstreak': case 'streak': return type === 'watchstreak';
         case 'system': return type === 'system' || type === 'join' || type === 'part' || !row.dataset.user;
         case 'mention': return searchIsMention(row, text);
+        case 'reply': return !!row.querySelector('.reply-context');
         default: return false;
       }
     default: return text.includes(t.value);
@@ -437,6 +438,62 @@ function searchContainer() {
   return st ? st.chatViewEl : null;
 }
 function searchIsMention(row) { return row.classList.contains('highlight'); }
+
+// === Reply threads ===
+// Messages that answer another message get a "↪ @user: original" line
+// (click jumps to the original if it's still in the chat). Hovering a
+// Twitch message shows a ↩ button; the next message is then sent as a
+// reply (chip above the input, ✕ or Esc cancels).
+let replyTarget = null; // { id, user, text, channel }
+const replyChipEl = el('div', { class: 'reply-chip hidden' });
+msgInput.closest('.input-row').parentElement.insertBefore(replyChipEl, msgInput.closest('.input-row'));
+
+function setReplyTarget(t) { replyTarget = t; renderReplyChip(); msgInput.focus(); }
+function clearReplyTarget() { replyTarget = null; renderReplyChip(); }
+function renderReplyChip() {
+  if (!replyTarget) { replyChipEl.classList.add('hidden'); replyChipEl.replaceChildren(); return; }
+  const x = el('span', { class: 'reply-chip-close', title: 'Esc' }, '✕');
+  x.addEventListener('click', clearReplyTarget);
+  replyChipEl.replaceChildren(
+    el('span', { class: 'reply-chip-label' }, '↩ ' + i18n.t('replyingTo', { user: replyTarget.user })),
+    el('span', { class: 'reply-chip-text' }, replyTarget.text), x);
+  replyChipEl.classList.remove('hidden');
+}
+if (i18n.onLocaleChange) i18n.onLocaleChange(renderReplyChip);
+
+// Context line on a reply. Inserted first, so marker labels (inserted
+// later at the top) end up above it.
+function addReplyContext(div, msg) {
+  if (!msg.replyParentUser && !msg.replyParentId) return;
+  const body = msg.replyParentBody || '';
+  const ctx = el('div', { class: 'reply-context', title: body },
+    '↪ @' + (msg.replyParentUser || '?') + (body ? ': ' + body : ''));
+  if (msg.replyParentId) ctx.addEventListener('click', () => jumpToMessage(div.parentElement, msg.replyParentId));
+  div.insertBefore(ctx, div.firstChild);
+}
+
+// ↩ button at the end of a Twitch chat message.
+function addReplyButton(div, msg) {
+  if (msg.platform !== 'twitch' || !msg.id || msg.historical) return;
+  const b = el('span', { class: 'reply-btn', title: i18n.t('reply') }, '↩');
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setReplyTarget({ id: msg.id, user: msg.displayName || msg.username || '?', text: msg.text || '', channel: msg.channel });
+  });
+  div.appendChild(b);
+}
+
+function jumpToMessage(container, id) {
+  if (!container) return;
+  for (const row of container.querySelectorAll('.msg')) {
+    if (row.dataset.msgId === id) {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      row.classList.add('flash');
+      setTimeout(() => row.classList.remove('flash'), 1600);
+      return;
+    }
+  }
+}
 
 // === Tab hover preview ===
 // Hovering a tab shows a card with the stream thumbnail, title, game,
@@ -614,6 +671,7 @@ function removeChannelTab(channel) {
 }
 
 function switchToChannel(channel) {
+  if (replyTarget && replyTarget.channel !== channel) clearReplyTarget();
   if (activeChannel) {
     const prev = channels.get(activeChannel);
     if (prev) {
@@ -1033,6 +1091,7 @@ async function renderMessage(msg) {
   // this channel's own container, so other channels are never touched.
   if (msg.id) div.dataset.msgId = String(msg.id);
   div.dataset.user = (msg.username || '').toLowerCase();
+  addReplyContext(div, msg);
   // Twitch "first-msg": the user's very first message in this channel.
   // Highlighted like Twitch does for the broadcaster/mods so new chatters
   // can be welcomed. The label is a block line ABOVE the message, so it is
@@ -1107,6 +1166,7 @@ async function renderMessage(msg) {
     if (!msg.historical && soundOnMention !== 'none' && msg.channel !== activeChannel) playBeep();
   }
 
+  addReplyButton(div, msg);
   appendAndScroll(state, div);
   if (!msg.historical) markUnread(msg.channel, mention);
 }
@@ -1989,7 +2049,12 @@ msgInput.addEventListener('keydown', async (e) => {
         err = await window.go.main.App.SendYouTubeMessage(activeChannel, text);
       } else {
         // Twitch send takes the plain channel name without any prefix.
-        err = await window.go.main.App.SendMessage(meta.displayName, text);
+        if (replyTarget && replyTarget.channel === activeChannel) {
+          err = await window.go.main.App.SendReply(meta.displayName, text, replyTarget.id);
+        } else {
+          err = await window.go.main.App.SendMessage(meta.displayName, text);
+        }
+        if (!err) clearReplyTarget();
       }
       if (err) statusText.textContent = 'Send error: ' + err;
     } catch (ex) { console.error(ex); }
@@ -1998,6 +2063,7 @@ msgInput.addEventListener('keydown', async (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    if (replyTarget && document.activeElement === msgInput) clearReplyTarget();
     if (!addModalBg.classList.contains('hidden')) closeAddModal();
     if (!settingsModalBg.classList.contains('hidden')) closeSettings();
   }

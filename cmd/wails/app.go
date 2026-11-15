@@ -1164,6 +1164,9 @@ func (a *App) chatToMap(msg chat.Message) map[string]interface{} {
 		"rewardCost":       msg.RewardCost,
 		"rewardId":         msg.RewardID,
 		"highlighted":      msg.IsHighlighted,
+		"replyParentId":    msg.ReplyParentID,
+		"replyParentUser":  msg.ReplyParentUser,
+		"replyParentBody":  msg.ReplyParentBody,
 		"superChatAmount":  msg.SuperChatAmount,
 		"targetUsername":   msg.TargetUsername,
 	}
@@ -1684,6 +1687,12 @@ func (a *App) LookupBadge(channel, setID, version string) string {
 // the regular-message path we also emit a synthetic local-echo event
 // so the user sees their own message.
 func (a *App) SendMessage(text string) {
+	a.SendReply(text, "")
+}
+
+// SendReply sends text as a reply to replyParentID (empty = normal
+// message). Slash commands and /me ignore the reply target.
+func (a *App) SendReply(text, replyParentID string) {
 	if text == "" {
 		return
 	}
@@ -1737,7 +1746,7 @@ func (a *App) SendMessage(text string) {
 		}
 		broadcasterID = id
 	}
-	err := twitch.SendChatMessage(clientID, token, broadcasterID, senderID, text)
+	err := twitch.SendChatMessage(clientID, token, broadcasterID, senderID, text, replyParentID)
 	switch {
 	case err == nil:
 	case errors.Is(err, twitch.ErrSendNotAuthorized):

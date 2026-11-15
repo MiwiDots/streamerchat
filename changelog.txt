@@ -1,3 +1,23 @@
+2026-11-15 20:44 - Reply threads in both apps (unreleased, next version).
+
+  - Display: replies carry the IRC tags reply-parent-msg-id /
+    -display-name / -user-login / -msg-body → chat.Message.ReplyParent*
+    → payload replyParentId/User/Body. Rendered as a small
+    "↪ @user: original text" line above the message; clicking it
+    scrolls to the original (if still in the chat) and flashes it.
+  - Replying: hovering a Twitch message shows a ↩ button. The chip
+    above the input ("Replying to @user", ✕ / Esc cancels) makes the
+    next message a reply: new bindings SendReply (StreamerChat:
+    text, parentId; ChatHub: channel, text, parentId) send
+    reply_parent_message_id via Helix (twitch.SendChatMessage got a
+    replyParentID parameter). Cleared after sending, on profile switch
+    and (ChatHub) when switching to another tab. YouTube has no
+    threads, so "YT" sends ignore the target.
+  - Search: is:reply.
+  - en/de strings. Verified in the browser harness (render order,
+    chip, SendReply arguments, cancel paths, no JS errors); Go test for
+    the tag parsing.
+
 2026-11-15 20:41 - Chat search with Ctrl+F in both apps (unreleased, next
   version).
 

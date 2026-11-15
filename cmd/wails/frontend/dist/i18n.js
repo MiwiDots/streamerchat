@@ -2,6 +2,8 @@
 
 const STRINGS = {
   en: {
+    replyingTo: 'Replying to @{user}',
+    reply: 'Reply',
     searchPlaceholder: 'Search…  from:user  has:link  is:first-msg  !from:bot',
     searchCount: '{n} found',
     firstMessage: 'First message in this channel',
@@ -86,6 +88,8 @@ const STRINGS = {
     usersCount: 'Users ({count})',
   },
   de: {
+    replyingTo: 'Antwort an @{user}',
+    reply: 'Antworten',
     searchPlaceholder: 'Suchen…  from:user  has:link  is:first-msg  !from:bot',
     searchCount: '{n} Treffer',
     firstMessage: 'Erste Nachricht im Channel',

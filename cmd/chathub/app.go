@@ -868,6 +868,9 @@ func (a *App) chatToMap(channel string, msg chat.Message) map[string]interface{}
 		"rewardCost":       msg.RewardCost,
 		"rewardId":         msg.RewardID,
 		"highlighted":      msg.IsHighlighted,
+		"replyParentId":    msg.ReplyParentID,
+		"replyParentUser":  msg.ReplyParentUser,
+		"replyParentBody":  msg.ReplyParentBody,
 	}
 }
 
@@ -1810,6 +1813,12 @@ func (a *App) Logout() {
 // duplicate, ratelimit, …). IRC connection is retained for READING
 // chat only.
 func (a *App) SendMessage(channel, text string) string {
+	return a.SendReply(channel, text, "")
+}
+
+// SendReply sends text to a Twitch channel as a reply to replyParentID
+// (empty = normal message).
+func (a *App) SendReply(channel, text, replyParentID string) string {
 	if a.cfg.AccessToken == "" || a.cfg.ClientID == "" {
 		log.Printf("[SEND] rejected — no access token / client id")
 		return "not logged in"
@@ -1825,7 +1834,7 @@ func (a *App) SendMessage(channel, text string) string {
 		return "could not resolve channel"
 	}
 	log.Printf("[SEND] Helix POST #%s (broadcaster=%s) text=%q", channel, broadcasterID, text)
-	if err := twitch.SendChatMessage(a.cfg.ClientID, a.cfg.AccessToken, broadcasterID, a.cfg.UserID, text); err != nil {
+	if err := twitch.SendChatMessage(a.cfg.ClientID, a.cfg.AccessToken, broadcasterID, a.cfg.UserID, text, replyParentID); err != nil {
 		return err.Error()
 	}
 	return ""

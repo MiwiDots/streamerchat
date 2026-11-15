@@ -17,15 +17,15 @@ import (
 
 // IRCClient wraps the Twitch IRC connection.
 type IRCClient struct {
-	client       *twitch.Client
-	channel      string
-	extraJoins   []string // joined inside OnConnect alongside `channel`
-	messages     chan chat.Message
-	joins        chan chat.UserJoinPart
-	settings     chan chat.ChatSettings
-	errors       chan error
-	roomNames    map[string]string           // roomID -> channel name cache
-	resolveRoom  func(roomID string) string  // callback to resolve room IDs
+	client      *twitch.Client
+	channel     string
+	extraJoins  []string // joined inside OnConnect alongside `channel`
+	messages    chan chat.Message
+	joins       chan chat.UserJoinPart
+	settings    chan chat.ChatSettings
+	errors      chan error
+	roomNames   map[string]string          // roomID -> channel name cache
+	resolveRoom func(roomID string) string // callback to resolve room IDs
 
 	// dropped counts events discarded because a consumer channel was full
 	// (see push). Logged every dropLogEvery drops.
@@ -502,6 +502,15 @@ func parseGifsTag(tag string) []chat.GifRange {
 	return out
 }
 
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // emoteRanges flattens the library's parsed native emotes into rune ranges.
 func emoteRanges(emotes []*twitch.Emote) []chat.EmoteRange {
 	var out []chat.EmoteRange
@@ -560,6 +569,10 @@ func convertPrivateMessage(msg twitch.PrivateMessage, channel string) chat.Messa
 		RewardID:      msg.Tags["custom-reward-id"],
 		IsHighlighted: msg.Tags["msg-id"] == "highlighted-message",
 		Gifs:          parseGifsTag(msg.Tags["gifs"]),
+		// Reply threads: the message being answered.
+		ReplyParentID:   msg.Tags["reply-parent-msg-id"],
+		ReplyParentUser: firstNonEmpty(msg.Tags["reply-parent-display-name"], msg.Tags["reply-parent-user-login"]),
+		ReplyParentBody: msg.Tags["reply-parent-msg-body"],
 	}
 
 	// Extract parsed emote positions from the library
