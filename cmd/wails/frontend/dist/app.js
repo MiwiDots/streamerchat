@@ -1605,6 +1605,12 @@ function setupProfileSwitchedListener() {
     renderGen++;
     chatEl.replaceChildren();
     clearReplyTarget();
+    // AutoMod queue belongs to the previous profile's channel.
+    automodItems.clear();
+    automodListEl.querySelectorAll('.automod-card').forEach((c) => c.remove());
+    const amEmpty = automodListEl.querySelector('.automod-empty');
+    if (amEmpty) amEmpty.classList.remove('hidden');
+    renderAutomodBadge();
     roles = { mods: new Set(), vips: new Set(), bots: new Set(), broadcaster: '' };
     badgeCache.clear();
     badgeMiss.clear();
@@ -2089,6 +2095,7 @@ function searchTermMatches(row, t) {
         case 'system': return type === 'system' || type === 'join' || type === 'part' || !row.dataset.user;
         case 'mention': return searchIsMention(row, text);
         case 'reply': return !!row.querySelector('.reply-context');
+        case 'automod': return type === 'automod';
         default: return false;
       }
     default: return text.includes(t.value);
@@ -2236,6 +2243,114 @@ function jumpToMessage(container, id) {
     }
   }
 }
+
+// === AutoMod queue ===
+// Messages AutoMod held for review (EventSub automod.message.hold) appear
+// as a card in chat AND in the sidebar's AutoMod tab, each with
+// Approve / Deny (App.AutoModAction → Helix). automod.message.update
+// resolves them everywhere — also when another moderator acted or the
+// message expired. Resolved entries stay visible (greyed) with the result.
+const AUTOMOD_LIST_MAX = 200;
+const automodListEl = document.getElementById('automodList');
+const automodBadgeEl = document.getElementById('automodBadge');
+const automodItems = new Map(); // messageId -> { status, views: [elements] }
+
+function automodPendingCount() {
+  let n = 0;
+  for (const it of automodItems.values()) if (it.status === 'pending') n++;
+  return n;
+}
+function renderAutomodBadge() {
+  const n = automodPendingCount();
+  automodBadgeEl.textContent = String(n);
+  automodBadgeEl.classList.toggle('hidden', n === 0);
+}
+
+function automodReasonText(h) {
+  if (h.reason === 'blocked_term') return i18n.t('automodBlockedTerm');
+  if (h.reason === 'blocked_link') return i18n.t('automodBlockedLink');
+  const cat = h.category ? String(h.category) : 'AutoMod';
+  return h.level ? `${cat} · ${i18n.t('automodLevel', { n: h.level })}` : cat;
+}
+
+// One card element; used both in chat and in the sidebar list.
+function buildAutomodCard(h, inChat) {
+  const card = el('div', { class: 'automod-card' + (inChat ? ' msg automod-in-chat' : '') });
+  if (inChat) { card.dataset.type = 'automod'; card.dataset.user = (h.login || '').toLowerCase(); }
+  card.appendChild(el('div', { class: 'automod-head' },
+    el('span', { class: 'automod-shield' }, '🛡 '),
+    el('span', { class: 'automod-title' }, i18n.t('automodHeld', { user: h.user || h.login || '?' })),
+    el('span', { class: 'automod-reason' }, automodReasonText(h))));
+  card.appendChild(el('div', { class: 'automod-text' }, h.text || ''));
+  const actions = el('div', { class: 'automod-actions' });
+  const allow = el('button', { class: 'btn automod-allow' }, '✓ ' + i18n.t('automodAllow'));
+  const deny = el('button', { class: 'btn automod-deny' }, '✕ ' + i18n.t('automodDeny'));
+  const act = async (ok) => {
+    allow.disabled = deny.disabled = true;
+    let err = '';
+    try { err = await window.go.main.App.AutoModAction(h.messageId, ok); } catch (e) { err = String(e); }
+    if (err) {
+      allow.disabled = deny.disabled = false;
+      actions.dataset.error = err;
+      actions.title = err;
+      enqueueRender({ type: 'system', platform: 'twitch', timestamp: Date.now(), text: 'AutoMod: ' + err });
+      return;
+    }
+    resolveAutomod(h.messageId, ok ? 'approved' : 'denied', '');
+  };
+  allow.addEventListener('click', () => act(true));
+  deny.addEventListener('click', () => act(false));
+  actions.append(allow, deny);
+  card.appendChild(actions);
+  return card;
+}
+
+function addAutomodHold(h) {
+  if (!h || !h.messageId || automodItems.has(h.messageId)) return;
+  const sideCard = buildAutomodCard(h, false);
+  const chatCard = buildAutomodCard(h, true);
+  automodItems.set(h.messageId, { status: 'pending', views: [sideCard, chatCard] });
+  const empty = automodListEl.querySelector('.automod-empty');
+  if (empty) empty.classList.add('hidden');
+  automodListEl.insertBefore(sideCard, automodListEl.firstChild); // newest on top
+  while (automodListEl.querySelectorAll('.automod-card').length > AUTOMOD_LIST_MAX) {
+    const last = [...automodListEl.querySelectorAll('.automod-card')].pop();
+    for (const [id, it] of automodItems) if (it.views[0] === last) automodItems.delete(id);
+    last.remove();
+  }
+  // Append through the render chain so the card lands in arrival order
+  // relative to chat messages that are still being rendered.
+  const gen = renderGen;
+  renderChain = renderChain.then(() => {
+    if (gen !== renderGen) return;
+    chatEl.appendChild(chatCard);
+    applySearchToRow(chatCard, chatEl);
+    trimAndScroll();
+  });
+  renderAutomodBadge();
+}
+
+function resolveAutomod(messageId, status, moderator) {
+  const it = automodItems.get(messageId);
+  if (!it || it.status !== 'pending') return;
+  it.status = status;
+  const label = status === 'approved' ? '✓ ' + i18n.t('automodApproved')
+    : status === 'denied' ? '✕ ' + i18n.t('automodDenied')
+    : '⌛ ' + i18n.t('automodExpired');
+  for (const v of it.views) {
+    v.classList.add('automod-resolved', 'automod-' + status);
+    const actions = v.querySelector('.automod-actions');
+    if (actions) actions.replaceChildren(el('span', { class: 'automod-result' }, label + (moderator ? ' · ' + moderator : '')));
+  }
+  renderAutomodBadge();
+}
+
+whenRuntime(() => {
+  window.runtime.EventsOn('automodHold', addAutomodHold);
+  window.runtime.EventsOn('automodUpdate', (u) => {
+    if (u && u.messageId) resolveAutomod(u.messageId, u.status || 'expired', u.moderator || '');
+  });
+});
 
 // Boot runner (keep at the very END of the file so every whenRuntime()
 // registration above is queued): wait for the Wails runtime + bindings,

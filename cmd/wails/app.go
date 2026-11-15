@@ -601,6 +601,29 @@ func (a *App) startEventSub() {
 		if a.ctx == nil {
 			return
 		}
+		// AutoMod queue events have their own panel, not the activity feed.
+		switch ev.Type {
+		case eventsub.EventAutoModHold:
+			a.emit("automodHold", map[string]interface{}{
+				"messageId": ev.Meta["messageId"],
+				"user":      ev.User,
+				"userId":    ev.UserID,
+				"login":     ev.Meta["login"],
+				"text":      ev.Message,
+				"reason":    ev.Meta["reason"],
+				"category":  ev.Meta["category"],
+				"level":     ev.Meta["level"],
+				"timestamp": ev.Timestamp.UnixMilli(),
+			})
+			return
+		case eventsub.EventAutoModUpdate:
+			a.emit("automodUpdate", map[string]interface{}{
+				"messageId": ev.Meta["messageId"],
+				"status":    ev.Meta["status"],
+				"moderator": ev.Meta["moderator"],
+			})
+			return
+		}
 		a.emit("activity", map[string]interface{}{
 			"type":      string(ev.Type),
 			"user":      ev.User,
@@ -1894,6 +1917,24 @@ func (a *App) GetUserInfo(userID string) map[string]interface{} {
 		"followAge":   info.FollowAge,
 		"isBot":       a.botDetector != nil && a.botDetector.IsBot(info.Login),
 	}
+}
+
+// AutoModAction approves (allow=true) or denies a message AutoMod held for
+// review. Returns "" or a user-facing error (e.g. already handled or
+// expired — Twitch answers 400 for those).
+func (a *App) AutoModAction(msgID string, allow bool) string {
+	h := a.helix()
+	if h == nil {
+		return "no helix client"
+	}
+	if msgID == "" {
+		return "missing message id"
+	}
+	if err := h.ModerateHeldMessage(msgID, allow); err != nil {
+		log.Printf("[AUTOMOD] %v", err)
+		return err.Error()
+	}
+	return ""
 }
 
 // ModAction performs a moderation action.

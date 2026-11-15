@@ -753,3 +753,45 @@ body.no-ts .ts { display: none; }
 .reply-chip-text { color: #9a9ab0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reply-chip-close { cursor: pointer; color: #777; }
 .reply-chip-close:hover { color: #fff; }
+
+/* AutoMod queue (chat card + sidebar tab). */
+.automod-badge {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #ff9f1a;
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+.automod-badge.hidden { display: none; }
+.automod-card {
+  border: 1px solid #5a4a1a;
+  border-left: 3px solid #ff9f1a;
+  background: rgba(255, 159, 26, 0.08);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  font-size: 12px;
+}
+.automod-in-chat { font-size: var(--chat-font-size, 14px); }
+.automod-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.automod-title { font-weight: 700; color: #ffc46b; }
+.automod-reason { color: #b79a6a; font-size: 0.85em; }
+.automod-text { color: #eee; margin: 4px 0 6px; word-wrap: break-word; }
+.automod-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.automod-actions .btn {
+  flex: 0 0 auto;          /* don't stretch across the chat */
+  width: auto;
+  white-space: nowrap;     /* keep icon + label on one line in the sidebar */
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.automod-allow { background: #1f6f3f; border-color: #2a8a50; color: #fff; }
+.automod-deny { background: #7a2323; border-color: #9a2c2c; color: #fff; }
+.automod-resolved { opacity: 0.55; }
+.automod-result { color: #b5b5c5; font-weight: 600; }
+.automod-empty { color: #777; font-size: 12px; padding: 10px 4px; }
+.automod-empty.hidden { display: none; }

@@ -1,8 +1,13 @@
 package twitch
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/nicklaw5/helix/v2"
@@ -11,6 +16,7 @@ import (
 // HelixClient wraps the Twitch Helix API for mod actions.
 type HelixClient struct {
 	client        *helix.Client
+	clientID      string
 	broadcasterID string
 	moderatorID   string
 }
@@ -27,6 +33,7 @@ func NewHelixClient(clientID, accessToken, broadcasterID, moderatorID string) (*
 
 	return &HelixClient{
 		client:        client,
+		clientID:      clientID,
 		broadcasterID: broadcasterID,
 		moderatorID:   moderatorID,
 	}, nil
@@ -485,6 +492,47 @@ func (h *HelixClient) GetChannelName(userID string) (string, error) {
 		return resp.Data.Users[0].Login, nil
 	}
 	return "", fmt.Errorf("user not found: %s", userID)
+}
+
+// heldMessageHTTPClient bounds the AutoMod approve/deny request.
+var heldMessageHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+// ModerateHeldMessage approves (allow=true) or denies a message AutoMod held
+// for review. Implemented by hand: the docs define user_id / msg_id /
+// action as a JSON BODY, while the helix library sends them as query
+// parameters. Scope: moderator:manage:automod.
+func (h *HelixClient) ModerateHeldMessage(msgID string, allow bool) error {
+	action := "DENY"
+	if allow {
+		action = "ALLOW"
+	}
+	body, err := json.Marshal(map[string]string{"user_id": h.moderatorID, "msg_id": msgID, "action": action})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", "https://api.twitch.tv/helix/moderation/automod/message", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Client-Id", h.clientID)
+	req.Header.Set("Authorization", "Bearer "+h.client.GetUserAccessToken())
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := heldMessageHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("automod %s: %w", strings.ToLower(action), err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	var apiErr struct {
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&apiErr)
+	if apiErr.Message == "" {
+		apiErr.Message = http.StatusText(resp.StatusCode)
+	}
+	return fmt.Errorf("automod %s: %d %s", strings.ToLower(action), resp.StatusCode, apiErr.Message)
 }
 
 // UserInfo contains combined user + follow info.

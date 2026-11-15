@@ -2,6 +2,7 @@ package eventsub
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -113,9 +114,9 @@ func TestReconnectHandoffNoResubscribeNoDuplicates(t *testing.T) {
 			t.Fatalf("missing %s in %v", want, users)
 		}
 	}
-	// 10 subscription types, subscribed exactly once (not again after reconnect).
-	if n := subscribeCalls.Load(); n != 10 {
-		t.Fatalf("subscribe calls = %d, want 10", n)
+	// Every subscription type exactly once (not again after reconnect).
+	if n, want := subscribeCalls.Load(), int32(len(subscriptionRequests("1", "1"))); n != want {
+		t.Fatalf("subscribe calls = %d, want %d", n, want)
 	}
 }
 
@@ -136,5 +137,35 @@ func TestSetAccessTokenUsedForSubscribe(t *testing.T) {
 	}
 	if got := gotAuth.Load(); got != "Bearer fresh" {
 		t.Fatalf("Authorization = %v, want Bearer fresh", got)
+	}
+}
+
+func TestDispatchAutoModEvents(t *testing.T) {
+	var got []Event
+	c := New(context.Background(), "cid", "tok", "1", "1", func(ev Event) { got = append(got, ev) })
+	hold := `{"metadata":{"message_id":"n1","message_type":"notification"},"payload":{"subscription":{"type":"automod.message.hold"},` +
+		`"event":{"user_id":"9","user_login":"troll99","user_name":"Troll99","message_id":"m1","message":{"text":"bad words","fragments":[]},` +
+		`"reason":"automod","automod":{"category":"swearing","level":3,"boundaries":[]},"blocked_term":null,"held_at":"2026-11-15T10:00:00Z"}}}`
+	update := `{"metadata":{"message_id":"n2","message_type":"notification"},"payload":{"subscription":{"type":"automod.message.update"},` +
+		`"event":{"user_id":"9","user_login":"troll99","user_name":"Troll99","message_id":"m1","message":{"text":"bad words"},` +
+		`"moderator_user_name":"ModAnna","status":"Approved","reason":"automod"}}}`
+	for _, raw := range []string{hold, update} {
+		var msg wsMessage
+		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+			t.Fatal(err)
+		}
+		c.dispatchOnce(msg)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d events", len(got))
+	}
+	h := got[0]
+	if h.Type != EventAutoModHold || h.User != "Troll99" || h.Message != "bad words" ||
+		h.Meta["messageId"] != "m1" || h.Meta["category"] != "swearing" || h.Meta["level"] != float64(3) || h.Meta["reason"] != "automod" {
+		t.Fatalf("hold parsed wrong: %+v", h)
+	}
+	u := got[1]
+	if u.Type != EventAutoModUpdate || u.Meta["status"] != "approved" || u.Meta["moderator"] != "ModAnna" || u.Meta["messageId"] != "m1" {
+		t.Fatalf("update parsed wrong: %+v", u)
 	}
 }

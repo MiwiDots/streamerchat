@@ -40,6 +40,7 @@
       <div class="sidebar-tabs">
         <button class="sidebar-tab active" data-side="users" data-i18n="usersTab">Users</button>
         <button class="sidebar-tab" data-side="activity" data-i18n="activityTab">Activity</button>
+        <button class="sidebar-tab" data-side="automod"><span data-i18n="automodTab">AutoMod</span> <span class="automod-badge hidden" id="automodBadge">0</span></button>
       </div>
       <div class="sidebar-pane active" data-side-pane="users">
         <div class="panel-title sidebar-title" id="userTitle">Users (0)</div>
@@ -48,6 +49,10 @@
       <div class="sidebar-pane" data-side-pane="activity">
         <div class="panel-title sidebar-title" id="activityTitle">Activity (0)</div>
         <div class="scroll" id="activityList"></div>
+      </div>
+      <div class="sidebar-pane" data-side-pane="automod">
+        <div class="panel-title sidebar-title" data-i18n="automodTitle">Held by AutoMod</div>
+        <div class="scroll" id="automodList"><div class="automod-empty" data-i18n="automodEmpty">Nothing waiting for review.</div></div>
       </div>
     </div>
   </div>

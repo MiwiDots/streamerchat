@@ -1,3 +1,30 @@
+2026-11-15 20:48 - StreamerChat: AutoMod queue (unreleased, next version).
+
+  - Messages AutoMod holds for review appear as an orange card in chat
+    ("AutoMod held a message from X" + category/level or blocked
+    term/link + the message) with Approve / Deny, and in a new AutoMod
+    sidebar tab with a pending-count badge (newest on top, max 200).
+    Resolving a message updates both places: approved / denied by
+    you, by another moderator ("· name"), or expired. If Twitch refuses
+    (e.g. already handled) the buttons stay active and the reason is
+    shown in chat. Cards are appended through the render chain, so they
+    keep arrival order with chat messages. Cleared on profile switch.
+  - EventSub: subscribes automod.message.hold v2 and
+    automod.message.update v2 (scope moderator:manage:automod, already
+    requested at login — no re-login). New EventAutoModHold /
+    EventAutoModUpdate; they are routed to "automodHold" /
+    "automodUpdate" instead of the activity feed. Subscription list
+    extracted into subscriptionRequests().
+  - Helix: HelixClient.ModerateHeldMessage(msgID, allow) sends
+    user_id / msg_id / action (ALLOW|DENY) as a JSON body, as the
+    reference documents (the helix library sends them as query
+    parameters). Bound as App.AutoModAction.
+  - Search: is:automod. en/de strings.
+  - Verified in the browser harness (approve, resolved by another
+    moderator, error path, badge, ordering, no JS errors); Go test for
+    the EventSub hold/update parsing; the reconnect test now derives
+    the expected subscription count from the list.
+
 2026-11-15 20:44 - Reply threads in both apps (unreleased, next version).
 
   - Display: replies carry the IRC tags reply-parent-msg-id /

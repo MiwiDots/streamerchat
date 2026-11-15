@@ -33,6 +33,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,6 +56,10 @@ const (
 	EventCheer     EventType = "cheer"
 	EventReward    EventType = "reward"
 	EventHypeTrain EventType = "hype_train"
+	// AutoMod queue: a message was held for review / its status changed
+	// (approved, denied or expired — possibly by another moderator).
+	EventAutoModHold   EventType = "automod_hold"
+	EventAutoModUpdate EventType = "automod_update"
 )
 
 // Event is the normalized shape the caller consumes. Meta carries
@@ -328,15 +333,10 @@ func (c *Client) dispatchOnce(msg wsMessage) {
 	c.dispatch(msg)
 }
 
-// subscribeAll fires the individual subscribe calls in sequence.
-// Any single failure aborts because a partially subscribed session
-// gives a misleading UI (some activity types missing). Every type
-// carries the scope it needs in the comment so future-me knows
-// exactly which login scope enables what.
-func (c *Client) subscribeAll(sessionID string) error {
-	me := c.broadcasterID
-	mod := c.moderatorID
-	subs := []subscribeRequest{
+// subscriptionRequests lists every EventSub subscription the activity feed
+// and the AutoMod queue need. me = broadcaster, mod = token user.
+func subscriptionRequests(me, mod string) []subscribeRequest {
+	return []subscribeRequest{
 		// Follows use v2 which requires moderator_user_id + scope
 		// moderator:read:followers.
 		{Type: "channel.follow", Version: "2", Condition: map[string]string{
@@ -359,7 +359,24 @@ func (c *Client) subscribeAll(sessionID string) error {
 		{Type: "channel.hype_train.begin", Version: "1", Condition: map[string]string{"broadcaster_user_id": me}},
 		{Type: "channel.hype_train.progress", Version: "1", Condition: map[string]string{"broadcaster_user_id": me}},
 		{Type: "channel.hype_train.end", Version: "1", Condition: map[string]string{"broadcaster_user_id": me}},
+		// AutoMod queue (held messages + their resolution). Scope:
+		// moderator:manage:automod; token user must be moderator_user_id.
+		{Type: "automod.message.hold", Version: "2", Condition: map[string]string{
+			"broadcaster_user_id": me, "moderator_user_id": mod,
+		}},
+		{Type: "automod.message.update", Version: "2", Condition: map[string]string{
+			"broadcaster_user_id": me, "moderator_user_id": mod,
+		}},
 	}
+}
+
+// subscribeAll fires the individual subscribe calls in sequence.
+// Any single failure aborts because a partially subscribed session
+// gives a misleading UI (some activity types missing). Every type
+// carries the scope it needs in the comment so future-me knows
+// exactly which login scope enables what.
+func (c *Client) subscribeAll(sessionID string) error {
+	subs := subscriptionRequests(c.broadcasterID, c.moderatorID)
 	for _, s := range subs {
 		if err := c.subscribe(sessionID, s); err != nil {
 			// Missing-scope errors are per-type: log and continue
@@ -479,6 +496,14 @@ func (c *Client) dispatch(msg wsMessage) {
 			ev.Meta["reward"] = getStr(r, "title")
 			ev.Meta["cost"] = getNum(r, "cost")
 		}
+	case "automod.message.hold":
+		ev.Type = EventAutoModHold
+		fillAutoModEvent(&ev, e)
+	case "automod.message.update":
+		ev.Type = EventAutoModUpdate
+		fillAutoModEvent(&ev, e)
+		ev.Meta["status"] = strings.ToLower(getStr(e, "status")) // docs show both "Approved" and "approved"
+		ev.Meta["moderator"] = getStr(e, "moderator_user_name")
 	case "channel.hype_train.begin",
 		"channel.hype_train.progress",
 		"channel.hype_train.end":
@@ -500,6 +525,23 @@ func (c *Client) dispatch(msg wsMessage) {
 
 // giftUserName handles the anonymous-gift edge case: is_anonymous
 // true means user_name is empty; render as "Anonymous".
+// fillAutoModEvent copies the fields shared by automod.message.hold/update
+// v2: sender, held message, why it was caught.
+func fillAutoModEvent(ev *Event, e map[string]interface{}) {
+	ev.User = getStr(e, "user_name")
+	ev.UserID = getStr(e, "user_id")
+	ev.Meta["login"] = getStr(e, "user_login")
+	ev.Meta["messageId"] = getStr(e, "message_id")
+	ev.Meta["reason"] = getStr(e, "reason") // automod | blocked_term | blocked_link
+	if m, ok := e["message"].(map[string]interface{}); ok {
+		ev.Message = getStr(m, "text")
+	}
+	if am, ok := e["automod"].(map[string]interface{}); ok {
+		ev.Meta["category"] = getStr(am, "category")
+		ev.Meta["level"] = getNum(am, "level")
+	}
+}
+
 func giftUserName(e map[string]interface{}) string {
 	if getBool(e, "is_anonymous") {
 		return "Anonymous"
