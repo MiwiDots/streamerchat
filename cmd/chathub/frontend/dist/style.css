@@ -828,3 +828,33 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
 .ln-detail:empty { display: none; }
 .ln-actions { display: flex; gap: 6px; }
 .ln-actions .btn { white-space: nowrap; }
+
+/* Chat search bar (Ctrl+F). */
+.chat-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #18181f;
+  border-bottom: 1px solid #2c2c3a;
+  font-size: 12px;
+}
+.chat-search.hidden { display: none; }
+.chat-search-icon { opacity: 0.7; }
+.chat-search-input {
+  flex: 1;
+  min-width: 0;
+  background: #0d0d14;
+  border: 1px solid #2c2c3a;
+  border-radius: 4px;
+  color: #eee;
+  padding: 4px 8px;
+  font: inherit;
+  outline: none;
+}
+.chat-search-input:focus { border-color: #9146ff; }
+.chat-search-count { color: #9a9ab0; white-space: nowrap; }
+.chat-search-close { cursor: pointer; color: #777; }
+.chat-search-close:hover { color: #fff; }
+.msg.search-hidden { display: none !important; }
+.chat-area > .chat-search { position: absolute; top: 6px; right: 14px; left: 14px; z-index: 5; border: 1px solid #2c2c3a; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.45); }

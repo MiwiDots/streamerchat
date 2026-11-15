@@ -2,6 +2,8 @@
 
 const STRINGS = {
   en: {
+    searchPlaceholder: 'Search…  from:user  has:link  is:first-msg  !from:bot',
+    searchCount: '{n} found',
     firstMessage: 'First message in this channel',
     returningChatter: 'Returning chatter',
     watchStreak: 'Watch streak: {n} streams in a row',
@@ -84,6 +86,8 @@ const STRINGS = {
     usersCount: 'Users ({count})',
   },
   de: {
+    searchPlaceholder: 'Suchen…  from:user  has:link  is:first-msg  !from:bot',
+    searchCount: '{n} Treffer',
     firstMessage: 'Erste Nachricht im Channel',
     returningChatter: 'Wiederkehrender Zuschauer',
     watchStreak: 'Watch-Streak: {n} Streams in Folge',

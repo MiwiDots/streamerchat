@@ -2,6 +2,8 @@
 
 const STRINGS = {
   en: {
+    searchPlaceholder: 'Search…  from:user  has:link  is:first-msg  !from:bot',
+    searchCount: '{n} found',
     liveNotifyTitle: '{channel} is live',
     goToTab: 'Go to tab',
     liveNotifications: 'Notify me when a channel goes live',
@@ -105,6 +107,8 @@ const STRINGS = {
     fontSizeHint: 'Tip: Ctrl + / Ctrl - / Ctrl 0 also work.',
   },
   de: {
+    searchPlaceholder: 'Suchen…  from:user  has:link  is:first-msg  !from:bot',
+    searchCount: '{n} Treffer',
     liveNotifyTitle: '{channel} ist live',
     goToTab: 'Zum Tab',
     liveNotifications: 'Benachrichtigen, wenn ein Channel live geht',
@@ -237,11 +241,19 @@ function applyI18n(root) {
   });
 }
 
+// Elements whose text is built in JS (e.g. the search placeholder) register
+// a callback here to re-render after a language change.
+const localeListeners = [];
+function onLocaleChange(fn) { localeListeners.push(fn); }
+
 function setLocale(loc) {
   if (loc !== 'de' && loc !== 'en') loc = 'en';
   currentLocale = loc;
   document.documentElement.lang = loc;
   applyI18n();
+  for (const fn of localeListeners) {
+    try { fn(loc); } catch (e) { console.error('locale listener', e); }
+  }
 }
 
 function localizeSystemMessage(text) {
@@ -253,4 +265,4 @@ function localizeSystemMessage(text) {
   return text;
 }
 
-window.i18n = { t, applyI18n, setLocale, localizeSystemMessage, get locale() { return currentLocale; } };
+window.i18n = { t, applyI18n, setLocale, onLocaleChange, localizeSystemMessage, get locale() { return currentLocale; } };

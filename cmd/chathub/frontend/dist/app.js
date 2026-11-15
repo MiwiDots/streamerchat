@@ -289,6 +289,155 @@ function parseChannelKey(key) {
   return { platform: 'twitch', displayName: key };
 }
 
+// === Chat search (Ctrl+F) ===
+// Filters the visible chat in place: non-matching rows are hidden, the
+// match count is shown, Esc restores everything. New messages arriving
+// while the search is open are filtered too.
+// Syntax (space-separated, all terms must match, "!" negates a term):
+//   free text             message text contains it (case-insensitive)
+//   from:<user>           sent by that user
+//   has:link|emote|gif    contains a link / emote / GIF
+//   is:first-msg|returning|deleted|highlighted|redemption|sub|raid|
+//      mention|watchstreak|system
+const SEARCH_DEBOUNCE_MS = 120;
+const searchState = { open: false, terms: [], timer: null, container: null };
+const searchInputEl = el('input', { class: 'chat-search-input', type: 'text', spellcheck: 'false', autocomplete: 'off' });
+const searchCountEl = el('span', { class: 'chat-search-count' }, '');
+const searchCloseEl = el('span', { class: 'chat-search-close', title: 'Esc' }, '✕');
+const searchBarEl = el('div', { class: 'chat-search hidden' },
+  el('span', { class: 'chat-search-icon' }, '🔍'), searchInputEl, searchCountEl, searchCloseEl);
+
+function renderSearchPlaceholder() { searchInputEl.placeholder = i18n.t('searchPlaceholder'); }
+renderSearchPlaceholder();
+if (i18n.onLocaleChange) i18n.onLocaleChange(() => { renderSearchPlaceholder(); if (searchState.open) applySearch(); });
+
+function parseSearchQuery(q) {
+  const terms = [];
+  for (let tok of q.trim().split(/\s+/)) {
+    if (!tok) continue;
+    let neg = false;
+    if (tok.length > 1 && tok[0] === '!') { neg = true; tok = tok.slice(1); }
+    const m = /^(from|has|is):(.+)$/i.exec(tok);
+    if (m) terms.push({ neg, kind: m[1].toLowerCase(), value: m[2].toLowerCase().replace(/^@/, '') });
+    else terms.push({ neg, kind: 'text', value: tok.toLowerCase() });
+  }
+  return terms;
+}
+
+function searchTermMatches(row, t) {
+  const text = row.textContent.toLowerCase();
+  const type = row.dataset.type || '';
+  switch (t.kind) {
+    case 'from': return (row.dataset.user || '') === t.value;
+    case 'has':
+      if (t.value === 'link') return !!row.querySelector('a') || /https?:\/\/|www\./i.test(text);
+      if (t.value === 'emote') return !!row.querySelector('img.emote');
+      if (t.value === 'gif') return !!row.querySelector('img.chat-gif');
+      return false;
+    case 'is':
+      switch (t.value) {
+        case 'first-msg': case 'first': return row.classList.contains('first-msg');
+        case 'returning': return row.classList.contains('returning-chatter');
+        case 'deleted': return row.classList.contains('deleted');
+        case 'highlighted': return row.classList.contains('highlighted-msg');
+        case 'redemption': case 'reward': return type === 'redemption' || row.classList.contains('reward-msg');
+        case 'sub': return type === 'sub' || type === 'giftsub';
+        case 'raid': return type === 'raid';
+        case 'watchstreak': case 'streak': return type === 'watchstreak';
+        case 'system': return type === 'system' || type === 'join' || type === 'part' || !row.dataset.user;
+        case 'mention': return searchIsMention(row, text);
+        default: return false;
+      }
+    default: return text.includes(t.value);
+  }
+}
+
+function searchRowMatches(row) {
+  for (const t of searchState.terms) {
+    if (searchTermMatches(row, t) === t.neg) return false;
+  }
+  return true;
+}
+
+// Re-filters the whole current container (or clears the filter).
+function applySearch() {
+  const container = searchContainer();
+  if (searchState.container && searchState.container !== container) clearSearchIn(searchState.container);
+  searchState.container = container;
+  if (!container) return;
+  if (!searchState.open || searchState.terms.length === 0) {
+    clearSearchIn(container);
+    searchCountEl.textContent = '';
+    return;
+  }
+  let n = 0;
+  for (const row of container.querySelectorAll('.msg')) {
+    const ok = searchRowMatches(row);
+    row.classList.toggle('search-hidden', !ok);
+    if (ok) n++;
+  }
+  searchCountEl.textContent = i18n.t('searchCount', { n });
+  container.scrollTop = container.scrollHeight;
+}
+
+function clearSearchIn(container) {
+  for (const row of container.querySelectorAll('.msg.search-hidden')) row.classList.remove('search-hidden');
+}
+
+// Called for every newly appended row.
+function applySearchToRow(row, container) {
+  if (!searchState.open || searchState.terms.length === 0 || container !== searchState.container) return;
+  const ok = searchRowMatches(row);
+  row.classList.toggle('search-hidden', !ok);
+  if (ok) {
+    const n = container.querySelectorAll('.msg:not(.search-hidden)').length;
+    searchCountEl.textContent = i18n.t('searchCount', { n });
+  }
+}
+
+function openSearch() {
+  searchState.open = true;
+  searchBarEl.classList.remove('hidden');
+  searchInputEl.focus();
+  searchInputEl.select();
+  applySearch();
+}
+
+function closeSearch() {
+  searchState.open = false;
+  searchState.terms = [];
+  searchInputEl.value = '';
+  searchBarEl.classList.add('hidden');
+  if (searchState.container) clearSearchIn(searchState.container);
+  searchCountEl.textContent = '';
+}
+
+searchInputEl.addEventListener('input', () => {
+  clearTimeout(searchState.timer);
+  searchState.timer = setTimeout(() => {
+    searchState.terms = parseSearchQuery(searchInputEl.value);
+    applySearch();
+  }, SEARCH_DEBOUNCE_MS);
+});
+searchInputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSearch(); }
+});
+searchCloseEl.addEventListener('click', closeSearch);
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+    e.preventDefault();
+    openSearch();
+  }
+});
+
+// chathub: per-channel views; the bar floats over the active one.
+chatArea.appendChild(searchBarEl);
+function searchContainer() {
+  const st = activeChannel && channels.get(activeChannel);
+  return st ? st.chatViewEl : null;
+}
+function searchIsMention(row) { return row.classList.contains('highlight'); }
+
 // === Tab hover preview ===
 // Hovering a tab shows a card with the stream thumbnail, title, game,
 // viewers and uptime plus an "Open in browser" button. Data comes from
@@ -839,6 +988,7 @@ async function renderMessage(msg) {
   const ts = new Date(msg.timestamp || Date.now());
   const tsStr = String(ts.getHours()).padStart(2, '0') + ':' + String(ts.getMinutes()).padStart(2, '0');
   const div = el('div', { class: msg.historical ? 'msg historical' : 'msg' });
+  div.dataset.type = msg.type || 'chat'; // used by chat search (is:sub, is:system, …)
   div.appendChild(el('span', { class: 'ts' }, tsStr));
 
   const type = msg.type || 'chat';
@@ -1055,6 +1205,7 @@ function appendAndScroll(state, div) {
   attachScrollFollow(state.chatViewEl);
   const following = isFollowingBottom(state.chatViewEl);
   state.chatViewEl.appendChild(div);
+  applySearchToRow(div, state.chatViewEl);
   while (state.chatViewEl.childElementCount > MAX_MESSAGES_PER_CHANNEL) {
     state.chatViewEl.removeChild(state.chatViewEl.firstChild);
   }

@@ -1,3 +1,24 @@
+2026-11-15 20:41 - Chat search with Ctrl+F in both apps (unreleased, next
+  version).
+
+  - Ctrl+F (Cmd+F on macOS) opens a search bar above the chat
+    (StreamerChat) / floating over the active tab (ChatHub). Matching
+    rows stay visible, the rest is hidden; the match count is shown;
+    Esc or ✕ restores the chat. Messages arriving while the search is
+    open are filtered as they come in. ChatHub searches only the active
+    tab and re-applies on tab switch.
+  - Syntax: free text, from:<user>, has:link|emote|gif,
+    is:first-msg|returning|deleted|highlighted|redemption|sub|raid|
+    mention|watchstreak|system; all terms must match; "!" negates
+    (e.g. !from:nightbot). Rows carry data-type for this.
+  - ChatHub i18n gained onLocaleChange (like StreamerChat) so
+    JS-built texts re-render on a language switch. en/de strings.
+  - Verified in a browser against the real dist/ files with a stubbed
+    Wails runtime: every filter returns the expected rows, no JS
+    errors; the existing markers (first message, watch streak,
+    redemption, reward text, highlighted, GIF, deleted) render; ChatHub
+    live notification, taskbar flash call and tab preview work.
+
 2026-11-15 20:38 - ChatHub: live notifications (unreleased, next version).
 
   - When a watched channel switches from offline to live (Twitch or
