@@ -1,3 +1,6 @@
+2026-11-15 21:07 - v0.7.1 (stable): RELEASE — ChatHub reply button fix (see the
+  entry below).
+
 2026-11-15 21:07 - ChatHub: reply button never appeared (unreleased fix).
 
   - ChatHub's chat payload had no "platform" field (StreamerChat's did),
