@@ -1,3 +1,19 @@
+2026-11-15 20:38 - ChatHub: live notifications (unreleased, next version).
+
+  - When a watched channel switches from offline to live (Twitch or
+    YouTube), a card appears bottom-right: "#channel is live" with the
+    stream title / game (from GetTabPreview) and buttons "Go to tab" and
+    "Open in browser". Auto-closes after 20s, max 4 stacked. The status
+    seen right after startup never triggers a card (only a real
+    offline -> live switch does).
+  - While ChatHub is in the background the Windows taskbar button
+    flashes until the window is focused: new platform.FlashTaskbar
+    (user32 FindWindowW + FlashWindowEx, FLASHW_TRAY|FLASHW_TIMERNOFG);
+    no-op on other OSes. Bound as App.FlashTaskbar.
+  - Settings → General: "Notify me when a channel goes live" (on by
+    default; stored as mute_live_notifications so the zero value keeps
+    it on). en/de strings.
+
 2026-11-15 16:55 - v0.6.7 (stable): RELEASE — ChatHub tab hover preview + open
   in default browser (see the entry below).
 

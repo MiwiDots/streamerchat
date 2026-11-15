@@ -48,6 +48,7 @@ const settingsModalBg = document.getElementById('settingsModalBg');
 const highlightInput = document.getElementById('highlightInput');
 const soundSelect = document.getElementById('soundSelect');
 const onlyLiveCheckbox = document.getElementById('onlyLiveCheckbox');
+const liveNotifyCheckbox = document.getElementById('liveNotifyCheckbox');
 const autostartRow = document.getElementById('autostartRow');
 const autostartCheckbox = document.getElementById('autostartCheckbox');
 const localeSelect = document.getElementById('localeSelect');
@@ -584,6 +585,59 @@ function setLiveStatus(channel, live) {
       playBeep();
     }
   }
+  // Notification only on a real offline -> live switch (prev === false).
+  // The first status after startup (prev undefined) is not a "went live"
+  // event — opening the app with 20 live channels must not show 20 cards.
+  if (live && prev === false && liveNotificationsEnabled) {
+    showLiveNotification(channel);
+  }
+}
+
+// === Live notifications ===
+// A card bottom-right when a watched channel goes live, with "Go to tab"
+// and "Open in browser". While ChatHub is in the background the taskbar
+// button also flashes (Windows). Title/game are filled in from
+// GetTabPreview once it answers.
+const LIVE_NOTIFY_DISMISS_MS = 20000; // auto-close
+const LIVE_NOTIFY_MAX = 4;            // older cards are dropped beyond this
+let liveNotificationsEnabled = true;
+const liveNotifyStackEl = el('div', { class: 'live-notify-stack' });
+document.body.appendChild(liveNotifyStackEl);
+
+function showLiveNotification(channel) {
+  const meta = parseChannelKey(channel);
+  const name = (meta.platform === 'youtube' ? '' : '#') + meta.displayName;
+  const detailEl = el('div', { class: 'ln-detail' }, '');
+  const close = () => { clearTimeout(timer); card.remove(); };
+  const goBtn = el('button', { class: 'btn btn-primary' }, i18n.t('goToTab'));
+  goBtn.addEventListener('click', () => {
+    if (channels.has(channel)) switchToChannel(channel);
+    close();
+  });
+  const openBtn = el('button', { class: 'btn' }, '↗ ' + i18n.t('openInBrowser'));
+  openBtn.addEventListener('click', () => { window.go.main.App.OpenChannelInBrowser(channel); close(); });
+  const xBtn = el('span', { class: 'ln-close', title: 'Close' }, '✕');
+  xBtn.addEventListener('click', close);
+  const card = el('div', { class: 'live-notify' },
+    el('div', { class: 'ln-head' },
+      el('span', { class: 'ln-dot' }, '●'),
+      el('span', { class: 'ln-title' }, i18n.t('liveNotifyTitle', { channel: name })),
+      xBtn),
+    detailEl,
+    el('div', { class: 'ln-actions' }, goBtn, openBtn));
+  liveNotifyStackEl.appendChild(card);
+  while (liveNotifyStackEl.childElementCount > LIVE_NOTIFY_MAX) {
+    liveNotifyStackEl.removeChild(liveNotifyStackEl.firstChild);
+  }
+  const timer = setTimeout(close, LIVE_NOTIFY_DISMISS_MS);
+  if (!document.hasFocus()) {
+    try { window.go.main.App.FlashTaskbar(); } catch (_) {}
+  }
+  window.go.main.App.GetTabPreview(channel).then((info) => {
+    if (!info || !card.isConnected) return;
+    const parts = [info.title, info.gameName].filter(Boolean);
+    detailEl.textContent = parts.join(' · ');
+  }).catch(() => {});
 }
 
 function applyOnlyLiveFilter() {
@@ -1122,6 +1176,7 @@ async function openSettings() {
   soundSelect.value = soundOnMention;
   if (localeSelect) localeSelect.value = i18n.locale;
   if (onlyLiveCheckbox) onlyLiveCheckbox.checked = onlyShowLive;
+  if (liveNotifyCheckbox) liveNotifyCheckbox.checked = liveNotificationsEnabled;
   if (showTimestampsCheckbox) showTimestampsCheckbox.checked = !document.body.classList.contains('no-ts');
   // Autostart toggle: only show the row on Windows
   try {
@@ -1323,6 +1378,11 @@ function closeSettings() {
     onlyShowLive = newOnlyLive;
     window.go.main.App.SetOnlyShowLive(onlyShowLive);
     applyOnlyLiveFilter();
+  }
+  const newLiveNotify = !liveNotifyCheckbox || liveNotifyCheckbox.checked;
+  if (newLiveNotify !== liveNotificationsEnabled) {
+    liveNotificationsEnabled = newLiveNotify;
+    window.go.main.App.SetLiveNotifications(liveNotificationsEnabled);
   }
   window.go.main.App.SetHighlights(highlights);
 }
@@ -1808,6 +1868,7 @@ function applyState(data) {
   if (!data) return;
   if (data.locale) i18n.setLocale(data.locale);
   if (data.notifSound) soundOnMention = data.notifSound;
+  if (typeof data.liveNotifications === 'boolean') liveNotificationsEnabled = data.liveNotifications;
   applyShowTimestamps(data.showTimestamps !== false);
   if (Array.isArray(data.highlights)) highlights = data.highlights.map(h => h.toLowerCase());
   // Set onlyShowLive BEFORE adding tabs so addChannelTab's initial

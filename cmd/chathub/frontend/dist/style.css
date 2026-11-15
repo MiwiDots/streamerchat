@@ -793,3 +793,38 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
 .tp-actions { display: flex; align-items: center; gap: 8px; }
 .tp-open { white-space: nowrap; flex-shrink: 0; }
 .tp-hint { color: #666; font-size: 11px; }
+
+/* Live notification cards (bottom-right). */
+.live-notify-stack {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 300px;
+  pointer-events: none;            /* only the cards take clicks */
+}
+.live-notify {
+  pointer-events: auto;
+  background: #18181f;
+  border: 1px solid #2c2c3a;
+  border-left: 3px solid #ff4d4d;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #ddd;
+  animation: ln-in 180ms ease-out;
+}
+@keyframes ln-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+.ln-head { display: flex; align-items: center; gap: 6px; }
+.ln-dot { color: #ff4d4d; }
+.ln-title { font-weight: 700; color: #fff; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ln-close { cursor: pointer; color: #777; }
+.ln-close:hover { color: #fff; }
+.ln-detail { color: #9a9ab0; margin: 4px 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ln-detail:empty { display: none; }
+.ln-actions { display: flex; gap: 6px; }
+.ln-actions .btn { white-space: nowrap; }

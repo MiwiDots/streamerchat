@@ -2,6 +2,9 @@
 
 const STRINGS = {
   en: {
+    liveNotifyTitle: '{channel} is live',
+    goToTab: 'Go to tab',
+    liveNotifications: 'Notify me when a channel goes live',
     openInBrowser: 'Open in browser',
     tabPreviewLoading: 'Loading…',
     tabPreviewOffline: 'Offline',
@@ -102,6 +105,9 @@ const STRINGS = {
     fontSizeHint: 'Tip: Ctrl + / Ctrl - / Ctrl 0 also work.',
   },
   de: {
+    liveNotifyTitle: '{channel} ist live',
+    goToTab: 'Zum Tab',
+    liveNotifications: 'Benachrichtigen, wenn ein Channel live geht',
     openInBrowser: 'Im Browser öffnen',
     tabPreviewLoading: 'Lädt…',
     tabPreviewOffline: 'Offline',

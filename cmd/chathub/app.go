@@ -17,6 +17,7 @@ import (
 	"github.com/miwi/streamerchat/internal/applog"
 	"github.com/miwi/streamerchat/internal/chat"
 	"github.com/miwi/streamerchat/internal/fsutil"
+	"github.com/miwi/streamerchat/internal/platform"
 	"github.com/miwi/streamerchat/internal/selfupdate"
 	"github.com/miwi/streamerchat/internal/sevenTV"
 	"github.com/miwi/streamerchat/internal/twitch"
@@ -38,8 +39,11 @@ type HubConfig struct {
 	Highlights   []string `json:"highlights"`
 	Theme        string   `json:"theme"`
 	OnlyShowLive bool     `json:"only_show_live"`
-	Locale       string   `json:"locale"`
-	NotifSound   string   `json:"notif_sound"`
+	// MuteLiveNotifications turns off the "channel went live" notice.
+	// Stored inverted so the zero value keeps notifications ON.
+	MuteLiveNotifications bool   `json:"mute_live_notifications"`
+	Locale                string `json:"locale"`
+	NotifSound            string `json:"notif_sound"`
 	// HideTimestamps stores the inverse so that the zero value (false)
 	// keeps the historic default of "timestamps visible". A simple
 	// ShowTimestamps would silently invert for users who upgrade.
@@ -1342,6 +1346,27 @@ func (a *App) SetOnlyShowLive(only bool) {
 	a.cfg.Save()
 }
 
+// SetLiveNotifications enables/disables the "channel went live" notice.
+func (a *App) SetLiveNotifications(enabled bool) {
+	a.mu.Lock()
+	a.cfg.MuteLiveNotifications = !enabled
+	a.mu.Unlock()
+	a.cfg.Save()
+}
+
+// windowTitle must match options.App.Title in main.go (used to find the
+// window for taskbar flashing).
+const windowTitle = "ChatHub"
+
+// FlashTaskbar flashes ChatHub's taskbar button (Windows) until the window
+// is focused. Called by the frontend for live notifications while the app
+// is in the background. No-op on other platforms.
+func (a *App) FlashTaskbar() {
+	if err := platform.FlashTaskbar(windowTitle); err != nil {
+		log.Printf("[NOTIFY] taskbar flash: %v", err)
+	}
+}
+
 // SetLocale stores the chosen UI locale ("en" or "de"). Frontend reads it
 // back via GetInitialState. Empty or unknown values default to "en".
 func (a *App) SetLocale(locale string) {
@@ -1574,18 +1599,19 @@ func (a *App) GetInitialState() map[string]interface{} {
 	a.mu.Unlock()
 
 	return map[string]interface{}{
-		"channels":       a.cfg.Channels,
-		"highlights":     a.cfg.Highlights,
-		"theme":          a.cfg.Theme,
-		"onlyShowLive":   a.cfg.OnlyShowLive,
-		"loggedIn":       a.cfg.AccessToken != "",
-		"username":       a.cfg.Username,
-		"configPath":     hubConfigPath(),
-		"liveStatus":     liveMap,
-		"locale":         a.cfg.Locale,
-		"notifSound":     a.cfg.NotifSound,
-		"showTimestamps": !a.cfg.HideTimestamps,
-		"fontSize":       a.GetFontSize(),
+		"channels":          a.cfg.Channels,
+		"highlights":        a.cfg.Highlights,
+		"theme":             a.cfg.Theme,
+		"onlyShowLive":      a.cfg.OnlyShowLive,
+		"liveNotifications": !a.cfg.MuteLiveNotifications,
+		"loggedIn":          a.cfg.AccessToken != "",
+		"username":          a.cfg.Username,
+		"configPath":        hubConfigPath(),
+		"liveStatus":        liveMap,
+		"locale":            a.cfg.Locale,
+		"notifSound":        a.cfg.NotifSound,
+		"showTimestamps":    !a.cfg.HideTimestamps,
+		"fontSize":          a.GetFontSize(),
 	}
 }
 
