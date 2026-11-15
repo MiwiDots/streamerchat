@@ -474,7 +474,10 @@ function addReplyContext(div, msg) {
 
 // ↩ button at the end of a Twitch chat message.
 function addReplyButton(div, msg) {
-  if (msg.platform !== 'twitch' || !msg.id || msg.historical) return;
+  // Older payloads / history lines have no platform field: derive it from
+  // the channel key ("yt:@handle" = YouTube, which has no reply threads).
+  const platform = msg.platform || (msg.channel ? parseChannelKey(msg.channel).platform : '');
+  if (platform !== 'twitch' || !msg.id || msg.historical) return;
   const b = el('span', { class: 'reply-btn', title: i18n.t('reply') }, '↩');
   b.addEventListener('click', (e) => {
     e.stopPropagation();

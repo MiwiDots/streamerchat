@@ -842,6 +842,7 @@ func (a *App) chatToMap(channel string, msg chat.Message) map[string]interface{}
 
 	return map[string]interface{}{
 		"id":               msg.ID,
+		"platform":         string(msg.Platform),
 		"channel":          channel,
 		"type":             typeStr,
 		"timestamp":        ts.UnixMilli(),

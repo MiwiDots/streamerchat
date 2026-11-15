@@ -151,3 +151,17 @@ func TestParseTimeoutPresets(t *testing.T) {
 		}
 	}
 }
+
+// The frontend keys features off these payload fields; a missing key
+// fails silently in the UI.
+func TestChatPayloadHasFieldsTheFrontendNeeds(t *testing.T) {
+	a := newTestApp(t)
+	m := a.chatToMap(chat.Message{ID: "m1", Platform: chat.PlatformTwitch, Type: chat.MessageTypeChat, Channel: "miwitv", Username: "alice"})
+	for _, k := range []string{"id", "platform", "channel", "type", "username", "text",
+		"replyParentId", "replyParentUser", "replyParentBody", "firstMsg", "returningChatter",
+		"highlighted", "rewardId", "rewardTitle", "rewardCost", "gifs", "streak"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("payload is missing %q", k)
+		}
+	}
+}

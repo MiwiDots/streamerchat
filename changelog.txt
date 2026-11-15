@@ -1,3 +1,16 @@
+2026-11-15 21:07 - ChatHub: reply button never appeared (unreleased fix).
+
+  - ChatHub's chat payload had no "platform" field (StreamerChat's did),
+    and the ↩ reply button is only added for platform === "twitch", so
+    replying was impossible in ChatHub. Added "platform" to ChatHub's
+    chatToMap; the frontend additionally derives the platform from the
+    channel key when the field is missing (history lines saved before
+    this fix), so YouTube tabs still get no button.
+  - New Go tests in both apps pin the payload fields the frontend relies
+    on (id, platform, channel, reply/marker fields, …) — a missing key
+    fails silently in the UI otherwise. Verified in the browser harness
+    with the exact pre-fix payload shape.
+
 2026-11-15 21:00 - v0.7.0 (stable): RELEASE — live notifications (ChatHub),
   chat search, reply threads, AutoMod queue and extended moderation /
   broadcaster tools (StreamerChat). See the entries below. Polls,
