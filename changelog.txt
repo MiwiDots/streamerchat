@@ -1,3 +1,6 @@
+2026-11-15 16:55 - v0.6.7 (stable): RELEASE — ChatHub tab hover preview + open
+  in default browser (see the entry below).
+
 2026-11-15 16:54 - ChatHub: tab hover preview + open stream in the default
   browser (unreleased, next version).
 
