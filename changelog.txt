@@ -1,3 +1,27 @@
+2026-11-15 16:54 - ChatHub: tab hover preview + open stream in the default
+  browser (unreleased, next version).
+
+  - Hovering a tab (350ms delay) shows a card with the live stream's
+    thumbnail, title, game, viewer count and uptime, or "Offline", plus
+    an "Open in browser" button. Middle-clicking a tab opens it
+    directly. Cached 60s per tab; stale answers ignored; hidden while
+    dragging tabs; positioned under the tab and clamped to the window.
+  - Backend: GetTabPreview(channel) — Twitch via Helix Get Streams
+    (thumbnail_url template filled to 440x248 + per-minute cache
+    buster), YouTube from the live detector (new ytLive map: video id,
+    title, detection time) + i.ytimg.com/vi/<id>/mqdefault_live.jpg.
+    OpenChannelInBrowser(channel) builds the URL itself (twitch.tv,
+    YouTube watch URL when live, else the channel page) and opens it in
+    the system default browser — the frontend never passes a URL.
+    Verified live: Twitch 440x248 previews and YouTube mqdefault_live
+    thumbnails are served for live streams.
+  - SECURITY: OpenURL used to hand ANY URL to the OS; on Windows that
+    also launches file:, ms-settings: or other protocol handlers, while
+    the webview renders untrusted chat. Now http(s) only (isWebURL).
+  - fetchStreamInfo URL-escapes the login.
+  - en/de strings; tests for channel URLs, the OpenURL guard and the
+    YouTube preview.
+
 2026-11-15 01:59 - v0.6.6 (stable): RELEASE — GIFs in Twitch chat are shown as
   images (see the entry below).
 

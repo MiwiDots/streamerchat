@@ -2,6 +2,11 @@
 
 const STRINGS = {
   en: {
+    openInBrowser: 'Open in browser',
+    tabPreviewLoading: 'Loading…',
+    tabPreviewOffline: 'Offline',
+    tabPreviewError: 'Stream info unavailable',
+    tabPreviewMiddleClick: 'or middle-click the tab',
     firstMessage: 'First message in this channel',
     returningChatter: 'Returning chatter',
     watchStreak: 'Watch streak: {n} streams in a row',
@@ -97,6 +102,11 @@ const STRINGS = {
     fontSizeHint: 'Tip: Ctrl + / Ctrl - / Ctrl 0 also work.',
   },
   de: {
+    openInBrowser: 'Im Browser öffnen',
+    tabPreviewLoading: 'Lädt…',
+    tabPreviewOffline: 'Offline',
+    tabPreviewError: 'Stream-Infos nicht verfügbar',
+    tabPreviewMiddleClick: 'oder Mittelklick auf den Tab',
     firstMessage: 'Erste Nachricht im Channel',
     returningChatter: 'Wiederkehrender Zuschauer',
     watchStreak: 'Watch-Streak: {n} Streams in Folge',

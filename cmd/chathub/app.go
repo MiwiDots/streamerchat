@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -214,6 +216,10 @@ type App struct {
 	// by the same tab key ("yt:<handle>") emitMessage uses.
 	ytClients map[string]*youtube.InnerTubeClient
 
+	// ytLive: the live stream currently detected per YouTube tab key
+	// ("yt:@handle") — feeds the tab hover preview. Guarded by mu.
+	ytLive map[string]ytLiveInfo
+
 	// 7TV cosmetics: a single WebSocket connection subscribes to
 	// entitlement.* events for every Twitch channel we know the
 	// broadcaster id of, and pushes paint/badge updates down to the
@@ -234,6 +240,7 @@ func NewApp() *App {
 		liveStatus:          make(map[string]bool),
 		ytWatchers:          make(map[string]context.CancelFunc),
 		ytClients:           make(map[string]*youtube.InnerTubeClient),
+		ytLive:              make(map[string]ytLiveInfo),
 		history:             NewHistoryWriter(),
 	}
 }
@@ -577,7 +584,7 @@ func (a *App) fetchStreamInfo(channel string) map[string]interface{} {
 	if a.cfg.AccessToken == "" || a.cfg.ClientID == "" {
 		return map[string]interface{}{"live": false}
 	}
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.twitch.tv/helix/streams?user_login=%s", channel), nil)
+	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/streams?user_login="+url.QueryEscape(channel), nil)
 	if err != nil {
 		log.Printf("[LIVE] %s: request build error: %v", channel, err)
 		return nil
@@ -1078,6 +1085,9 @@ func (a *App) startYouTubeWatcher(handle string) {
 		handle,
 		func(info youtube.LiveStreamInfo) {
 			log.Printf("[YT] %s live: %s (video=%s)", handle, info.Title, info.VideoID)
+			a.mu.Lock()
+			a.ytLive[tabKey] = ytLiveInfo{VideoID: info.VideoID, Title: info.Title, Since: time.Now()}
+			a.mu.Unlock()
 			emitLive(true)
 			a.emitMessage(tabKey, chat.Message{
 				Platform:  chat.PlatformYouTube,
@@ -1131,6 +1141,9 @@ func (a *App) startYouTubeWatcher(handle string) {
 		},
 		func() {
 			log.Printf("[YT] %s went offline", handle)
+			a.mu.Lock()
+			delete(a.ytLive, tabKey)
+			a.mu.Unlock()
 			emitLive(false)
 			a.mu.Lock()
 			if chatCancel != nil {
@@ -1155,6 +1168,7 @@ func (a *App) stopYouTubeWatcher(handle string) {
 	a.mu.Lock()
 	cancel := a.ytWatchers[handle]
 	delete(a.ytWatchers, handle)
+	delete(a.ytLive, "yt:"+handle)
 	a.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -1447,8 +1461,106 @@ func (a *App) StartLogin() map[string]interface{} {
 }
 
 // OpenURL opens a URL in the user's default browser.
-func (a *App) OpenURL(url string) {
-	runtime.BrowserOpenURL(a.ctx, url)
+//
+// Only http(s) URLs are opened. The webview renders untrusted chat
+// content, and on Windows the shell would otherwise also launch file:,
+// ms-settings: or any registered protocol handler.
+func (a *App) OpenURL(rawURL string) {
+	if !isWebURL(rawURL) {
+		log.Printf("[OPEN] refused non-http(s) URL %q", rawURL)
+		return
+	}
+	runtime.BrowserOpenURL(a.ctx, rawURL)
+}
+
+// isWebURL reports whether s is an absolute http(s) URL with a host.
+func isWebURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != ""
+}
+
+// ytLiveInfo is the live stream detected for a YouTube tab.
+type ytLiveInfo struct {
+	VideoID string
+	Title   string
+	Since   time.Time // when we detected it (YouTube's start time isn't scraped)
+}
+
+// Tab preview thumbnail size (16:9, matches the popover width).
+const (
+	previewThumbW = 440
+	previewThumbH = 248
+)
+
+// channelURL returns the public web URL for a tab: the Twitch channel, the
+// running YouTube stream if one is live, else the YouTube channel page.
+func (a *App) channelURL(channel string) string {
+	ref := parseChannelRef(channel)
+	if ref.Platform != "youtube" {
+		return "https://www.twitch.tv/" + url.PathEscape(ref.Name)
+	}
+	a.mu.Lock()
+	live, ok := a.ytLive[ref.String()]
+	a.mu.Unlock()
+	if ok && live.VideoID != "" {
+		return "https://www.youtube.com/watch?v=" + url.QueryEscape(live.VideoID)
+	}
+	if strings.HasPrefix(ref.Name, "UC") {
+		return "https://www.youtube.com/channel/" + url.PathEscape(ref.Name)
+	}
+	return "https://www.youtube.com/" + url.PathEscape(ref.Name)
+}
+
+// GetTabPreview returns what the tab hover card shows: live state, title,
+// game, viewers, start time, a stream thumbnail and the channel URL.
+// Twitch data comes from Helix Get Streams (its thumbnail_url template is
+// filled in and gets a per-minute cache-buster so the frame stays fresh);
+// YouTube from the live detector plus YouTube's live thumbnail.
+func (a *App) GetTabPreview(channel string) map[string]interface{} {
+	ref := parseChannelRef(channel)
+	out := map[string]interface{}{
+		"platform": ref.Platform,
+		"live":     false,
+		"url":      a.channelURL(channel),
+	}
+	cacheBust := strconv.FormatInt(time.Now().Unix()/60, 10)
+	if ref.Platform == "youtube" {
+		a.mu.Lock()
+		live, ok := a.ytLive[ref.String()]
+		a.mu.Unlock()
+		if ok && live.VideoID != "" {
+			out["live"] = true
+			out["title"] = live.Title
+			out["startedAt"] = live.Since.UTC().Format(time.RFC3339)
+			out["thumbnailUrl"] = "https://i.ytimg.com/vi/" + url.PathEscape(live.VideoID) + "/mqdefault_live.jpg?t=" + cacheBust
+		}
+		return out
+	}
+	info := a.fetchStreamInfo(ref.Name)
+	if info == nil {
+		out["error"] = "could not load stream info"
+		return out
+	}
+	for k, v := range info {
+		out[k] = v
+	}
+	if thumb, _ := info["thumbnailUrl"].(string); thumb != "" {
+		thumb = strings.NewReplacer("{width}", strconv.Itoa(previewThumbW), "{height}", strconv.Itoa(previewThumbH)).Replace(thumb)
+		out["thumbnailUrl"] = thumb + "?t=" + cacheBust
+	}
+	return out
+}
+
+// OpenChannelInBrowser opens the tab's stream / channel in the system's
+// default browser. The URL is built here from the channel key, so the
+// frontend never passes a URL.
+func (a *App) OpenChannelInBrowser(channel string) {
+	if channel == "" {
+		return
+	}
+	u := a.channelURL(channel)
+	log.Printf("[OPEN] %s -> %s", channel, u)
+	runtime.BrowserOpenURL(a.ctx, u)
 }
 
 // GetInitialState returns the initial app state for the frontend to render.

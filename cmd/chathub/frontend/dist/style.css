@@ -351,7 +351,7 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
 }
 
 /* Platform pill on tabs */
-.tab .platform-pill {
+.tab .platform-pill, .tab-preview .platform-pill {
   font-size: 9px;
   font-weight: bold;
   padding: 0 4px;
@@ -359,8 +359,8 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
   letter-spacing: 0.5px;
   margin-right: 2px;
 }
-.tab .platform-pill.tw { background: #9146ff; color: #fff; }
-.tab .platform-pill.yt { background: #ff0000; color: #fff; }
+.tab .platform-pill.tw, .tab-preview .platform-pill.tw { background: #9146ff; color: #fff; }
+.tab .platform-pill.yt, .tab-preview .platform-pill.yt { background: #ff0000; color: #fff; }
 
 .mention-popup {
   position: fixed;
@@ -751,3 +751,45 @@ body.no-ts .ts, body.no-ts .uc-msg-ts { display: none; }
   border-radius: 4px;
   margin: 2px 0;
 }
+
+/* Tab hover preview card (stream thumbnail + info + open in browser). */
+.tab-preview {
+  position: fixed;
+  z-index: 1000;
+  width: 320px;
+  background: #18181f;
+  border: 1px solid #2c2c3a;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  padding: 10px;
+  font-size: 12px;
+  color: #ddd;
+}
+.tab-preview.hidden { display: none; }
+.tp-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.tp-name { font-weight: 700; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-live { margin-left: auto; color: #ff4d4d; font-weight: 700; font-size: 11px; }
+.tp-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;          /* reserve the space before the image loads */
+  background: #0d0d14;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.tp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tp-title {
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;         /* long titles: max 2 lines */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.tp-facts { color: #9a9ab0; margin-bottom: 8px; }
+.tp-status { color: #9a9ab0; padding: 6px 0 10px; }
+.tp-actions { display: flex; align-items: center; gap: 8px; }
+.tp-open { white-space: nowrap; flex-shrink: 0; }
+.tp-hint { color: #666; font-size: 11px; }

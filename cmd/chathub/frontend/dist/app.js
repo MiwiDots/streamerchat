@@ -232,6 +232,7 @@ function persistTabOrder() {
 
 function setupTabDrag(tab, channel) {
   tab.addEventListener('dragstart', (e) => {
+    hideTabPreview(true);
     draggingChannel = channel;
     tab.classList.add('dragging');
     // Required for Firefox to start the drag
@@ -287,6 +288,104 @@ function parseChannelKey(key) {
   return { platform: 'twitch', displayName: key };
 }
 
+// === Tab hover preview ===
+// Hovering a tab shows a card with the stream thumbnail, title, game,
+// viewers and uptime plus an "Open in browser" button. Data comes from
+// App.GetTabPreview (cached briefly per tab); the URL to open is built by
+// the backend (App.OpenChannelInBrowser), the frontend never passes one.
+const TAB_PREVIEW_SHOW_DELAY_MS = 350;  // avoid flashing while moving across tabs
+const TAB_PREVIEW_HIDE_DELAY_MS = 200;  // time to move the mouse into the card
+const TAB_PREVIEW_CACHE_MS = 60000;     // Twitch refreshes thumbnails every few minutes
+const tabPreviewCache = new Map();      // channel -> { at, data }
+const tabPreview = { channel: null, showTimer: null, hideTimer: null, req: 0 };
+const tabPreviewEl = el('div', { class: 'tab-preview hidden' });
+document.body.appendChild(tabPreviewEl);
+tabPreviewEl.addEventListener('mouseenter', () => clearTimeout(tabPreview.hideTimer));
+tabPreviewEl.addEventListener('mouseleave', () => scheduleHideTabPreview());
+
+function attachTabPreview(tab, channel) {
+  tab.addEventListener('mouseenter', () => {
+    clearTimeout(tabPreview.hideTimer);
+    clearTimeout(tabPreview.showTimer);
+    if (draggingChannel) return;
+    tabPreview.showTimer = setTimeout(() => showTabPreview(tab, channel), TAB_PREVIEW_SHOW_DELAY_MS);
+  });
+  tab.addEventListener('mouseleave', () => {
+    clearTimeout(tabPreview.showTimer);
+    scheduleHideTabPreview();
+  });
+}
+
+function scheduleHideTabPreview() {
+  clearTimeout(tabPreview.hideTimer);
+  tabPreview.hideTimer = setTimeout(() => hideTabPreview(false), TAB_PREVIEW_HIDE_DELAY_MS);
+}
+
+function hideTabPreview(immediate) {
+  clearTimeout(tabPreview.showTimer);
+  clearTimeout(tabPreview.hideTimer);
+  if (immediate || !tabPreviewEl.matches(':hover')) {
+    tabPreviewEl.classList.add('hidden');
+    tabPreview.channel = null;
+  }
+}
+
+async function showTabPreview(tab, channel) {
+  const req = ++tabPreview.req;
+  tabPreview.channel = channel;
+  const cached = tabPreviewCache.get(channel);
+  if (cached && Date.now() - cached.at < TAB_PREVIEW_CACHE_MS) {
+    renderTabPreview(tab, channel, cached.data);
+    return;
+  }
+  renderTabPreview(tab, channel, null); // loading state right away
+  let data = null;
+  try { data = await window.go.main.App.GetTabPreview(channel); } catch (e) { data = { error: String(e) }; }
+  if (data && !data.error) tabPreviewCache.set(channel, { at: Date.now(), data });
+  // Ignore stale answers (mouse already on another tab / card closed).
+  if (req !== tabPreview.req || tabPreview.channel !== channel) return;
+  renderTabPreview(tab, channel, data);
+}
+
+function renderTabPreview(tab, channel, data) {
+  const meta = parseChannelKey(channel);
+  const head = el('div', { class: 'tp-head' },
+    el('span', { class: 'platform-pill ' + (meta.platform === 'youtube' ? 'yt' : 'tw') }, meta.platform === 'youtube' ? 'YT' : 'TW'),
+    el('span', { class: 'tp-name' }, (meta.platform === 'youtube' ? '' : '#') + meta.displayName));
+  const body = [];
+  if (!data) {
+    body.push(el('div', { class: 'tp-status' }, i18n.t('tabPreviewLoading')));
+  } else if (data.live) {
+    head.appendChild(el('span', { class: 'tp-live' }, '● LIVE'));
+    if (data.thumbnailUrl) {
+      body.push(el('div', { class: 'tp-thumb' }, el('img', { src: data.thumbnailUrl, alt: '' })));
+    }
+    if (data.title) body.push(el('div', { class: 'tp-title', title: data.title }, data.title));
+    const facts = [];
+    if (data.gameName) facts.push('🎮 ' + data.gameName);
+    if (data.viewerCount != null && data.platform !== 'youtube') facts.push('👁 ' + Number(data.viewerCount).toLocaleString());
+    if (data.startedAt) facts.push('⏱ ' + formatUptime(data.startedAt));
+    if (facts.length) body.push(el('div', { class: 'tp-facts' }, facts.join('  ·  ')));
+  } else {
+    body.push(el('div', { class: 'tp-status' }, data.error ? i18n.t('tabPreviewError') : i18n.t('tabPreviewOffline')));
+  }
+  const openBtn = el('button', { class: 'btn btn-primary tp-open' }, '↗ ' + i18n.t('openInBrowser'));
+  openBtn.addEventListener('click', () => {
+    window.go.main.App.OpenChannelInBrowser(channel);
+    hideTabPreview(true);
+  });
+  body.push(el('div', { class: 'tp-actions' }, openBtn, el('span', { class: 'tp-hint' }, i18n.t('tabPreviewMiddleClick'))));
+  tabPreviewEl.replaceChildren(head, ...body);
+
+  // Position under the tab, clamped to the window.
+  tabPreviewEl.classList.remove('hidden');
+  const r = tab.getBoundingClientRect();
+  const w = tabPreviewEl.offsetWidth;
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+  tabPreviewEl.style.left = left + 'px';
+  tabPreviewEl.style.top = (r.bottom + 6) + 'px';
+}
+
 function addChannelTab(channel) {
   if (channels.has(channel)) return;
   const meta = parseChannelKey(channel);
@@ -311,6 +410,14 @@ function addChannelTab(channel) {
   tab.appendChild(unreadEl);
   tab.appendChild(closeBtn);
   tab.onclick = () => switchToChannel(channel);
+  // Middle click: open the stream / channel in the default browser.
+  tab.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    window.go.main.App.OpenChannelInBrowser(channel);
+  });
+  tab.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll cursor
+  attachTabPreview(tab, channel);
   setupTabDrag(tab, channel);
 
   tabBar.insertBefore(tab, tabAddBtn);
@@ -340,6 +447,8 @@ function addChannelTab(channel) {
 function removeChannelTab(channel) {
   const state = channels.get(channel);
   if (!state) return;
+  if (tabPreview.channel === channel) hideTabPreview(true);
+  tabPreviewCache.delete(channel);
   state.tabEl.remove();
   state.chatViewEl.remove();
   channels.delete(channel);
