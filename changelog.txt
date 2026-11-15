@@ -1,3 +1,8 @@
+2026-11-15 21:00 - v0.7.0 (stable): RELEASE — live notifications (ChatHub),
+  chat search, reply threads, AutoMod queue and extended moderation /
+  broadcaster tools (StreamerChat). See the entries below. Polls,
+  predictions, clips and shield mode need one re-login (new scopes).
+
 2026-11-15 20:54 - StreamerChat: extended moderation & broadcaster tools
   (unreleased, next version).
 
