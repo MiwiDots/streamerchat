@@ -136,3 +136,18 @@ func TestRedemptionMessage(t *testing.T) {
 		t.Fatal("typed text must not be repeated in the redemption line (it arrives as its own chat message)")
 	}
 }
+
+func TestParseTimeoutPresets(t *testing.T) {
+	got, err := parseTimeoutPresets("1d, 30s 10m;1h, 10m")
+	if err != nil || fmt.Sprint(got) != "[30 600 3600 86400]" {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if got, err := parseTimeoutPresets("  "); err != nil || got != nil {
+		t.Fatalf("empty must restore defaults: %v %v", got, err)
+	}
+	for _, bad := range []string{"0", "15d", "abc", "1s,2s,3s,4s,5s,6s,7s,8s,9s"} {
+		if _, err := parseTimeoutPresets(bad); err == nil {
+			t.Errorf("%q: want error", bad)
+		}
+	}
+}

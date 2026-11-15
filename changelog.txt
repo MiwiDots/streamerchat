@@ -1,3 +1,38 @@
+2026-11-15 20:54 - StreamerChat: extended moderation & broadcaster tools
+  (unreleased, next version).
+
+  - User card: timeout buttons are configurable (Settings → Twitch →
+    Moderation, e.g. "30s, 10m, 1h, 1d, 7d", max 8, each 1s..14d,
+    default 1m/10m/1h/1d) — new UIConfig.TimeoutPresets,
+    GetTimeoutPresets / SetTimeoutPresets, ModAction "timeout:<secs>".
+    New "⚠ Warn" button with an inline reason field (Twitch warning the
+    user must acknowledge; App.WarnUser). Card buttons use one
+    delegated click handler.
+  - New slash commands: /warn <user> <reason>, /banid <id> [reason],
+    /shield, /shieldoff, /poll <question> | <a> | <b> [| …] [| 2m],
+    /endpoll, /prediction <question> | <a> | <b> [| …] [| 2m],
+    /lockprediction, /cancelprediction, /resolveprediction <n>, /clip
+    (returns the edit URL), /marker [description], /settitle <title>,
+    /setgame <category> (exact name, else best search match). Twitch's
+    limits (lengths, option counts, durations) are checked before the
+    API call with precise messages. A trailing "| 2m" sets the
+    duration only if it has a unit, so numeric options like "| 2021"
+    stay options. /help and Tab completion list them.
+  - internal/twitch/helix_modtools.go: WarnUser, SetShieldMode (raw PUT
+    — not in the helix library), CreatePoll / EndActivePoll,
+    CreatePrediction / Lock / Cancel / Resolve, CreateClip,
+    CreateMarker, SetTitle, SetCategory; shared rawJSON helper (also
+    used by the AutoMod approve/deny call). A 401 "missing scope"
+    becomes ErrMissingScope with a "log out and in again" hint.
+  - New OAuth scopes: channel:manage:polls, channel:manage:predictions,
+    clips:edit, moderator:manage:shield_mode → polls, predictions,
+    clips and shield mode need ONE re-login. Warnings, markers, title
+    and category work with the existing login.
+  - en/de strings. Verified in the browser harness (preset buttons,
+    timeout action string, warn flow, settings save, Tab completion, no
+    JS errors); Go tests for choice parsing, limits, pre-API
+    validation and preset parsing.
+
 2026-11-15 20:48 - StreamerChat: AutoMod queue (unreleased, next version).
 
   - Messages AutoMod holds for review appear as an orange card in chat

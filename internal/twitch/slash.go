@@ -264,8 +264,14 @@ func HandleSlashCommand(h *HelixClient, line string) (status string, handled boo
 		return "Raid cancelled.", true
 	}
 
+	if status, ok := handleBroadcasterCommand(h, cmd, args, line); ok {
+		return status, true
+	}
 	return fmt.Sprintf("Unknown command: /%s — try /help", cmd), true
 }
+
+// ParseDuration parses "90", "90s", "5m", "2h", "1d" into seconds.
+func ParseDuration(s string) (int, error) { return parseDuration(strings.TrimSpace(s)) }
 
 // parseDuration accepts plain seconds ("60"), Twitch-style suffix
 // notation ("5m", "1h", "1d") or anything strconv can take.
@@ -310,5 +316,12 @@ func helpText() string {
 		"/announce <text>  (/announceblue /announcegreen /announceorange /announcepurple)",
 		"/raid <channel>, /unraid",
 		"/shoutout <user>  (/so)",
+		"/warn <user> <reason>, /banid <user-id> [reason]",
+		"/shield, /shieldoff",
+		"/poll <question> | <option> | <option> [| …] [| 2m], /endpoll",
+		"/prediction <question> | <outcome> | <outcome> [| …] [| 2m]",
+		"/lockprediction, /cancelprediction, /resolveprediction <outcome number>",
+		"/clip, /marker [description]",
+		"/settitle <title>, /setgame <category>",
 	}, "\n")
 }

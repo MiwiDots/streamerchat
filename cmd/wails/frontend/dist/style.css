@@ -795,3 +795,10 @@ body.no-ts .ts { display: none; }
 .automod-result { color: #b5b5c5; font-weight: 600; }
 .automod-empty { color: #777; font-size: 12px; padding: 10px 4px; }
 .automod-empty.hidden { display: none; }
+
+/* User-card moderation extras. */
+.timeout-btns { display: contents; }   /* buttons flow inline with the others */
+.btn-warn { background: #6b4a12; border-color: #8a5f16; color: #ffd38a; }
+.warn-row { display: flex; gap: 6px; margin: 6px 0; }
+.warn-row.hidden { display: none; }
+.warn-row .modal-input { flex: 1; min-width: 0; }

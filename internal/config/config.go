@@ -103,7 +103,16 @@ type UIConfig struct {
 	UpdateChannel    string `json:"update_channel"`    // "stable" (default), "beta", or "alpha"
 	FontSize         int    `json:"font_size"`         // chat font size in px (10–28), 0 = use default 14
 	Locale           string `json:"locale"`            // "en" or "de", empty = "en"
+	// TimeoutPresets are the timeout buttons in the user card, in
+	// seconds. nil/empty = DefaultTimeoutPresets.
+	TimeoutPresets []int `json:"timeout_presets,omitempty"`
 }
+
+// DefaultTimeoutPresets: 1 minute, 10 minutes, 1 hour, 1 day.
+var DefaultTimeoutPresets = []int{60, 600, 3600, 86400}
+
+// MaxTimeoutPresets caps the number of timeout buttons in the user card.
+const MaxTimeoutPresets = 8
 
 // DefaultConfig returns a config with sensible defaults.
 func DefaultConfig() *Config {

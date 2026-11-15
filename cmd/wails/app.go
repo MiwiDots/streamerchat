@@ -8,6 +8,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1966,10 +1968,83 @@ func (a *App) ModAction(action, userID, msgID string) string {
 	case "unban":
 		err = h.UnbanUser(userID)
 	default:
+		// Configurable timeout buttons: "timeout:<seconds>". The range is
+		// validated by TimeoutUser (1s..14d).
+		if secs, ok := strings.CutPrefix(action, "timeout:"); ok {
+			n, perr := strconv.Atoi(secs)
+			if perr != nil {
+				return "invalid timeout: " + secs
+			}
+			err = h.TimeoutUser(userID, n, "Timed out")
+			break
+		}
 		return "unknown action: " + action
 	}
 	if err != nil {
 		return err.Error()
 	}
 	return ""
+}
+
+// WarnUser issues a Twitch warning (the user must acknowledge it before
+// chatting again). reason is required.
+func (a *App) WarnUser(userID, reason string) string {
+	h := a.helix()
+	if h == nil {
+		return "no helix client"
+	}
+	if err := h.WarnUser(userID, reason); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// GetTimeoutPresets returns the user-card timeout buttons in seconds.
+func (a *App) GetTimeoutPresets() []int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.cfg.UI.TimeoutPresets) == 0 {
+		return append([]int(nil), config.DefaultTimeoutPresets...)
+	}
+	return append([]int(nil), a.cfg.UI.TimeoutPresets...)
+}
+
+// SetTimeoutPresets parses a list like "30s, 1m, 10m, 1h, 1d" and stores
+// it. Empty input restores the defaults. Returns "" or an error message.
+func (a *App) SetTimeoutPresets(spec string) string {
+	presets, err := parseTimeoutPresets(spec)
+	if err != nil {
+		return err.Error()
+	}
+	a.mu.Lock()
+	a.cfg.UI.TimeoutPresets = presets
+	a.cfg.Save()
+	a.mu.Unlock()
+	return ""
+}
+
+// parseTimeoutPresets validates a comma/space separated duration list:
+// each 1s..14d, max config.MaxTimeoutPresets, duplicates dropped, sorted.
+func parseTimeoutPresets(spec string) ([]int, error) {
+	fields := strings.FieldsFunc(spec, func(r rune) bool { return r == ',' || r == ' ' || r == ';' })
+	if len(fields) == 0 {
+		return nil, nil // defaults
+	}
+	seen := map[int]bool{}
+	var out []int
+	for _, f := range fields {
+		n, err := twitch.ParseDuration(f)
+		if err != nil || n < 1 || n > twitch.MaxTimeoutSeconds {
+			return nil, fmt.Errorf("invalid timeout %q (use e.g. 30s, 10m, 1h, 1d; max 14d)", f)
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	if len(out) > config.MaxTimeoutPresets {
+		return nil, fmt.Errorf("at most %d timeout buttons", config.MaxTimeoutPresets)
+	}
+	sort.Ints(out)
+	return out, nil
 }

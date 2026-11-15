@@ -798,6 +798,7 @@ function renderModalInfo(info) {
 
 function closeModal() {
   modalBgEl.classList.add('hidden');
+  if (typeof resetWarnRow === 'function') resetWarnRow();
   selectedUser = null;
   refreshUserList();
 }
@@ -805,31 +806,92 @@ function closeModal() {
 modalCloseEl.onclick = closeModal;
 modalBgEl.onclick = (e) => { if (e.target === modalBgEl) closeModal(); };
 
-// Only the user card's action buttons (data-action inside the modal); a bare
-// '.btn' selector also grabbed settings Login/Save and fired ModAction(undefined).
-document.querySelectorAll('#modal .btn[data-action]').forEach(btn => {
-  btn.onclick = async () => {
-    if (!selectedUser || !btn.dataset.action) return;
-    const action = btn.dataset.action;
-    try {
-      const result = await window.go.main.App.ModAction(action, selectedUser.userId, selectedUser.msgId || '');
-      if (result) {
-        await enqueueRender({
-          type: 'system', platform: 'twitch', timestamp: Date.now(),
-          text: `Mod action error: ${result}`
-        });
-      } else {
-        await enqueueRender({
-          type: 'system', platform: 'twitch', timestamp: Date.now(),
-          text: `>>> ${action} on ${selectedUser.displayName || selectedUser.username}`
-        });
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    closeModal();
-  };
+// User-card moderation buttons. One delegated handler on the button bar
+// (the timeout buttons are generated from the configurable presets), so
+// only elements with data-action inside the card trigger ModAction.
+const modalBtnsEl = document.querySelector('#modal .modal-btns');
+modalBtnsEl.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.btn[data-action]');
+  if (!btn || !selectedUser) return;
+  const action = btn.dataset.action;
+  const label = btn.textContent.trim();
+  const who = selectedUser.displayName || selectedUser.username;
+  try {
+    const result = await window.go.main.App.ModAction(action, selectedUser.userId, selectedUser.msgId || '');
+    enqueueRender({
+      type: 'system', platform: 'twitch', timestamp: Date.now(),
+      text: result ? `Mod action error: ${result}` : `>>> ${label} → ${who}`,
+    });
+  } catch (err) {
+    console.error(err);
+  }
+  closeModal();
 });
+
+// Timeout buttons from the presets (seconds), e.g. 600 → "10m".
+let timeoutPresets = [60, 600, 3600, 86400];
+function formatTimeoutLabel(secs) {
+  if (secs % 86400 === 0) return (secs / 86400) + 'd';
+  if (secs % 3600 === 0) return (secs / 3600) + 'h';
+  if (secs % 60 === 0) return (secs / 60) + 'm';
+  return secs + 's';
+}
+function renderTimeoutButtons() {
+  const host = document.getElementById('timeoutBtns');
+  host.replaceChildren(...timeoutPresets.map((s) =>
+    el('button', { class: 'btn', 'data-action': 'timeout:' + s, title: 'Timeout ' + formatTimeoutLabel(s) }, formatTimeoutLabel(s))));
+}
+renderTimeoutButtons();
+whenRuntime(() => {
+  window.go.main.App.GetTimeoutPresets().then((p) => {
+    if (Array.isArray(p) && p.length) { timeoutPresets = p; renderTimeoutButtons(); fillTimeoutPresetsInput(); }
+  }).catch(() => {});
+});
+
+// Settings → Twitch → Moderation: edit the timeout buttons.
+const timeoutPresetsInput = document.getElementById('timeoutPresetsInput');
+const timeoutPresetsStatus = document.getElementById('timeoutPresetsStatus');
+function fillTimeoutPresetsInput() { timeoutPresetsInput.value = timeoutPresets.map(formatTimeoutLabel).join(', '); }
+fillTimeoutPresetsInput();
+document.getElementById('timeoutPresetsSave').addEventListener('click', async () => {
+  const err = await window.go.main.App.SetTimeoutPresets(timeoutPresetsInput.value);
+  if (err) {
+    timeoutPresetsStatus.textContent = err;
+    timeoutPresetsStatus.style.color = '#ff6b6b';
+    return;
+  }
+  const p = await window.go.main.App.GetTimeoutPresets();
+  if (Array.isArray(p) && p.length) timeoutPresets = p;
+  renderTimeoutButtons();
+  fillTimeoutPresetsInput();
+  timeoutPresetsStatus.textContent = i18n.t('timeoutPresetsSaved');
+  timeoutPresetsStatus.style.color = '#7fdc7f';
+});
+
+// ⚠ Warn: inline reason field in the card (no browser prompt dialogs).
+const warnRowEl = document.getElementById('warnRow');
+const warnReasonInput = document.getElementById('warnReasonInput');
+function resetWarnRow() { warnRowEl.classList.add('hidden'); warnReasonInput.value = ''; }
+document.getElementById('warnToggleBtn').addEventListener('click', () => {
+  warnRowEl.classList.toggle('hidden');
+  warnReasonInput.placeholder = i18n.t('warnReasonPlaceholder');
+  if (!warnRowEl.classList.contains('hidden')) warnReasonInput.focus();
+});
+async function sendWarning() {
+  if (!selectedUser) return;
+  const reason = warnReasonInput.value.trim();
+  if (!reason) { warnReasonInput.focus(); return; }
+  const who = selectedUser.displayName || selectedUser.username;
+  let err = '';
+  try { err = await window.go.main.App.WarnUser(selectedUser.userId, reason); } catch (e) { err = String(e); }
+  enqueueRender({
+    type: 'system', platform: 'twitch', timestamp: Date.now(),
+    text: err ? `Mod action error: ${err}` : `>>> ⚠ ${who}: ${reason}`,
+  });
+  closeModal();
+}
+document.getElementById('warnSendBtn').addEventListener('click', sendWarning);
+warnReasonInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendWarning(); } });
 
 // === Input ===
 
@@ -857,6 +919,10 @@ const SLASH_COMMANDS = [
   '/timeout',
   '/unban', '/unmod', '/unraid', '/untimeout', '/unvip',
   '/vip',
+  '/warn', '/banid', '/shield', '/shieldoff',
+  '/poll', '/endpoll',
+  '/prediction', '/lockprediction', '/cancelprediction', '/resolveprediction',
+  '/clip', '/marker', '/settitle', '/setgame',
 ];
 let slashTabState = null; // {prefix, matches, index} while cycling
 let mentionTabState = null; // {tokenStart, prefix, matches, index} for @ Tab

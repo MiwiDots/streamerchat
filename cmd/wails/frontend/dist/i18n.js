@@ -2,6 +2,12 @@
 
 const STRINGS = {
   en: {
+    moderationTitle: 'Moderation',
+    timeoutPresetsLabel: 'Timeout buttons in the user card (max 8, e.g. 30s, 10m, 1h, 1d, 7d):',
+    timeoutPresetsSaved: 'Saved.',
+    warn: '⚠ Warn',
+    warnSend: 'Send warning',
+    warnReasonPlaceholder: 'Reason (shown to the user, required)',
     automodTab: 'AutoMod',
     automodTitle: 'Held by AutoMod',
     automodEmpty: 'Nothing waiting for review.',
@@ -100,6 +106,12 @@ const STRINGS = {
     usersCount: 'Users ({count})',
   },
   de: {
+    moderationTitle: 'Moderation',
+    timeoutPresetsLabel: 'Timeout-Knöpfe in der User-Card (max. 8, z. B. 30s, 10m, 1h, 1d, 7d):',
+    timeoutPresetsSaved: 'Gespeichert.',
+    warn: '⚠ Verwarnen',
+    warnSend: 'Verwarnung senden',
+    warnReasonPlaceholder: 'Grund (sieht der User, Pflicht)',
     automodTab: 'AutoMod',
     automodTitle: 'Von AutoMod zurückgehalten',
     automodEmpty: 'Nichts zu prüfen.',

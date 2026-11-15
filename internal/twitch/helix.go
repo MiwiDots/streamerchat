@@ -1,10 +1,7 @@
 package twitch
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -506,33 +503,8 @@ func (h *HelixClient) ModerateHeldMessage(msgID string, allow bool) error {
 	if allow {
 		action = "ALLOW"
 	}
-	body, err := json.Marshal(map[string]string{"user_id": h.moderatorID, "msg_id": msgID, "action": action})
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest("POST", "https://api.twitch.tv/helix/moderation/automod/message", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Client-Id", h.clientID)
-	req.Header.Set("Authorization", "Bearer "+h.client.GetUserAccessToken())
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := heldMessageHTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("automod %s: %w", strings.ToLower(action), err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
-		return nil
-	}
-	var apiErr struct {
-		Message string `json:"message"`
-	}
-	_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&apiErr)
-	if apiErr.Message == "" {
-		apiErr.Message = http.StatusText(resp.StatusCode)
-	}
-	return fmt.Errorf("automod %s: %d %s", strings.ToLower(action), resp.StatusCode, apiErr.Message)
+	return h.rawJSON("automod "+strings.ToLower(action), http.MethodPost, "moderation/automod/message", nil,
+		map[string]string{"user_id": h.moderatorID, "msg_id": msgID, "action": action})
 }
 
 // UserInfo contains combined user + follow info.

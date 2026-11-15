@@ -66,6 +66,12 @@ var requiredScopes = []string{
 	"channel:manage:moderators",
 	"channel:manage:raids",
 	"channel:manage:broadcast",
+	// Polls, predictions, clips, shield mode (added for the broadcaster
+	// tools; logins from before need one re-login for these).
+	"channel:manage:polls",
+	"channel:manage:predictions",
+	"clips:edit",
+	"moderator:manage:shield_mode",
 	"channel:read:redemptions",
 	// Activity feed via EventSub — the ones not already covered
 	// above. channel.cheer needs bits:read, channel.hype_train.*

@@ -74,13 +74,16 @@
     </div>
     <div class="modal-info" id="modalInfo">Loading...</div>
     <div class="modal-msgs" id="modalMsgs"></div>
+    <div class="warn-row hidden" id="warnRow">
+      <input class="modal-input" id="warnReasonInput" type="text" maxlength="500" autocomplete="off">
+      <button class="btn btn-warn" id="warnSendBtn" data-i18n="warnSend">Send warning</button>
+    </div>
     <div class="modal-btns">
       <button class="btn btn-danger" data-action="ban">Ban</button>
-      <button class="btn" data-action="timeout_600">10m</button>
-      <button class="btn" data-action="timeout_3600">1h</button>
-      <button class="btn" data-action="timeout_86400">24h</button>
+      <span id="timeoutBtns" class="timeout-btns"></span>
       <button class="btn" data-action="delete">Delete</button>
       <button class="btn" data-action="unban">Unban</button>
+      <button class="btn btn-warn" id="warnToggleBtn" data-i18n="warn">⚠ Warn</button>
     </div>
   </div>
 </div>
@@ -173,6 +176,19 @@
     </div>
 
     <div class="settings-pane" data-pane="twitch">
+      <div class="settings-section">
+        <label data-i18n="moderationTitle">Moderation</label>
+        <div class="settings-row">
+          <span class="settings-status" data-i18n="timeoutPresetsLabel">Timeout buttons (max 8):</span>
+        </div>
+        <div class="settings-row">
+          <input class="modal-input" id="timeoutPresetsInput" type="text" placeholder="1m, 10m, 1h, 1d" autocomplete="off">
+          <button class="btn" id="timeoutPresetsSave" data-i18n="save">Save</button>
+        </div>
+        <div class="settings-row">
+          <span class="settings-status" id="timeoutPresetsStatus"></span>
+        </div>
+      </div>
       <div class="settings-section">
         <label data-i18n="twitchLogin">Twitch Login</label>
         <div class="settings-row">
