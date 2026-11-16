@@ -1192,6 +1192,12 @@ func (a *App) chatToMap(msg chat.Message) map[string]interface{} {
 		"replyParentId":    msg.ReplyParentID,
 		"replyParentUser":  msg.ReplyParentUser,
 		"replyParentBody":  msg.ReplyParentBody,
+		"subTier":          msg.SubTier,
+		"subPrime":         msg.SubPrime,
+		"subMonths":        msg.SubMonths,
+		"giftCount":        msg.GiftCount,
+		"powerUp":          msg.PowerUp,
+		"animationId":      msg.AnimationID,
 		"superChatAmount":  msg.SuperChatAmount,
 		"targetUsername":   msg.TargetUsername,
 	}

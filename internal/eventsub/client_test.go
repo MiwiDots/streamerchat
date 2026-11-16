@@ -169,3 +169,30 @@ func TestDispatchAutoModEvents(t *testing.T) {
 		t.Fatalf("update parsed wrong: %+v", u)
 	}
 }
+
+func TestDispatchBitsUseOnlyPowerUps(t *testing.T) {
+	var got []Event
+	c := New(context.Background(), "cid", "tok", "1", "1", func(ev Event) { got = append(got, ev) })
+	mk := func(id, body string) wsMessage {
+		var msg wsMessage
+		raw := `{"metadata":{"message_id":"` + id + `","message_type":"notification"},"payload":{"subscription":{"type":"channel.bits.use"},"event":` + body + `}}`
+		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+			t.Fatal(err)
+		}
+		return msg
+	}
+	// Plain cheer: ignored (channel.cheer already delivers it).
+	c.dispatchOnce(mk("b1", `{"user_name":"A","type":"cheer","bits":100,"message":{"text":"Cheer100"}}`))
+	c.dispatchOnce(mk("b2", `{"user_name":"Bitsy","user_id":"7","type":"power_up","bits":30,"message":{"text":"LUL"},`+
+		`"power_up":{"type":"gigantify_an_emote","emote":{"id":"425618","name":"LUL"},"message_effect_id":null}}`))
+	c.dispatchOnce(mk("b3", `{"user_name":"C","type":"custom_power_up","bits":500,"custom_power_up":{"title":"Confetti","reward_id":"x"}}`))
+	if len(got) != 2 {
+		t.Fatalf("want 2 power-up events (cheer ignored), got %d", len(got))
+	}
+	if g := got[0]; g.Type != EventPowerUp || g.Meta["powerUp"] != "gigantify_an_emote" || g.Meta["emoteName"] != "LUL" || g.Meta["bits"] != float64(30) || g.Message != "LUL" {
+		t.Fatalf("gigantify parsed wrong: %+v", g)
+	}
+	if g := got[1]; g.Meta["powerUp"] != "custom" || g.Meta["title"] != "Confetti" {
+		t.Fatalf("custom power-up parsed wrong: %+v", g)
+	}
+}

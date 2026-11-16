@@ -58,6 +58,9 @@ const (
 	EventHypeTrain EventType = "hype_train"
 	// AutoMod queue: a message was held for review / its status changed
 	// (approved, denied or expired — possibly by another moderator).
+	// EventPowerUp: a viewer used a Bits Power-up (Gigantify an Emote,
+	// Message Effect, Celebration) or a Custom Power-up.
+	EventPowerUp       EventType = "power_up"
 	EventAutoModHold   EventType = "automod_hold"
 	EventAutoModUpdate EventType = "automod_update"
 )
@@ -359,6 +362,9 @@ func subscriptionRequests(me, mod string) []subscribeRequest {
 		{Type: "channel.hype_train.begin", Version: "1", Condition: map[string]string{"broadcaster_user_id": me}},
 		{Type: "channel.hype_train.progress", Version: "1", Condition: map[string]string{"broadcaster_user_id": me}},
 		{Type: "channel.hype_train.end", Version: "1", Condition: map[string]string{"broadcaster_user_id": me}},
+		// Bits usage incl. Power-ups. Scope: bits:read. Plain cheers are
+		// ignored in dispatch (channel.cheer already covers them).
+		{Type: "channel.bits.use", Version: "1", Condition: map[string]string{"broadcaster_user_id": me}},
 		// AutoMod queue (held messages + their resolution). Scope:
 		// moderator:manage:automod; token user must be moderator_user_id.
 		{Type: "automod.message.hold", Version: "2", Condition: map[string]string{
@@ -495,6 +501,29 @@ func (c *Client) dispatch(msg wsMessage) {
 			ev.Meta["rewardId"] = getStr(r, "id")
 			ev.Meta["reward"] = getStr(r, "title")
 			ev.Meta["cost"] = getNum(r, "cost")
+		}
+	case "channel.bits.use":
+		kind := getStr(e, "type") // cheer | power_up | custom_power_up
+		if kind != "power_up" && kind != "custom_power_up" {
+			return // cheers: already delivered by channel.cheer
+		}
+		ev.Type = EventPowerUp
+		ev.User = getStr(e, "user_name")
+		ev.UserID = getStr(e, "user_id")
+		ev.Meta["bits"] = getNum(e, "bits")
+		if m, ok := e["message"].(map[string]interface{}); ok {
+			ev.Message = getStr(m, "text")
+		}
+		if pu, ok := e["power_up"].(map[string]interface{}); ok {
+			ev.Meta["powerUp"] = getStr(pu, "type") // message_effect | celebration | gigantify_an_emote
+			if em, ok := pu["emote"].(map[string]interface{}); ok {
+				ev.Meta["emoteId"] = getStr(em, "id")
+				ev.Meta["emoteName"] = getStr(em, "name")
+			}
+		}
+		if cp, ok := e["custom_power_up"].(map[string]interface{}); ok {
+			ev.Meta["powerUp"] = "custom"
+			ev.Meta["title"] = getStr(cp, "title")
 		}
 	case "automod.message.hold":
 		ev.Type = EventAutoModHold

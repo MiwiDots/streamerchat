@@ -220,3 +220,36 @@ func TestConvertPrivateMessageReply(t *testing.T) {
 		t.Fatalf("login fallback missing: %q", m.ReplyParentUser)
 	}
 }
+
+func TestApplySubInfo(t *testing.T) {
+	cases := []struct {
+		plan  string
+		tier  int
+		prime bool
+	}{{"3000", 3, false}, {"2000", 2, false}, {"1000", 1, false}, {"Prime", 1, true}, {">prime", 1, true}, {"", 0, false}}
+	for _, c := range cases {
+		var msg twitch.UserNoticeMessage
+		msg.MsgParams = map[string]string{"msg-param-sub-plan": c.plan, "msg-param-cumulative-months": "14", "msg-param-mass-gift-count": "20"}
+		var m chat.Message
+		applySubInfo(&m, msg)
+		if m.SubTier != c.tier || m.SubPrime != c.prime || m.SubMonths != 14 || m.GiftCount != 20 {
+			t.Errorf("plan %q → %+v", c.plan, m)
+		}
+	}
+}
+
+func TestPowerUpKind(t *testing.T) {
+	var msg twitch.PrivateMessage
+	msg.Tags = map[string]string{"msg-id": "gigantified-emote-message"}
+	if m := convertPrivateMessage(msg, "c"); m.PowerUp != "gigantify" {
+		t.Fatalf("gigantify: %q", m.PowerUp)
+	}
+	msg.Tags = map[string]string{"msg-id": "animated-message", "animation-id": "simmer"}
+	if m := convertPrivateMessage(msg, "c"); m.PowerUp != "effect" || m.AnimationID != "simmer" {
+		t.Fatalf("effect: %+v", m)
+	}
+	msg.Tags = map[string]string{"msg-id": "highlighted-message"}
+	if m := convertPrivateMessage(msg, "c"); m.PowerUp != "" {
+		t.Fatalf("highlight is not a power-up: %q", m.PowerUp)
+	}
+}

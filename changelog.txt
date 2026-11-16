@@ -1,3 +1,30 @@
+2026-11-16 14:31 - Sub tier cards and Bits Power-ups (unreleased, next version).
+
+  - Subs: sub / resub / subgift / submysterygift notices carry the tier
+    (documented msg-param-sub-plan: Prime, 1000, 2000, 3000), cumulative
+    months and gift-bomb size → chat.Message SubTier / SubPrime /
+    SubMonths / GiftCount (applySubInfo, both IRC clients). Tier 2 is a
+    silver card, tier 3 a gold card, both with a moving sheen; tier 1 /
+    Prime get a small badge; gift bombs show "× N". Gift bombs
+    (submysterygift) now count as gift subs instead of system lines.
+  - Power-ups in chat (both apps): msg-id gigantified-emote-message →
+    the message's last emote is shown at 112px using the largest Twitch
+    CDN scale; msg-id animated-message (+ animation-id) → animated
+    gradient row, palettes for simmer / rainbow-eclipse / cosmic-abyss
+    and a generic one. Labels en/de. Animations respect
+    prefers-reduced-motion. Search: is:powerup.
+  - StreamerChat activity feed: EventSub channel.bits.use (scope
+    bits:read, already granted) → EventPowerUp ("⚡ X used Gigantify
+    (LUL) — 30 bits", message effects, celebrations, custom power-ups).
+    Plain cheers from that event are ignored (channel.cheer already
+    shows them).
+  - Payload fields subTier, subPrime, subMonths, giftCount, powerUp,
+    animationId (pinned by the payload tests).
+  - Verified in the browser harness for both apps (cards, badges,
+    gigantified last emote, effect palettes, activity row, no JS
+    errors); Go tests for tier parsing, power-up detection and the
+    bits.use dispatch.
+
 2026-11-15 21:07 - v0.7.1 (stable): RELEASE — ChatHub reply button fix (see the
   entry below).
 

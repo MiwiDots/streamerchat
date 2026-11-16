@@ -802,3 +802,61 @@ body.no-ts .ts { display: none; }
 .warn-row { display: flex; gap: 6px; margin: 6px 0; }
 .warn-row.hidden { display: none; }
 .warn-row .modal-input { flex: 1; min-width: 0; }
+
+/* Sub tiers: tier 2 silver, tier 3 gold — shimmering card; tier 1 /
+   Prime only get the badge. */
+.sub-tier-badge {
+  display: inline-block;
+  font-size: 0.72em;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-right: 6px;
+  background: #4b2a8a;
+  color: #e6d9ff;
+  vertical-align: middle;
+}
+.sub-card.sub-tier-2, .sub-card.sub-tier-3 {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 3px 0;
+}
+.sub-card.sub-tier-2 { border: 1px solid #9aa4b5; background: linear-gradient(135deg, rgba(160,170,190,.16), rgba(90,95,110,.10)); }
+.sub-card.sub-tier-3 { border: 1px solid #e0b43c; background: linear-gradient(135deg, rgba(255,200,60,.20), rgba(140,90,10,.12)); }
+.sub-tier-2 .sub-tier-badge { background: linear-gradient(90deg, #8e99ab, #dfe5ef); color: #1d2230; }
+.sub-tier-3 .sub-tier-badge { background: linear-gradient(90deg, #c98a14, #ffe082); color: #2b1d00; }
+/* moving sheen */
+.sub-card.sub-tier-2::after, .sub-card.sub-tier-3::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: -40%;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255,255,255,.18), transparent);
+  animation: sub-sheen 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes sub-sheen { from { left: -40%; } to { left: 120%; } }
+
+/* Power-ups. */
+.powerup-label { font-size: 0.78em; font-weight: 700; color: #ffd66b; margin-bottom: 1px; }
+.powerup-gigantify { border-left: 3px solid #ffd66b; padding-left: 6px; background: rgba(255, 214, 107, 0.08); }
+img.emote.giant-emote { height: 112px; width: auto; vertical-align: bottom; }
+.powerup-effect {
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin: 3px 0;
+  background-size: 300% 300%;
+  animation: fx-flow 4s ease-in-out infinite;
+}
+.powerup-effect.fx-generic, .powerup-effect.fx-rainbow-eclipse {
+  background-image: linear-gradient(120deg, rgba(255,0,128,.35), rgba(255,170,0,.30), rgba(0,200,255,.30), rgba(150,80,255,.35));
+}
+.powerup-effect.fx-simmer { background-image: linear-gradient(120deg, rgba(255,90,0,.35), rgba(255,200,40,.30), rgba(200,30,30,.35)); }
+.powerup-effect.fx-cosmic-abyss { background-image: linear-gradient(120deg, rgba(40,10,90,.55), rgba(120,40,200,.40), rgba(10,40,120,.55)); }
+@keyframes fx-flow { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+@media (prefers-reduced-motion: reduce) {
+  .sub-card::after, .powerup-effect { animation: none !important; }
+}

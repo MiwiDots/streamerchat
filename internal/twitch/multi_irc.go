@@ -288,8 +288,11 @@ func (m *MultiIRCClient) registerHandlers(c *twitch.Client) {
 			// type, text and emotes set by applyWatchStreak
 		case msg.MsgID == "sub" || msg.MsgID == "resub":
 			out.Type = chat.MessageTypeSub
-		case msg.MsgID == "subgift" || msg.MsgID == "anonsubgift":
+			applySubInfo(&out, msg)
+		case msg.MsgID == "subgift" || msg.MsgID == "anonsubgift" ||
+			msg.MsgID == "submysterygift" || msg.MsgID == "anonsubmysterygift":
 			out.Type = chat.MessageTypeGiftSub
+			applySubInfo(&out, msg)
 		case msg.MsgID == "raid":
 			out.Type = chat.MessageTypeRaid
 		case msg.MsgID == "announcement":

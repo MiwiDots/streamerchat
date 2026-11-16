@@ -111,6 +111,18 @@ type Message struct {
 	// the "Highlight My Message" channel-points reward.
 	IsHighlighted bool
 
+	// Subscriptions (USERNOTICE msg-param-* tags). SubTier: 1, 2, 3
+	// (Prime counts as tier 1 with SubPrime set); 0 = not a sub notice.
+	SubTier   int
+	SubPrime  bool
+	SubMonths int // cumulative months on sub/resub
+	GiftCount int // number of subs in a gift bomb (submysterygift)
+
+	// Power-ups bought with Bits: "gigantify" (last emote shown huge) or
+	// "effect" (animated message, AnimationID names the effect).
+	PowerUp     string
+	AnimationID string
+
 	// Reply threads (IRC reply-parent-* tags): the message this one answers.
 	ReplyParentID   string
 	ReplyParentUser string // display name of the parent's author

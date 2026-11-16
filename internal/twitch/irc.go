@@ -383,8 +383,11 @@ func (c *IRCClient) registerHandlers() {
 			// type, text and emotes set by applyWatchStreak
 		case msg.MsgID == "sub" || msg.MsgID == "resub":
 			m.Type = chat.MessageTypeSub
-		case msg.MsgID == "subgift" || msg.MsgID == "anonsubgift":
+			applySubInfo(&m, msg)
+		case msg.MsgID == "subgift" || msg.MsgID == "anonsubgift" ||
+			msg.MsgID == "submysterygift" || msg.MsgID == "anonsubmysterygift":
 			m.Type = chat.MessageTypeGiftSub
+			applySubInfo(&m, msg)
 		case msg.MsgID == "raid":
 			m.Type = chat.MessageTypeRaid
 		case msg.MsgID == "announcement":
@@ -502,6 +505,36 @@ func parseGifsTag(tag string) []chat.GifRange {
 	return out
 }
 
+// applySubInfo reads the sub tier / months / gift count from a
+// sub, resub, subgift or submysterygift USERNOTICE. msg-param-sub-plan is
+// "Prime", "1000", "2000" or "3000" (documented); the docs list ">prime"
+// for Prime in one place, so anything containing "prime" counts.
+func applySubInfo(m *chat.Message, msg twitch.UserNoticeMessage) {
+	switch plan := strings.ToLower(msg.MsgParams["msg-param-sub-plan"]); {
+	case strings.Contains(plan, "prime"):
+		m.SubTier, m.SubPrime = 1, true
+	case plan == "3000":
+		m.SubTier = 3
+	case plan == "2000":
+		m.SubTier = 2
+	case plan == "1000":
+		m.SubTier = 1
+	}
+	m.SubMonths, _ = strconv.Atoi(msg.MsgParams["msg-param-cumulative-months"])
+	m.GiftCount, _ = strconv.Atoi(msg.MsgParams["msg-param-mass-gift-count"])
+}
+
+// powerUpKind maps a PRIVMSG msg-id to the Bits power-up it represents.
+func powerUpKind(msgID string) string {
+	switch msgID {
+	case "gigantified-emote-message":
+		return "gigantify"
+	case "animated-message":
+		return "effect"
+	}
+	return ""
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -569,6 +602,9 @@ func convertPrivateMessage(msg twitch.PrivateMessage, channel string) chat.Messa
 		RewardID:      msg.Tags["custom-reward-id"],
 		IsHighlighted: msg.Tags["msg-id"] == "highlighted-message",
 		Gifs:          parseGifsTag(msg.Tags["gifs"]),
+		// Power-ups: Gigantify an Emote / Message Effects.
+		PowerUp:     powerUpKind(msg.Tags["msg-id"]),
+		AnimationID: msg.Tags["animation-id"],
 		// Reply threads: the message being answered.
 		ReplyParentID:   msg.Tags["reply-parent-msg-id"],
 		ReplyParentUser: firstNonEmpty(msg.Tags["reply-parent-display-name"], msg.Tags["reply-parent-user-login"]),

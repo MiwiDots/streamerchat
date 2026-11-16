@@ -2,6 +2,8 @@
 
 const STRINGS = {
   en: {
+    powerUpGigantify: 'Gigantified emote',
+    powerUpEffect: 'Message effect',
     replyingTo: 'Replying to @{user}',
     reply: 'Reply',
     searchPlaceholder: 'Search…  from:user  has:link  is:first-msg  !from:bot',
@@ -109,6 +111,8 @@ const STRINGS = {
     fontSizeHint: 'Tip: Ctrl + / Ctrl - / Ctrl 0 also work.',
   },
   de: {
+    powerUpGigantify: 'Gigantisches Emote',
+    powerUpEffect: 'Nachrichteneffekt',
     replyingTo: 'Antwort an @{user}',
     reply: 'Antworten',
     searchPlaceholder: 'Suchen…  from:user  has:link  is:first-msg  !from:bot',

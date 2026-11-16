@@ -301,6 +301,12 @@ function formatActivity(ev) {
         action: `redeemed ${meta.reward || 'a reward'}${meta.cost ? ` (${meta.cost} pts)` : ''}`,
         detail: ev.message || '',
       };
+    case 'power_up': {
+      const names = { gigantify_an_emote: 'Gigantify', message_effect: 'Message Effect', celebration: 'Celebration' };
+      const what = meta.powerUp === 'custom' ? (meta.title || 'Custom Power-up') : (names[meta.powerUp] || 'Power-up');
+      const emote = meta.emoteName ? ` (${meta.emoteName})` : '';
+      return { icon: '⚡', action: `used ${what}${emote} — ${meta.bits || 0} bits`, detail: ev.message || '' };
+    }
     case 'hype_train': {
       const phase = meta.phase || '';
       if (phase === 'end') {
@@ -515,8 +521,8 @@ function markDeleted(div) {
   div.classList.add('deleted');
   // A deleted first message is no longer worth highlighting; dropping the
   // label also keeps the "first two children" rule below correct.
-  div.classList.remove('first-msg', 'returning-chatter', 'watch-streak', 'highlighted-msg', 'reward-msg');
-  for (const label of div.querySelectorAll('.first-msg-label, .returning-chatter-label, .watch-streak-label, .highlighted-msg-label, .reward-msg-label')) label.remove();
+  div.classList.remove('first-msg', 'returning-chatter', 'watch-streak', 'highlighted-msg', 'reward-msg', 'powerup-gigantify', 'powerup-effect');
+  for (const label of div.querySelectorAll('.first-msg-label, .returning-chatter-label, .watch-streak-label, .highlighted-msg-label, .reward-msg-label, .powerup-label')) label.remove();
   // Keep timestamp + platform badge (first two children), drop the rest
   // (username, emotes, text) so the deleted content is no longer shown.
   while (div.childNodes.length > 2) div.removeChild(div.lastChild);
@@ -568,6 +574,13 @@ async function renderMessage(msg, gen = renderGen) {
     return;
   }
   if (type === 'sub' || type === 'giftsub' || type === 'raid' || type === 'membership' || type === 'announcement') {
+    // Sub tier (msg-param-sub-plan): tier 2/3 get a shimmering card,
+    // tier 1 / Prime a small badge. Gift bombs show the count.
+    if ((type === 'sub' || type === 'giftsub') && msg.subTier > 0) {
+      div.classList.add('sub-card', 'sub-tier-' + msg.subTier);
+      const label = msg.subPrime ? 'PRIME' : 'TIER ' + msg.subTier;
+      div.appendChild(el('span', { class: 'sub-tier-badge' }, label + (msg.giftCount > 1 ? ' × ' + msg.giftCount : '')));
+    }
     div.appendChild(el('span', { class: 'super' }, '★'));
     div.appendChild(el('span', { class: 'system' }, ' ' + (msg.text || '')));
     commit(div);
@@ -631,6 +644,17 @@ async function renderMessage(msg, gen = renderGen) {
     div.classList.add('watch-streak');
     const label = msg.streak > 0 ? i18n.t('watchStreak', { n: msg.streak }) : i18n.t('watchStreakNoCount');
     div.insertBefore(el('div', { class: 'watch-streak-label' }, '🔥 ' + label), div.firstChild);
+  } else if (msg.powerUp === 'gigantify') {
+    // Bits Power-up "Gigantify an Emote": the last emote is shown huge
+    // (see applyGigantify after the text is rendered).
+    div.classList.add('powerup-gigantify');
+    div.insertBefore(el('div', { class: 'powerup-label' }, '⚡ ' + i18n.t('powerUpGigantify')), div.firstChild);
+  } else if (msg.powerUp === 'effect') {
+    // Bits Power-up "Message Effect": animated row; known effect ids get
+    // their own palette, unknown ones a generic one.
+    const fx = /^[a-z0-9-]+$/i.test(msg.animationId || '') ? msg.animationId.toLowerCase() : 'generic';
+    div.classList.add('powerup-effect', 'fx-' + fx);
+    div.insertBefore(el('div', { class: 'powerup-label' }, '✨ ' + i18n.t('powerUpEffect')), div.firstChild);
   } else if (msg.highlighted) {
     // "Highlight My Message" channel-points reward — as loud as on Twitch.
     div.classList.add('highlighted-msg');
@@ -693,6 +717,7 @@ async function renderMessage(msg, gen = renderGen) {
     div.appendChild(el('span', { class: 'bits' }, ` [${msg.bits} bits]`));
   }
 
+  applyGigantify(div, msg);
   addReplyButton(div, msg);
   commit(div);
 }
@@ -2161,6 +2186,7 @@ function searchTermMatches(row, t) {
         case 'system': return type === 'system' || type === 'join' || type === 'part' || !row.dataset.user;
         case 'mention': return searchIsMention(row, text);
         case 'reply': return !!row.querySelector('.reply-context');
+        case 'powerup': return row.classList.contains('powerup-gigantify') || row.classList.contains('powerup-effect');
         case 'automod': return type === 'automod';
         default: return false;
       }
@@ -2252,6 +2278,17 @@ function searchContainer() { return chatEl; }
 function searchIsMention(row, text) {
   const me = (authState && authState.username || '').toLowerCase();
   return !!me && row.dataset.user !== me && new RegExp('(^|[^a-z0-9_])@?' + me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^a-z0-9_])').test(text);
+}
+
+// Gigantify an Emote: Twitch enlarges the LAST emote of the message.
+// Use the largest CDN scale for it (3.0 = 112px source) so it stays sharp.
+function applyGigantify(div, msg) {
+  if (msg.powerUp !== 'gigantify') return;
+  const emotes = div.querySelectorAll('img.emote');
+  const last = emotes[emotes.length - 1];
+  if (!last) return;
+  last.classList.add('giant-emote');
+  if (last.src.includes('static-cdn.jtvnw.net/emoticons/v2/')) last.src = last.src.replace(/\/2\.0$/, '/3.0');
 }
 
 // === Reply threads ===

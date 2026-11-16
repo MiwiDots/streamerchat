@@ -2,6 +2,8 @@
 
 const STRINGS = {
   en: {
+    powerUpGigantify: 'Gigantified emote',
+    powerUpEffect: 'Message effect',
     moderationTitle: 'Moderation',
     timeoutPresetsLabel: 'Timeout buttons in the user card (max 8, e.g. 30s, 10m, 1h, 1d, 7d):',
     timeoutPresetsSaved: 'Saved.',
@@ -106,6 +108,8 @@ const STRINGS = {
     usersCount: 'Users ({count})',
   },
   de: {
+    powerUpGigantify: 'Gigantisches Emote',
+    powerUpEffect: 'Nachrichteneffekt',
     moderationTitle: 'Moderation',
     timeoutPresetsLabel: 'Timeout-Knöpfe in der User-Card (max. 8, z. B. 30s, 10m, 1h, 1d, 7d):',
     timeoutPresetsSaved: 'Gespeichert.',

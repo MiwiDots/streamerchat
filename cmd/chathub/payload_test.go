@@ -17,7 +17,7 @@ func TestChatPayloadHasFieldsTheFrontendNeeds(t *testing.T) {
 	})
 	for _, k := range []string{"id", "platform", "channel", "type", "username", "text",
 		"replyParentId", "replyParentUser", "replyParentBody", "firstMsg", "returningChatter",
-		"highlighted", "rewardId", "gifs", "streak"} {
+		"subTier", "subPrime", "subMonths", "giftCount", "powerUp", "animationId", "highlighted", "rewardId", "gifs", "streak"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("payload is missing %q", k)
 		}

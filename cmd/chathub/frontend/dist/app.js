@@ -347,6 +347,7 @@ function searchTermMatches(row, t) {
         case 'system': return type === 'system' || type === 'join' || type === 'part' || !row.dataset.user;
         case 'mention': return searchIsMention(row, text);
         case 'reply': return !!row.querySelector('.reply-context');
+        case 'powerup': return row.classList.contains('powerup-gigantify') || row.classList.contains('powerup-effect');
         default: return false;
       }
     default: return text.includes(t.value);
@@ -438,6 +439,17 @@ function searchContainer() {
   return st ? st.chatViewEl : null;
 }
 function searchIsMention(row) { return row.classList.contains('highlight'); }
+
+// Gigantify an Emote: Twitch enlarges the LAST emote of the message.
+// Use the largest CDN scale for it (3.0 = 112px source) so it stays sharp.
+function applyGigantify(div, msg) {
+  if (msg.powerUp !== 'gigantify') return;
+  const emotes = div.querySelectorAll('img.emote');
+  const last = emotes[emotes.length - 1];
+  if (!last) return;
+  last.classList.add('giant-emote');
+  if (last.src.includes('static-cdn.jtvnw.net/emoticons/v2/')) last.src = last.src.replace(/\/2\.0$/, '/3.0');
+}
 
 // === Reply threads ===
 // Messages that answer another message get a "↪ @user: original" line
@@ -1061,6 +1073,13 @@ async function renderMessage(msg) {
   }
   if (type === 'join' || type === 'part') return;
   if (type === 'sub' || type === 'giftsub' || type === 'raid' || type === 'announcement') {
+    // Sub tier (msg-param-sub-plan): tier 2/3 get a shimmering card,
+    // tier 1 / Prime a small badge. Gift bombs show the count.
+    if ((type === 'sub' || type === 'giftsub') && msg.subTier > 0) {
+      div.classList.add('sub-card', 'sub-tier-' + msg.subTier);
+      const label = msg.subPrime ? 'PRIME' : 'TIER ' + msg.subTier;
+      div.appendChild(el('span', { class: 'sub-tier-badge' }, label + (msg.giftCount > 1 ? ' × ' + msg.giftCount : '')));
+    }
     div.appendChild(el('span', { class: 'super' }, '★'));
     div.appendChild(el('span', { class: 'system' }, ' ' + (msg.text || '')));
     appendAndScroll(state, div);
@@ -1106,6 +1125,17 @@ async function renderMessage(msg) {
     div.classList.add('watch-streak');
     const label = msg.streak > 0 ? i18n.t('watchStreak', { n: msg.streak }) : i18n.t('watchStreakNoCount');
     div.insertBefore(el('div', { class: 'watch-streak-label' }, '🔥 ' + label), div.firstChild);
+  } else if (msg.powerUp === 'gigantify') {
+    // Bits Power-up "Gigantify an Emote": the last emote is shown huge
+    // (see applyGigantify after the text is rendered).
+    div.classList.add('powerup-gigantify');
+    div.insertBefore(el('div', { class: 'powerup-label' }, '⚡ ' + i18n.t('powerUpGigantify')), div.firstChild);
+  } else if (msg.powerUp === 'effect') {
+    // Bits Power-up "Message Effect": animated row; known effect ids get
+    // their own palette, unknown ones a generic one.
+    const fx = /^[a-z0-9-]+$/i.test(msg.animationId || '') ? msg.animationId.toLowerCase() : 'generic';
+    div.classList.add('powerup-effect', 'fx-' + fx);
+    div.insertBefore(el('div', { class: 'powerup-label' }, '✨ ' + i18n.t('powerUpEffect')), div.firstChild);
   } else if (msg.highlighted) {
     // "Highlight My Message" channel-points reward — as loud as on Twitch.
     div.classList.add('highlighted-msg');
@@ -1169,6 +1199,7 @@ async function renderMessage(msg) {
     if (!msg.historical && soundOnMention !== 'none' && msg.channel !== activeChannel) playBeep();
   }
 
+  applyGigantify(div, msg);
   addReplyButton(div, msg);
   appendAndScroll(state, div);
   if (!msg.historical) markUnread(msg.channel, mention);
@@ -1188,7 +1219,7 @@ function markMessagesDeleted(state, username, msgId, all) {
     }
     const ts = row.querySelector('.ts');
     row.classList.add('deleted');
-    row.classList.remove('highlight', 'first-msg', 'returning-chatter', 'watch-streak', 'highlighted-msg', 'reward-msg');
+    row.classList.remove('highlight', 'first-msg', 'returning-chatter', 'watch-streak', 'highlighted-msg', 'reward-msg', 'powerup-gigantify', 'powerup-effect');
     const note = el('span', { class: 'deleted-text' }, i18n.t('messageDeleted'));
     if (ts) row.replaceChildren(ts, note); else row.replaceChildren(note);
   }
