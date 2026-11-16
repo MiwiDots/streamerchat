@@ -43,7 +43,10 @@ type App struct {
 	helixClient *twitch.HelixClient
 	botDetector *twitch.BotDetector
 	emotes      *twitch.ThirdPartyEmotes
-	badges      *twitch.BadgeRegistry
+	// twitchEmotes caches Twitch's channel/global emote lists for the
+	// emote picker.
+	twitchEmotes *twitch.TwitchEmoteCache
+	badges       *twitch.BadgeRegistry
 
 	// Per-profile background work. All guarded by mu, all cancelled in
 	// SwitchProfile — they used to run on a.ctx forever, so every profile
@@ -92,7 +95,7 @@ type App struct {
 }
 
 func NewApp() *App {
-	return &App{}
+	return &App{twitchEmotes: twitch.NewTwitchEmoteCache()}
 }
 
 // startup is called when the app starts.
@@ -1882,25 +1885,22 @@ func (a *App) LookupEmote(name string) map[string]interface{} {
 	if !ok {
 		return nil
 	}
-	var url string
-	switch info.Provider {
-	case twitch.EmoteProvider7TV:
-		url = fmt.Sprintf("https://cdn.7tv.app/emote/%s/2x.webp", info.ID)
-	case twitch.EmoteProviderBTTV:
-		ext := "png"
-		if info.Animated {
-			ext = "gif"
-		}
-		url = fmt.Sprintf("https://cdn.betterttv.net/emote/%s/2x.%s", info.ID, ext)
-	case twitch.EmoteProviderFFZ:
-		url = fmt.Sprintf("https://cdn.frankerfacez.com/emote/%s/2", info.ID)
-	}
+	url := info.URL()
 	return map[string]interface{}{
 		"provider": int(info.Provider),
 		"id":       info.ID,
 		"animated": info.Animated,
 		"url":      url,
 	}
+}
+
+// GetEmotePicker returns the emotes for the picker: this channel's Twitch
+// emotes, its 7TV/BTTV/FFZ sets, third-party globals and Twitch globals.
+func (a *App) GetEmotePicker() []twitch.PickerSection {
+	a.mu.Lock()
+	clientID, token, broadcasterID := a.cfg.Twitch.ClientID, a.cfg.Twitch.AccessToken, a.cfg.Twitch.BotUserID
+	a.mu.Unlock()
+	return twitch.BuildEmotePicker(a.twitchEmotes, a.emotes, clientID, token, broadcasterID)
 }
 
 // GetUserInfo fetches user details + follow status.

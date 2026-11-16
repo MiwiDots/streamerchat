@@ -1,3 +1,28 @@
+2026-11-16 14:34 - Emote picker and ":emote" Tab completion in both apps
+  (unreleased, next version).
+
+  - A 😀 button next to the input opens a searchable grid of the
+    emotes usable in the current channel, grouped by source: Twitch
+    channel emotes, the channel's 7TV / BTTV / FFZ sets, third-party
+    globals (minus names the channel overrides) and Twitch globals.
+    Clicking inserts the name at the cursor (spaces added as needed);
+    the picker stays open; Esc / click outside closes it. ChatHub uses
+    the active tab; YouTube tabs show "no emotes".
+  - Typing ":ke" + Tab completes emote names (prefix matches first,
+    then substring matches; Tab / Shift+Tab cycles). Only runs when the
+    app's own Tab handling (slash commands, @mentions) didn't act.
+  - Backend: internal/twitch/emote_picker.go — EmoteInfo.URL() (now
+    also used by both apps' LookupEmote, removing duplicated URL code),
+    ThirdPartyEmotes.PickerSections, TwitchEmoteCache (Helix Get
+    Channel / Global Emotes, no new scope, cached 10 min / 1 h),
+    BuildEmotePicker. Bindings: StreamerChat GetEmotePicker(), ChatHub
+    GetEmotePicker(channel). Without a login only third-party emotes are
+    listed. The user's own sub emotes from other channels would need
+    the user:read:emotes scope and are not included.
+  - en/de strings. Verified in the browser harness for both apps
+    (sections, search, insert, Esc, completion + cycling, YouTube tab,
+    no JS errors); Go tests for URLs, sections and the no-login case.
+
 2026-11-16 14:31 - Sub tier cards and Bits Power-ups (unreleased, next version).
 
   - Subs: sub / resub / subgift / submysterygift notices carry the tier

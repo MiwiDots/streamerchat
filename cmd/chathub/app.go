@@ -224,6 +224,10 @@ type App struct {
 	// ("yt:@handle") — feeds the tab hover preview. Guarded by mu.
 	ytLive map[string]ytLiveInfo
 
+	// twitchEmotes caches Twitch's channel/global emote lists for the
+	// emote picker.
+	twitchEmotes *twitch.TwitchEmoteCache
+
 	// 7TV cosmetics: a single WebSocket connection subscribes to
 	// entitlement.* events for every Twitch channel we know the
 	// broadcaster id of, and pushes paint/badge updates down to the
@@ -245,6 +249,7 @@ func NewApp() *App {
 		ytWatchers:          make(map[string]context.CancelFunc),
 		ytClients:           make(map[string]*youtube.InnerTubeClient),
 		ytLive:              make(map[string]ytLiveInfo),
+		twitchEmotes:        twitch.NewTwitchEmoteCache(),
 		history:             NewHistoryWriter(),
 	}
 }
@@ -1316,19 +1321,7 @@ func (a *App) LookupEmote(channel, name string) map[string]interface{} {
 	if !ok {
 		return nil
 	}
-	var url string
-	switch info.Provider {
-	case twitch.EmoteProvider7TV:
-		url = fmt.Sprintf("https://cdn.7tv.app/emote/%s/2x.webp", info.ID)
-	case twitch.EmoteProviderBTTV:
-		ext := "png"
-		if info.Animated {
-			ext = "gif"
-		}
-		url = fmt.Sprintf("https://cdn.betterttv.net/emote/%s/2x.%s", info.ID, ext)
-	case twitch.EmoteProviderFFZ:
-		url = fmt.Sprintf("https://cdn.frankerfacez.com/emote/%s/2", info.ID)
-	}
+	url := info.URL()
 	return map[string]interface{}{
 		"provider": int(info.Provider),
 		"id":       info.ID,
@@ -1920,6 +1913,21 @@ func (a *App) SendYouTubeMessage(tabKey, text string) string {
 		return err.Error()
 	}
 	return ""
+}
+
+// GetEmotePicker returns the emotes for the picker in `channel`'s tab:
+// the channel's Twitch emotes, its 7TV/BTTV/FFZ sets, third-party globals
+// and Twitch globals. YouTube tabs get none (YouTube can't show them).
+func (a *App) GetEmotePicker(channel string) []twitch.PickerSection {
+	ref := parseChannelRef(channel)
+	if ref.Platform != "twitch" {
+		return nil
+	}
+	broadcasterID := a.resolveChannelID(ref.Name)
+	a.mu.Lock()
+	clientID, token := a.cfg.ClientID, a.cfg.AccessToken
+	a.mu.Unlock()
+	return twitch.BuildEmotePicker(a.twitchEmotes, a.emotes, clientID, token, broadcasterID)
 }
 
 // GetUserCard returns Chatterino-style "usercard" data for a user in the

@@ -2,6 +2,11 @@
 
 const STRINGS = {
   en: {
+    emoteSearch: 'Search emotes…',
+    emoteScopeChannel: 'Channel',
+    emoteScopeGlobal: 'Global',
+    emotePickerEmpty: 'No emotes available here.',
+    emoteNoMatch: 'No matching emotes.',
     powerUpGigantify: 'Gigantified emote',
     powerUpEffect: 'Message effect',
     replyingTo: 'Replying to @{user}',
@@ -111,6 +116,11 @@ const STRINGS = {
     fontSizeHint: 'Tip: Ctrl + / Ctrl - / Ctrl 0 also work.',
   },
   de: {
+    emoteSearch: 'Emotes suchen…',
+    emoteScopeChannel: 'Channel',
+    emoteScopeGlobal: 'Global',
+    emotePickerEmpty: 'Hier sind keine Emotes verfügbar.',
+    emoteNoMatch: 'Keine passenden Emotes.',
     powerUpGigantify: 'Gigantisches Emote',
     powerUpEffect: 'Nachrichteneffekt',
     replyingTo: 'Antwort an @{user}',

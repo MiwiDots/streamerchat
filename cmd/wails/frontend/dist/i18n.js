@@ -2,6 +2,12 @@
 
 const STRINGS = {
   en: {
+    emoteSearch: 'Search emotes…',
+    emoteScopeChannel: 'Channel',
+    emoteScopeGlobal: 'Global',
+    emotePickerEmpty: 'No emotes available here.',
+    emoteNoMatch: 'No matching emotes.',
+    tabPreviewLoading: 'Loading…',
     powerUpGigantify: 'Gigantified emote',
     powerUpEffect: 'Message effect',
     moderationTitle: 'Moderation',
@@ -108,6 +114,12 @@ const STRINGS = {
     usersCount: 'Users ({count})',
   },
   de: {
+    emoteSearch: 'Emotes suchen…',
+    emoteScopeChannel: 'Channel',
+    emoteScopeGlobal: 'Global',
+    emotePickerEmpty: 'Hier sind keine Emotes verfügbar.',
+    emoteNoMatch: 'Keine passenden Emotes.',
+    tabPreviewLoading: 'Lädt…',
     powerUpGigantify: 'Gigantisches Emote',
     powerUpEffect: 'Nachrichteneffekt',
     moderationTitle: 'Moderation',

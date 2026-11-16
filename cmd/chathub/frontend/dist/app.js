@@ -510,6 +510,144 @@ function jumpToMessage(container, id) {
   }
 }
 
+// === Emote picker + ":name" Tab completion ===
+// A 😀 button next to the input opens a searchable grid of the emotes
+// usable here (Twitch channel + global, 7TV / BTTV / FFZ channel sets and
+// globals; from App.GetEmotePicker). Clicking inserts the name at the
+// cursor. Typing ":ke" + Tab completes emote names (Tab again cycles).
+const EMOTE_PICKER_CACHE_MS = 5 * 60 * 1000;
+const EMOTE_COMPLETE_MIN = 2; // characters after ":" before Tab completes
+const emotePickerCache = new Map(); // key -> { at, sections }
+const emotePicker = { open: false, key: null, sections: [], complete: null };
+
+const emotePickerBtn = el('button', { class: 'emote-picker-btn', type: 'button', title: 'Emotes' }, '😀');
+msgInput.parentElement.insertBefore(emotePickerBtn, msgInput);
+const emoteSearchEl = el('input', { class: 'emote-picker-search', type: 'text', autocomplete: 'off', spellcheck: 'false' });
+const emoteGridEl = el('div', { class: 'emote-picker-grid' });
+const emotePickerEl = el('div', { class: 'emote-picker hidden' }, emoteSearchEl, emoteGridEl);
+document.body.appendChild(emotePickerEl);
+
+async function loadEmotePicker() {
+  const key = (activeChannel || '');
+  const hit = emotePickerCache.get(key);
+  if (hit && Date.now() - hit.at < EMOTE_PICKER_CACHE_MS) return hit.sections;
+  let sections = [];
+  try { sections = (await window.go.main.App.GetEmotePicker(key)) || []; } catch (e) { console.error('emote picker', e); }
+  emotePickerCache.set(key, { at: Date.now(), sections });
+  return sections;
+}
+
+function emoteSectionTitle(s) {
+  const src = { twitch: 'Twitch', '7tv': '7TV', bttv: 'BTTV', ffz: 'FFZ' }[s.source] || s.source;
+  return src + ' · ' + (s.scope === 'channel' ? i18n.t('emoteScopeChannel') : i18n.t('emoteScopeGlobal'));
+}
+
+function renderEmotePicker() {
+  const q = emoteSearchEl.value.trim().toLowerCase();
+  const nodes = [];
+  for (const s of emotePicker.sections) {
+    const list = q ? s.emotes.filter((e) => e.name.toLowerCase().includes(q)) : s.emotes;
+    if (!list.length) continue;
+    nodes.push(el('div', { class: 'emote-picker-title' }, emoteSectionTitle(s) + ' (' + list.length + ')'));
+    const grid = el('div', { class: 'emote-picker-row' });
+    for (const e of list) {
+      const b = el('button', { class: 'emote-picker-item', type: 'button', title: e.name },
+        el('img', { src: e.url, alt: e.name, loading: 'lazy' }));
+      b.addEventListener('click', () => insertEmoteName(e.name));
+      grid.appendChild(b);
+    }
+    nodes.push(grid);
+  }
+  if (!nodes.length) {
+    nodes.push(el('div', { class: 'emote-picker-empty' }, emotePicker.sections.length ? i18n.t('emoteNoMatch') : i18n.t('emotePickerEmpty')));
+  }
+  emoteGridEl.replaceChildren(...nodes);
+}
+
+async function openEmotePicker() {
+  emotePicker.open = true;
+  emoteSearchEl.placeholder = i18n.t('emoteSearch');
+  emoteSearchEl.value = '';
+  emoteGridEl.replaceChildren(el('div', { class: 'emote-picker-empty' }, i18n.t('tabPreviewLoading')));
+  positionEmotePicker();
+  emotePickerEl.classList.remove('hidden');
+  emoteSearchEl.focus();
+  emotePicker.key = (activeChannel || '');
+  emotePicker.sections = await loadEmotePicker();
+  if (emotePicker.open) renderEmotePicker();
+}
+function closeEmotePicker() {
+  emotePicker.open = false;
+  emotePickerEl.classList.add('hidden');
+}
+function positionEmotePicker() {
+  const r = msgInput.closest('.input-row').getBoundingClientRect();
+  emotePickerEl.style.bottom = (window.innerHeight - r.top + 6) + 'px';
+  emotePickerEl.style.left = Math.max(8, r.left) + 'px';
+}
+
+function insertEmoteName(name) {
+  const input = msgInput;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  const before = input.value.slice(0, start);
+  const after = input.value.slice(end);
+  const pre = before && !/\s$/.test(before) ? ' ' : '';
+  const post = after.startsWith(' ') ? '' : ' ';
+  input.value = before + pre + name + post + after;
+  const caret = (before + pre + name + post).length;
+  input.focus();
+  input.setSelectionRange(caret, caret);
+}
+
+emotePickerBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (emotePicker.open) closeEmotePicker(); else openEmotePicker();
+});
+emoteSearchEl.addEventListener('input', renderEmotePicker);
+emoteSearchEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeEmotePicker(); msgInput.focus(); }
+});
+document.addEventListener('mousedown', (e) => {
+  if (emotePicker.open && !emotePickerEl.contains(e.target) && e.target !== emotePickerBtn) closeEmotePicker();
+});
+window.addEventListener('resize', () => { if (emotePicker.open) positionEmotePicker(); });
+
+// ":name" + Tab completion. Runs after the app's own Tab handlers and only
+// acts if none of them handled the key (defaultPrevented).
+msgInput.addEventListener('keydown', async (e) => {
+  if (e.key !== 'Tab') { if (e.key !== 'Shift') emotePicker.complete = null; return; }
+  if (e.defaultPrevented) return;
+  const input = msgInput;
+  const st = emotePicker.complete;
+  if (st && input.value === st.applied) {
+    e.preventDefault();
+    st.index = (st.index + (e.shiftKey ? -1 : 1) + st.matches.length) % st.matches.length;
+    applyEmoteCompletion(st);
+    return;
+  }
+  const caret = input.selectionStart ?? input.value.length;
+  const m = /(^|\s):([^\s:]+)$/.exec(input.value.slice(0, caret));
+  if (!m || m[2].length < EMOTE_COMPLETE_MIN) return;
+  e.preventDefault();
+  const prefix = m[2].toLowerCase();
+  const names = [...new Set((await loadEmotePicker()).flatMap((s) => s.emotes.map((x) => x.name)))];
+  const starts = names.filter((n) => n.toLowerCase().startsWith(prefix));
+  const contains = names.filter((n) => !n.toLowerCase().startsWith(prefix) && n.toLowerCase().includes(prefix));
+  const matches = [...starts.sort(), ...contains.sort()];
+  if (!matches.length) return;
+  emotePicker.complete = { start: caret - m[2].length - 1, end: caret, matches, index: 0, applied: '' };
+  applyEmoteCompletion(emotePicker.complete);
+});
+function applyEmoteCompletion(st) {
+  const input = msgInput;
+  const pick = st.matches[st.index] + ' ';
+  input.value = input.value.slice(0, st.start) + pick + input.value.slice(st.end);
+  st.end = st.start + pick.length;
+  st.applied = input.value;
+  input.setSelectionRange(st.end, st.end);
+}
+
 // === Tab hover preview ===
 // Hovering a tab shows a card with the stream thumbnail, title, game,
 // viewers and uptime plus an "Open in browser" button. Data comes from
