@@ -1,3 +1,6 @@
+2026-11-16 16:55 - v0.7.2 (stable): RELEASE — sub tier cards, Bits Power-ups and
+  the emote picker (see the entries below).
+
 2026-11-16 14:34 - Emote picker and ":emote" Tab completion in both apps
   (unreleased, next version).
 
