@@ -247,7 +247,11 @@ html, body {
   background: #0d0d14;
 }
 
-.chat-panel { flex: 1; }
+/* min-width: 0 is required: a flex item defaults to min-width:auto, i.e.
+   it grows to fit its widest non-wrapping content. A long reply-context
+   line (white-space: nowrap) then widened the whole chat far past the
+   window — every message got cut off on the right instead of wrapping. */
+.chat-panel { flex: 1; min-width: 0; }
 .sidebar { width: 240px; }
 
 /* Sidebar tabs — switch between "Users" (chatters) and "Activity"
@@ -720,9 +724,11 @@ body.no-ts .ts { display: none; }
 .reply-context {
   font-size: 0.8em;
   color: #8a8aa0;
-  white-space: nowrap;
+  white-space: nowrap;   /* one line, long originals end in "…" */
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
+  padding-left: 1.2em;   /* visually attached to the message below */
   cursor: pointer;
   margin-bottom: 1px;
 }
