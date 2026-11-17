@@ -1,3 +1,18 @@
+2026-11-18 00:09 - StreamerChat: messages cut off on the right after a reply
+  (unreleased fix).
+
+  - The reply-context line ("↪ @user: original") is white-space: nowrap
+    so long originals end in "…". .chat-panel is a flex item with the
+    default min-width:auto, so it grew to the width of that line: one
+    reply with a long original widened the chat to ~2500px, every
+    message was cut at the window edge instead of wrapping, the ↩
+    button wrapped into an empty line, and the sidebar was pushed out
+    of the window. Fix: min-width: 0 on .chat-panel (ChatHub's
+    .chat-area gets the same guard). The reply-context line also gets
+    max-width: 100% and a small indent.
+  - Reproduced and verified in the browser harness by measuring the
+    panel width (542px before and after a long reply; was 2483px).
+
 2026-11-16 16:55 - v0.7.2 (stable): RELEASE — sub tier cards, Bits Power-ups and
   the emote picker (see the entries below).
 
