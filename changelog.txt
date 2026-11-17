@@ -1,3 +1,6 @@
+2026-11-18 00:11 - v0.7.3 (stable): RELEASE — fix for messages cut off on the
+  right after a reply (see the entry below).
+
 2026-11-18 00:09 - StreamerChat: messages cut off on the right after a reply
   (unreleased fix).
 
