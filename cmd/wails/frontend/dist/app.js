@@ -1724,6 +1724,125 @@ function setupProfileSwitchedListener() {
   });
 }
 whenRuntime(setupProfileSwitchedListener);
+
+// === Chat stats pane ===
+// The backend counts every viewer's chat lines per session and leaves
+// bots out when the snapshot is taken (so bot-list edits apply to what
+// was already counted). The pane polls only while it is visible.
+const STATS_POLL_MS = 3000;
+const statsPaneEl = document.querySelector('.sidebar-pane[data-side-pane="stats"]');
+const statsTopEl = document.getElementById('statsTop');
+const statsSummaryEl = document.getElementById('statsSummary');
+let lastStats = null;
+let statsReq = 0; // drops a slow reply that a newer request (or reset) overtook
+
+function statsVisible() {
+  return statsPaneEl.classList.contains('active') && !document.hidden;
+}
+
+async function refreshStats() {
+  const req = ++statsReq;
+  try {
+    const snap = await window.go.main.App.GetChatStats();
+    if (req !== statsReq) return;
+    lastStats = snap;
+    renderStats();
+  } catch (e) {
+    console.error('stats refresh failed', e);
+  }
+}
+
+function renderStats() {
+  const snap = lastStats;
+  if (!snap) {
+    statsTopEl.replaceChildren();
+    statsSummaryEl.replaceChildren();
+    return;
+  }
+  const top = Array.isArray(snap.top) ? snap.top : [];
+  if (top.length === 0) {
+    statsTopEl.replaceChildren(el('div', { class: 'stats-empty' }, i18n.t('statsEmpty')));
+  } else {
+    const max = Math.max(1, top[0].messages || 0);
+    statsTopEl.replaceChildren(...top.map((c, i) => {
+      const name = c.displayName || c.username;
+      // Prefer the user-list entry: it carries the roles the card shows.
+      const u = users.get(userKey(c.platform, c.username)) ||
+        { userId: c.userId || '', username: c.username, displayName: name, platform: c.platform };
+      const pct = Math.round((c.messages / max) * 100);
+      const row = el('div', { class: 'stats-row' },
+        el('span', { class: 'stats-rank' }, String(i + 1)),
+        c.platform === 'youtube'
+          ? el('span', { class: 'badge badge-yt' }, 'YT')
+          : el('span', { class: 'badge badge-tw' }, 'TW'),
+        el('span', { class: 'stats-name', title: name }, name),
+        el('span', { class: 'stats-count' }, String(c.messages)),
+        el('div', { class: 'stats-bar' }, el('div', { class: 'stats-bar-fill', style: 'width:' + pct + '%' })));
+      row.onclick = () => openUserModal(u);
+      return row;
+    }));
+  }
+  const since = new Date(snap.since);
+  const lines = [
+    i18n.t('statsSummary', { msgs: snap.messages || 0, chatters: snap.chatters || 0 }),
+    i18n.t('statsSince', { time: String(since.getHours()).padStart(2, '0') + ':' + String(since.getMinutes()).padStart(2, '0') }),
+  ];
+  if (snap.ignoredMessages > 0) lines.push(i18n.t('statsBotsHidden', { n: snap.ignoredMessages }));
+  statsSummaryEl.replaceChildren(...lines.map((l) => el('div', null, l)));
+}
+
+document.querySelector('.sidebar-tab[data-side="stats"]').addEventListener('click', () => refreshStats());
+document.addEventListener('visibilitychange', () => { if (statsVisible()) refreshStats(); });
+document.getElementById('statsReset').addEventListener('click', async () => {
+  statsReq++; // a poll already in flight must not paint the old numbers back
+  try {
+    await window.go.main.App.ResetChatStats();
+  } catch (e) {
+    console.error('stats reset failed', e);
+  }
+  refreshStats();
+});
+i18n.onLocaleChange(renderStats);
+whenRuntime(() => {
+  setInterval(() => { if (statsVisible()) refreshStats(); }, STATS_POLL_MS);
+  // The backend resets the counts on a profile switch.
+  window.runtime.EventsOn('profileSwitched', () => {
+    statsReq++;
+    lastStats = null;
+    renderStats();
+    if (statsVisible()) refreshStats();
+  });
+});
+
+// Settings → General: users hidden from the stats (bots).
+const statsIgnoredInput = document.getElementById('statsIgnoredInput');
+const statsIgnoredStatus = document.getElementById('statsIgnoredStatus');
+async function loadStatsIgnored() {
+  try {
+    const list = await window.go.main.App.GetStatsIgnoredUsers();
+    statsIgnoredInput.value = Array.isArray(list) ? list.join(', ') : '';
+  } catch (e) {
+    console.error('load stats ignore list failed', e);
+  }
+}
+whenRuntime(loadStatsIgnored);
+document.getElementById('statsIgnoredSave').addEventListener('click', async () => {
+  let err;
+  try {
+    err = await window.go.main.App.SetStatsIgnoredUsers(statsIgnoredInput.value);
+  } catch (e) {
+    err = String(e);
+  }
+  if (err) {
+    statsIgnoredStatus.textContent = err;
+    statsIgnoredStatus.style.color = '#ff6b6b';
+    return;
+  }
+  await loadStatsIgnored();
+  statsIgnoredStatus.textContent = i18n.t('statsIgnoredSaved');
+  statsIgnoredStatus.style.color = '#7fdc7f';
+  refreshStats();
+});
 // Initial hydrate (delayed so wails runtime is up).
 setTimeout(refreshProfiles, 200);
 

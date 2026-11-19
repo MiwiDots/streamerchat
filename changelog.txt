@@ -1,3 +1,26 @@
+2026-11-19 14:53 - StreamerChat: chat stats dashboard (most active chatters).
+
+  - New sidebar tab (📊): the top 5 chatters of the session with their
+    message count and a bar, plus total messages, number of chatters,
+    the time counting started and how many bot messages were hidden.
+    Clicking a chatter opens their user card. ↺ starts from zero; a
+    profile switch resets too. The pane polls every 3 s, only while it
+    is visible.
+  - Counted: viewers' chat messages on Twitch and YouTube. Not counted:
+    the broadcaster, subs/redemptions/system lines, and messages
+    mirrored in from another channel's Shared Chat.
+  - Bots are left out: an editable list in Settings → General
+    (default: nightbot, streamelements, stammtischbot, streamlabs,
+    moobot, fossabot, wizebot, sery_bot, soundalerts,
+    pokemoncommunitygame; empty = default) plus the known-bot list
+    already used for the user list (Twitch only). The filter is applied
+    when the stats are read, so adding a bot hides its earlier messages
+    too.
+  - Counting lives in internal/chat/stats.go (tests for ranking, ties,
+    filters, reset and the JSON fields the pane reads).
+  - Sidebar tabs got tighter so four fit in 240px; German "Zuschauer"
+    tab is now "Chatter" (measured: the German labels did not fit).
+
 2026-11-18 00:11 - v0.7.3 (stable): RELEASE — fix for messages cut off on the
   right after a reply (see the entry below).
 

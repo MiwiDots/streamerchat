@@ -263,20 +263,28 @@ html, body {
   background: #14141c;
   border-bottom: 1px solid #333;
 }
+/* Four tabs share the 240px sidebar: tight padding, and min-width: 0
+   so a long label (German "Zuschauer") can't widen the row. */
 .sidebar-tab {
-  flex: 1;
-  padding: 6px 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 3px;
   background: transparent;
   color: #888;
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: bold;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+/* Icon-only tab (stats): no stretching, so the text tabs keep the room. */
+.sidebar-tab.sidebar-tab-icon { flex: 0 0 auto; padding: 6px 7px; font-size: 13px; }
 .sidebar-tab:hover { color: #ddd; }
 .sidebar-tab.active {
   color: #00bfff;
@@ -921,3 +929,47 @@ img.emote.giant-emote { height: 112px; width: auto; vertical-align: bottom; }
 .emote-picker-item:hover { background: #2a2a38; border-color: #3a3a4a; }
 .emote-picker-item img { max-width: 32px; max-height: 32px; }
 .emote-picker-empty { color: #888; font-size: 12px; padding: 12px 4px; }
+
+/* Stats pane: top chatters as rows with a count bar, totals below. */
+.stats-reset {
+  background: transparent;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+}
+.stats-reset:hover { color: #00bfff; }
+.stats-top { padding: 4px 0; }
+.stats-row {
+  display: grid;
+  grid-template-columns: 1.2em auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 6px;
+  padding: 4px 6px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.stats-row:hover { background: rgba(145, 70, 255, 0.15); }
+.stats-rank { color: #888; font-weight: bold; text-align: right; }
+.stats-row:first-child .stats-rank { color: #ffd23f; }
+.stats-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stats-count { color: #00bfff; font-weight: bold; font-variant-numeric: tabular-nums; }
+.stats-bar {
+  grid-column: 2 / -1;
+  height: 3px;
+  margin-top: 3px;
+  background: #23232f;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.stats-bar-fill { height: 100%; background: #9146ff; }
+.stats-empty { color: #777; font-size: 12px; padding: 10px 4px; }
+.stats-summary {
+  border-top: 1px solid #333;
+  margin: 4px 6px 0;
+  padding-top: 6px;
+  color: #888;
+  font-size: 11px;
+  line-height: 1.6;
+}

@@ -46,7 +46,10 @@ type App struct {
 	// twitchEmotes caches Twitch's channel/global emote lists for the
 	// emote picker.
 	twitchEmotes *twitch.TwitchEmoteCache
-	badges       *twitch.BadgeRegistry
+	// stats counts messages per chatter for the stats dashboard
+	// (per session; reset by the user or a profile switch).
+	stats  *chat.ChatStats
+	badges *twitch.BadgeRegistry
 
 	// Per-profile background work. All guarded by mu, all cancelled in
 	// SwitchProfile — they used to run on a.ctx forever, so every profile
@@ -95,7 +98,7 @@ type App struct {
 }
 
 func NewApp() *App {
-	return &App{twitchEmotes: twitch.NewTwitchEmoteCache()}
+	return &App{twitchEmotes: twitch.NewTwitchEmoteCache(), stats: chat.NewChatStats()}
 }
 
 // startup is called when the app starts.
@@ -388,6 +391,8 @@ func (a *App) SwitchProfile(id string) string {
 	}
 	a.helixClient = nil
 	a.mu.Unlock()
+	// Another profile means another channel: its chatters start at zero.
+	a.stats.Reset()
 	// Frontend's activity list is per-profile — tell it to reset
 	// so the incoming profile starts with a clean feed.
 	a.emit("activityReset", nil)
@@ -1065,6 +1070,7 @@ func (a *App) emitChat(msg chat.Message) {
 	if a.ctx == nil {
 		return
 	}
+	a.stats.Record(msg)
 	// 7TV per-user lookup — see chathub's emitMessage for rationale.
 	// Stv client dedupes by user id so a chat burst is harmless.
 	if a.stv != nil && msg.Platform == chat.PlatformTwitch && msg.UserID != "" {

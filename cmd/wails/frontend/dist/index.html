@@ -41,6 +41,7 @@
         <button class="sidebar-tab active" data-side="users" data-i18n="usersTab">Users</button>
         <button class="sidebar-tab" data-side="activity" data-i18n="activityTab">Activity</button>
         <button class="sidebar-tab" data-side="automod"><span data-i18n="automodTab">AutoMod</span> <span class="automod-badge hidden" id="automodBadge">0</span></button>
+        <button class="sidebar-tab sidebar-tab-icon" data-side="stats" data-i18n-title="statsTab" title="Stats" aria-label="Stats">📊</button>
       </div>
       <div class="sidebar-pane active" data-side-pane="users">
         <div class="panel-title sidebar-title" id="userTitle">Users (0)</div>
@@ -53,6 +54,16 @@
       <div class="sidebar-pane" data-side-pane="automod">
         <div class="panel-title sidebar-title" data-i18n="automodTitle">Held by AutoMod</div>
         <div class="scroll" id="automodList"><div class="automod-empty" data-i18n="automodEmpty">Nothing waiting for review.</div></div>
+      </div>
+      <div class="sidebar-pane" data-side-pane="stats">
+        <div class="panel-title sidebar-title">
+          <span data-i18n="statsTitle">Most active chatters</span>
+          <button class="stats-reset" id="statsReset" data-i18n-title="statsResetTitle" title="Start counting from zero">↺</button>
+        </div>
+        <div class="scroll" id="statsPane">
+          <div class="stats-top" id="statsTop"></div>
+          <div class="stats-summary" id="statsSummary"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -131,6 +142,19 @@
           <input type="checkbox" id="showJoinPartCheckbox" checked>
           <span data-i18n="showJoinPart">Show join/part messages (lurkers entering/leaving)</span>
         </label>
+      </div>
+      <div class="settings-section">
+        <label data-i18n="statsSettingsTitle">Chat stats</label>
+        <div class="settings-row">
+          <span class="settings-status" data-i18n="statsIgnoredLabel">Hidden from the stats (bots), comma separated. Empty = default list:</span>
+        </div>
+        <div class="settings-row">
+          <input class="modal-input" id="statsIgnoredInput" type="text" autocomplete="off" spellcheck="false">
+          <button class="btn" id="statsIgnoredSave" data-i18n="save">Save</button>
+        </div>
+        <div class="settings-row">
+          <span class="settings-status" id="statsIgnoredStatus"></span>
+        </div>
       </div>
       <div class="settings-section hidden" id="autostartSection">
         <label class="checkbox-row">

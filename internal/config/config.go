@@ -106,7 +106,22 @@ type UIConfig struct {
 	// TimeoutPresets are the timeout buttons in the user card, in
 	// seconds. nil/empty = DefaultTimeoutPresets.
 	TimeoutPresets []int `json:"timeout_presets,omitempty"`
+	// StatsIgnoredUsers are left out of the chat stats dashboard (chat
+	// bots). nil/empty = DefaultStatsIgnoredUsers. Lowercase logins.
+	StatsIgnoredUsers []string `json:"stats_ignored_users,omitempty"`
 }
+
+// DefaultStatsIgnoredUsers are common chat bots that would otherwise top
+// the "most active chatters" ranking.
+var DefaultStatsIgnoredUsers = []string{
+	"nightbot", "streamelements", "stammtischbot",
+	"streamlabs", "moobot", "fossabot", "wizebot", "sery_bot",
+	"soundalerts", "pokemoncommunitygame",
+}
+
+// MaxStatsIgnoredUsers caps the ignore list so a pasted wall of text
+// can't bloat the config file.
+const MaxStatsIgnoredUsers = 200
 
 // DefaultTimeoutPresets: 1 minute, 10 minutes, 1 hour, 1 day.
 var DefaultTimeoutPresets = []int{60, 600, 3600, 86400}
