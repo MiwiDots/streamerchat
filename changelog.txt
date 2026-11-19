@@ -1,3 +1,6 @@
+2026-11-19 14:57 - v0.8.0 (stable): RELEASE — chat stats dashboard (most active
+  chatters without bots, see the entry below).
+
 2026-11-19 14:53 - StreamerChat: chat stats dashboard (most active chatters).
 
   - New sidebar tab (📊): the top 5 chatters of the session with their
