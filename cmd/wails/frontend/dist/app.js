@@ -9,10 +9,32 @@ let users = new Map(); // key: platform:lowerusername -> {userId, username, disp
 // Per-user message log for the current session. Keyed by the same
 // platform:lowerusername key as `users`; each entry is an array of
 // {ts, text} newest-appended-last. Capped at USER_MSG_CAP per user
-// so a spammer can't OOM the tab, but 1000 covers any realistic
-// session. Cleared on profile switch.
+// so a spammer can't OOM the tab, and at USER_MSG_TOTAL_CAP lines over
+// all users so a long stream with thousands of chatters can't either:
+// the users who chatted least recently are dropped first (the Map is
+// kept in "last chatted" order). Cleared on profile switch.
 const userMessages = new Map();
 const USER_MSG_CAP = 1000;
+const USER_MSG_TOTAL_CAP = 30000;
+let userMessagesTotal = 0;
+
+function logUserMessage(key, entry) {
+  let log = userMessages.get(key);
+  if (log) userMessages.delete(key); // re-insert below: most recent last
+  else log = [];
+  userMessages.set(key, log);
+  log.push(entry);
+  userMessagesTotal++;
+  if (log.length > USER_MSG_CAP) {
+    userMessagesTotal -= log.length - USER_MSG_CAP;
+    log.splice(0, log.length - USER_MSG_CAP);
+  }
+  while (userMessagesTotal > USER_MSG_TOTAL_CAP && userMessages.size > 1) {
+    const oldest = userMessages.keys().next().value;
+    userMessagesTotal -= userMessages.get(oldest).length;
+    userMessages.delete(oldest);
+  }
+}
 let roles = { mods: new Set(), vips: new Set(), bots: new Set(), broadcaster: '' };
 let selectedUser = null;
 let sendTarget = 0;
@@ -218,13 +240,15 @@ function rolePriority(u) {
   return 4;
 }
 
+// One shared collator: localeCompare builds a new one per comparison.
+// sensitivity "base" also makes the order case-insensitive.
+const userCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
+
 function sortedUsers() {
   return Array.from(users.values()).sort((a, b) => {
     const pa = rolePriority(a), pb = rolePriority(b);
     if (pa !== pb) return pa - pb;
-    const na = (a.displayName || a.username).toLowerCase();
-    const nb = (b.displayName || b.username).toLowerCase();
-    return na.localeCompare(nb);
+    return userCollator.compare(a.displayName || a.username, b.displayName || b.username);
   });
 }
 
@@ -351,7 +375,18 @@ function renderActivity() {
   activityTitleEl.textContent = `Activity (${activityLog.length})`;
 }
 
+// The list is rebuilt at most once per frame: a burst of JOINs or new
+// chatters used to re-sort and rebuild it once per event.
+let userListFrame = 0;
 function refreshUserList() {
+  if (userListFrame) return;
+  userListFrame = requestAnimationFrame(() => {
+    userListFrame = 0;
+    renderUserList();
+  });
+}
+
+function renderUserList() {
   const sorted = sortedUsers();
   userTitleEl.textContent = `Users (${sorted.length})`;
   userListEl.replaceChildren(...sorted.map(u => {
@@ -1142,11 +1177,7 @@ function setupEvents() {
       // show the full history of what this person said, not just the
       // last few lines from the visible chat scroll.
       if (msg.text) {
-        const key = userKey(msg.platform, msg.username);
-        let log = userMessages.get(key);
-        if (!log) { log = []; userMessages.set(key, log); }
-        log.push({ ts: msg.timestamp || Date.now(), text: msg.text });
-        if (log.length > USER_MSG_CAP) log.splice(0, log.length - USER_MSG_CAP);
+        logUserMessage(userKey(msg.platform, msg.username), { ts: msg.timestamp || Date.now(), text: msg.text });
       }
     }
     // Ban/timeout: the target vanishes from chat — drop them from the
@@ -1709,6 +1740,7 @@ function setupProfileSwitchedListener() {
     for (const k of Object.keys(roleBadgeUrls)) delete roleBadgeUrls[k];
     users.clear();
     userMessages.clear();
+    userMessagesTotal = 0;
     activityLog.length = 0;
     renderActivity();
     refreshUserList();
