@@ -1186,15 +1186,26 @@ async function renderText(text, nativeEmotes, channel, gifs) {
   return fragment;
 }
 
-function isMention(text) {
-  if (!text) return false;
-  const lower = text.toLowerCase();
-  if (myUsername) {
+// Mention regex for myUsername, rebuilt only when the name changes
+// (isMention runs for every message in every channel).
+let mentionRe = null;
+let mentionReFor = '';
+function mentionRegex() {
+  if (mentionReFor !== myUsername) {
+    mentionReFor = myUsername;
     // Word-boundary match (an optional leading @ is not a word char, so it
     // is covered too); a bare substring made short names match everything.
     const esc = myUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp('(^|[^a-z0-9_])' + esc + '($|[^a-z0-9_])', 'i').test(text)) return true;
+    mentionRe = myUsername ? new RegExp('(^|[^a-z0-9_])' + esc + '($|[^a-z0-9_])', 'i') : null;
   }
+  return mentionRe;
+}
+
+function isMention(text) {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  const re = mentionRegex();
+  if (re && re.test(text)) return true;
   for (const h of highlights) {
     if (h && lower.includes(h)) return true;
   }
