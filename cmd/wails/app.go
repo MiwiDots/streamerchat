@@ -19,6 +19,7 @@ import (
 	"github.com/miwi/streamerchat/internal/chat"
 	"github.com/miwi/streamerchat/internal/config"
 	"github.com/miwi/streamerchat/internal/eventsub"
+	"github.com/miwi/streamerchat/internal/platform"
 	"github.com/miwi/streamerchat/internal/selfupdate"
 	"github.com/miwi/streamerchat/internal/sevenTV"
 	"github.com/miwi/streamerchat/internal/twitch"
@@ -1701,7 +1702,13 @@ func (a *App) StartLogin() map[string]interface{} {
 }
 
 // OpenURL opens a URL in the user's default browser. Used by the login flow.
+// Only http(s) URLs: the method is reachable from the webview, which
+// renders untrusted chat content.
 func (a *App) OpenURL(url string) {
+	if !platform.IsWebURL(url) {
+		log.Printf("[UI] refusing to open non-web URL %q", url)
+		return
+	}
 	runtime.BrowserOpenURL(a.ctx, url)
 }
 

@@ -1024,7 +1024,7 @@ func (a *App) resolveChannelID(channel string) string {
 		return ""
 	}
 
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.twitch.tv/helix/users?login=%s", channel), nil)
+	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users?login="+url.QueryEscape(channel), nil)
 	if err != nil {
 		return ""
 	}
@@ -1075,6 +1075,9 @@ func (a *App) AddChannel(channel string) string {
 	if ref.Name == "" {
 		return "empty channel"
 	}
+	if ref.Platform == "twitch" && !platform.IsTwitchLogin(ref.Name) {
+		return "invalid Twitch channel name: " + ref.Name
+	}
 	a.addChannelRef(ref)
 	return ""
 }
@@ -1092,10 +1095,20 @@ func (a *App) AddChannelOn(platform, name string) string {
 	ref := ChannelRef{Platform: platform, Name: strings.TrimSpace(strings.TrimPrefix(name, "#"))}
 	if platform == "twitch" {
 		ref.Name = strings.ToLower(ref.Name)
+		if !isTwitchLogin(ref.Name) {
+			return "invalid Twitch channel name: " + ref.Name
+		}
+	}
+	if ref.Name == "" {
+		return "empty channel"
 	}
 	a.addChannelRef(ref)
 	return ""
 }
+
+// isTwitchLogin is platform.IsTwitchLogin, reachable where a parameter
+// named "platform" shadows the package.
+var isTwitchLogin = platform.IsTwitchLogin
 
 // addChannelRef stores ref (if new) and starts watching it. Check and
 // append happen under a.mu: two quick Add clicks used to both pass the
@@ -1554,17 +1567,11 @@ func (a *App) StartLogin() map[string]interface{} {
 // content, and on Windows the shell would otherwise also launch file:,
 // ms-settings: or any registered protocol handler.
 func (a *App) OpenURL(rawURL string) {
-	if !isWebURL(rawURL) {
+	if !platform.IsWebURL(rawURL) {
 		log.Printf("[OPEN] refused non-http(s) URL %q", rawURL)
 		return
 	}
 	runtime.BrowserOpenURL(a.ctx, rawURL)
-}
-
-// isWebURL reports whether s is an absolute http(s) URL with a host.
-func isWebURL(s string) bool {
-	u, err := url.Parse(s)
-	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != ""
 }
 
 // ytLiveInfo is the live stream detected for a YouTube tab.

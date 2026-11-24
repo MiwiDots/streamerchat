@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/miwi/streamerchat/internal/platform"
+
 	"strings"
 	"testing"
 	"time"
@@ -30,12 +32,12 @@ func TestChannelURL(t *testing.T) {
 
 func TestIsWebURL(t *testing.T) {
 	for _, ok := range []string{"https://www.twitch.tv/x", "http://example.com"} {
-		if !isWebURL(ok) {
+		if !platform.IsWebURL(ok) {
 			t.Errorf("%q should be allowed", ok)
 		}
 	}
 	for _, bad := range []string{"file:///C:/Windows/System32/calc.exe", "ms-settings:privacy", "javascript:alert(1)", "https://", "", "C:\\evil.exe"} {
-		if isWebURL(bad) {
+		if platform.IsWebURL(bad) {
 			t.Errorf("%q must be refused", bad)
 		}
 	}
