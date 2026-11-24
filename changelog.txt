@@ -1,3 +1,35 @@
+2026-11-25 04:26 - Code review fixes and optimizations (both apps).
+
+  - Helix requests time out (15s); the library used http.DefaultClient
+    without a timeout. Shared Chat room names resolve in the background
+    instead of blocking the IRC reader, and a failed lookup is retried
+    after a minute instead of caching the room id as the name.
+  - StreamerChat: after a first login (or with an expired token at
+    start) the channel's 7TV/BTTV/FFZ emotes and 7TV paints now load
+    without a restart.
+  - StreamerChat logout stops Helix, EventSub and the role poller; a
+    token refresh that was in flight no longer writes tokens back after
+    logout or a new login (both apps).
+  - Config / login data races: settings setters change and save the
+    config under the app lock (updateConfig); ChatHub reads the Twitch
+    login through a locked snapshot everywhere.
+  - StreamerChat renders 7TV/BTTV/FFZ emotes from a local name -> URL map
+    (loaded on ready + new emotesChanged event) instead of one backend
+    call per word with 15s miss expiry; 50 messages: 0 backend calls.
+  - Badges keep Twitch's order and prediction badges (blue-1, pink-2)
+    resolve; they were read from a map with integer versions.
+  - 7TV cosmetics: at most 4 lookups at a time, failed users retried
+    after 2 minutes instead of on every message during an outage.
+  - StreamerChat: per-user message log capped overall (30000 lines,
+    least recently active users dropped first); user list rebuilt at
+    most once per frame (a 2000-JOIN burst: 3 ms).
+  - Input checks: StreamerChat OpenURL only opens http(s) (shared
+    platform.IsWebURL), ChatHub escapes the login in the users lookup
+    and rejects invalid Twitch channel names; mention regex cached.
+  - Known, not changed: a profile switch during the IRC handshake can
+    be ignored (gempir Disconnect before welcome); rare, needs a
+    supervisor rework.
+
 2026-11-25 04:15 - Dependency updates (security).
 
   - github.com/gorilla/websocket v1.5.3 -> v1.5.4-0.20240701034025-
