@@ -87,3 +87,19 @@ func TestBuildEmotePickerWithoutLogin(t *testing.T) {
 		t.Fatalf("without a login only third-party emotes are listed: %+v", got)
 	}
 }
+
+func TestURLMapMatchesLookupPrecedence(t *testing.T) {
+	tpe := NewThirdPartyEmotes()
+	tpe.global = emoteSet{"EZ": {Name: "EZ", ID: "g-ez", Provider: EmoteProvider7TV}, "KEKW": {Name: "KEKW", ID: "g-kekw", Provider: EmoteProviderBTTV}}
+	tpe.channels["A"] = emoteSet{"EZ": {Name: "EZ", ID: "a-ez", Provider: EmoteProvider7TV}}
+	m := tpe.URLMap("A")
+	for _, name := range []string{"EZ", "KEKW"} {
+		info, _ := tpe.LookupIn("A", name)
+		if m[name] != info.URL() {
+			t.Errorf("URLMap[%s] = %q, LookupIn gives %q", name, m[name], info.URL())
+		}
+	}
+	if len(tpe.URLMap("B")) != 2 {
+		t.Error("unknown channel must still get the globals")
+	}
+}

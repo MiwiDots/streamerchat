@@ -36,6 +36,25 @@ type ThirdPartyEmotes struct {
 	mu       sync.RWMutex
 	global   emoteSet
 	channels map[string]emoteSet // broadcaster id -> channel emotes
+	onChange func()              // called after a set was (re)loaded
+}
+
+// OnChange registers fn to run (on the loading goroutine) after the
+// global or a channel set was (re)loaded, so a UI that keeps its own
+// copy of the emotes can refresh it.
+func (tpe *ThirdPartyEmotes) OnChange(fn func()) {
+	tpe.mu.Lock()
+	tpe.onChange = fn
+	tpe.mu.Unlock()
+}
+
+func (tpe *ThirdPartyEmotes) changed() {
+	tpe.mu.RLock()
+	fn := tpe.onChange
+	tpe.mu.RUnlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 type emoteSet map[string]EmoteInfo // name -> info
@@ -82,6 +101,7 @@ func (tpe *ThirdPartyEmotes) LoadGlobal() {
 	tpe.mu.Lock()
 	tpe.global = set
 	tpe.mu.Unlock()
+	tpe.changed()
 }
 
 // LoadChannel (re)loads the channel emotes of broadcasterID. A failed
@@ -99,6 +119,25 @@ func (tpe *ThirdPartyEmotes) LoadChannel(broadcasterID string) {
 	tpe.mu.Lock()
 	tpe.channels[broadcasterID] = set
 	tpe.mu.Unlock()
+	tpe.changed()
+}
+
+// URLMap returns every 7TV/BTTV/FFZ emote usable in broadcasterID's chat
+// as name -> image URL, channel emotes overriding global ones (the same
+// precedence as LookupIn). The frontend keeps this map and resolves words
+// locally instead of asking the backend once per word.
+func (tpe *ThirdPartyEmotes) URLMap(broadcasterID string) map[string]string {
+	tpe.mu.RLock()
+	defer tpe.mu.RUnlock()
+	channel := tpe.channels[broadcasterID]
+	out := make(map[string]string, len(tpe.global)+len(channel))
+	for name, info := range tpe.global {
+		out[name] = info.URL()
+	}
+	for name, info := range channel {
+		out[name] = info.URL()
+	}
+	return out
 }
 
 // Load fetches global emotes and, if broadcasterID is set, that channel's

@@ -142,6 +142,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// 3rd party emotes (loaded async)
 	a.emotes = twitch.NewThirdPartyEmotes()
+	// The frontend keeps its own name -> URL copy (GetEmoteMap); tell it
+	// to reload whenever a set finished loading.
+	a.emotes.OnChange(func() { a.emit("emotesChanged", nil) })
 	// Globals now; the channel set is loaded in bootSequence once the
 	// account (and thus the channel id) is validated — per profile.
 	go a.emotes.LoadGlobal()
@@ -1901,26 +1904,17 @@ func (a *App) loadBadges() {
 	log.Printf("[BADGES] loaded %d sets", a.badges.Count())
 }
 
-// LookupEmote returns 3rd-party emote info for a name.
-// Channel emotes of the active profile's channel win over global ones.
-func (a *App) LookupEmote(name string) map[string]interface{} {
+// GetEmoteMap returns the 7TV/BTTV/FFZ emotes of the channel (plus the
+// globals) as name -> image URL. The frontend loads it on "ready" and on
+// "emotesChanged" and resolves chat words locally.
+func (a *App) GetEmoteMap() map[string]string {
 	if a.emotes == nil {
-		return nil
+		return map[string]string{}
 	}
 	a.mu.Lock()
 	broadcasterID := a.cfg.Twitch.BotUserID
 	a.mu.Unlock()
-	info, ok := a.emotes.LookupIn(broadcasterID, name)
-	if !ok {
-		return nil
-	}
-	url := info.URL()
-	return map[string]interface{}{
-		"provider": int(info.Provider),
-		"id":       info.ID,
-		"animated": info.Animated,
-		"url":      url,
-	}
+	return a.emotes.URLMap(broadcasterID)
 }
 
 // GetEmotePicker returns the emotes for the picker: this channel's Twitch

@@ -17,16 +17,19 @@ let roles = { mods: new Set(), vips: new Set(), bots: new Set(), broadcaster: ''
 let selectedUser = null;
 let sendTarget = 0;
 let ytEnabled = false;
-let emoteCache = new Map(); // name -> {url, animated}; hits only (misses live in emoteMiss)
+// 7TV/BTTV/FFZ emotes of this channel + globals: name -> image URL. Loaded
+// as a whole from the backend (refreshEmoteMap) so rendering a message
+// resolves words locally instead of one backend call per word.
+let emoteMap = new Map();
+let emoteMapReq = 0; // a slower, older reply must not overwrite a newer map
 
-// Lookups made before the backend finished loading emotes/badges return
-// nothing. Caching those misses forever hid every emote/badge for the whole
-// session, so misses expire after MISS_TTL_MS and are all dropped on the
-// "ready" event. Both maps are insertion-ordered, so evicting the first key
-// drops the oldest entry.
+// Badge lookups made before the backend finished loading return nothing.
+// Caching those misses forever hid every badge for the whole session, so
+// misses expire after MISS_TTL_MS and are all dropped on the "ready" event.
+// The map is insertion-ordered, so evicting the first key drops the oldest
+// entry.
 const MISS_TTL_MS = 15000;
 const CACHE_MAX = 3000;
-const emoteMiss = new Map(); // name -> expiry timestamp
 const badgeMiss = new Map(); // "set/version" -> expiry timestamp
 function capMap(m, max) {
   while (m.size > max) m.delete(m.keys().next().value);
@@ -422,25 +425,18 @@ async function renderBadges(badges) {
   return fragment;
 }
 
-// Emote lookup cache
-async function lookupEmote(name) {
-  if (emoteCache.has(name)) return emoteCache.get(name);
-  if (missActive(emoteMiss, name)) return null;
-  const gen = renderGen;
-  let result = null;
+// Emote map: fetched on "ready" and whenever the backend finished
+// (re)loading an emote set ("emotesChanged").
+async function refreshEmoteMap() {
+  const req = ++emoteMapReq;
+  let m = null;
   try {
-    const info = await withTimeout(window.go.main.App.LookupEmote(name), LOOKUP_TIMEOUT_MS, null);
-    if (info && info.url) result = info;
-  } catch (e) {}
-  if (gen !== renderGen) return result;
-  if (result) {
-    emoteCache.set(name, result);
-    capMap(emoteCache, CACHE_MAX);
-  } else {
-    emoteMiss.set(name, Date.now() + MISS_TTL_MS);
-    capMap(emoteMiss, CACHE_MAX);
+    m = await withTimeout(window.go.main.App.GetEmoteMap(), LOOKUP_TIMEOUT_MS, null);
+  } catch (e) {
+    console.error('emote map load failed', e);
   }
-  return result;
+  if (req !== emoteMapReq || !m) return;
+  emoteMap = new Map(Object.entries(m));
 }
 
 // Render text with emote substitution.
@@ -502,9 +498,9 @@ async function renderText(text, nativeEmotes, gifs) {
     const word = runes.slice(wordStart, i).join('');
 
     // 3rd party emote?
-    const emote = await lookupEmote(word);
-    if (emote) {
-      fragment.appendChild(el('img', { class: 'emote', src: emote.url, alt: word, title: word }));
+    const emoteUrl = emoteMap.get(word);
+    if (emoteUrl) {
+      fragment.appendChild(el('img', { class: 'emote', src: emoteUrl, alt: word, title: word }));
     } else {
       fragment.appendChild(document.createTextNode(word));
     }
@@ -1095,11 +1091,12 @@ document.addEventListener('keydown', (e) => {
 
 function setupEvents() {
 
+  window.runtime.EventsOn('emotesChanged', () => refreshEmoteMap());
   window.runtime.EventsOn('ready', (data) => {
-    // No dedicated "emotes/badges loaded" event exists; "ready" is the
-    // closest signal, so forget misses recorded before it.
-    emoteMiss.clear();
+    // No dedicated "badges loaded" event exists; "ready" is the closest
+    // signal, so forget misses recorded before it.
     badgeMiss.clear();
+    refreshEmoteMap();
     ytEnabled = !!data.youtube;
     if (ytEnabled) ytPillEl.classList.remove('hidden');
     if (data.username) setLoggedInUI(true, data.username);
@@ -1706,8 +1703,9 @@ function setupProfileSwitchedListener() {
     roles = { mods: new Set(), vips: new Set(), bots: new Set(), broadcaster: '' };
     badgeCache.clear();
     badgeMiss.clear();
-    emoteCache.clear();
-    emoteMiss.clear();
+    // Old channel's emotes; the new profile's "ready" loads its map.
+    emoteMapReq++;
+    emoteMap = new Map();
     for (const k of Object.keys(roleBadgeUrls)) delete roleBadgeUrls[k];
     users.clear();
     userMessages.clear();
