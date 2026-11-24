@@ -262,7 +262,7 @@ func (m *MultiIRCClient) registerHandlers(c *twitch.Client) {
 			Username:    msg.User.Name,
 			DisplayName: msg.User.DisplayName,
 			Color:       msg.User.Color,
-			Badges:      convertBadges(msg.User.Badges),
+			Badges:      badgesFromTag(msg.Tags["badges"], msg.User.Badges),
 			Text:        userNoticeText(msg),
 		}
 		switch {

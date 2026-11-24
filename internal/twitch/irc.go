@@ -5,6 +5,7 @@ import (
 	"log"
 	"regexp"
 	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -360,7 +361,7 @@ func (c *IRCClient) registerHandlers() {
 			Username:    msg.User.Name,
 			DisplayName: msg.User.DisplayName,
 			Color:       msg.User.Color,
-			Badges:      convertBadges(msg.User.Badges),
+			Badges:      badgesFromTag(msg.Tags["badges"], msg.User.Badges),
 			Text:        userNoticeText(msg),
 		}
 
@@ -572,7 +573,7 @@ func convertPrivateMessage(msg twitch.PrivateMessage, channel string) chat.Messa
 		Username:      msg.User.Name,
 		DisplayName:   msg.User.DisplayName,
 		Color:         msg.User.Color,
-		Badges:        convertBadges(msg.User.Badges),
+		Badges:        badgesFromTag(msg.Tags["badges"], msg.User.Badges),
 		IsMod:         hasBadge(msg.User.Badges, "moderator"),
 		IsVIP:         hasBadge(msg.User.Badges, "vip"),
 		IsSub:         hasBadge(msg.User.Badges, "subscriber"),
@@ -611,7 +612,7 @@ func convertPrivateMessage(msg twitch.PrivateMessage, channel string) chat.Messa
 		}
 		// Use source badges for correct role display
 		if len(msg.Source.Badges) > 0 {
-			m.Badges = convertBadges(msg.Source.Badges)
+			m.Badges = badgesFromTag(msg.Tags["source-badges"], msg.Source.Badges)
 			m.IsMod = hasBadge(msg.Source.Badges, "moderator")
 			m.IsVIP = hasBadge(msg.Source.Badges, "vip")
 			m.IsSub = hasBadge(msg.Source.Badges, "subscriber")
@@ -622,6 +623,31 @@ func convertPrivateMessage(msg twitch.PrivateMessage, channel string) chat.Messa
 	return m
 }
 
+// badgesFromTag returns the badges of an IRC "badges" / "source-badges"
+// tag ("broadcaster/1,subscriber/3012,predictions/blue-1") in the order
+// Twitch sends them, which is the order Twitch displays them in. The raw
+// tag is used because the library parses versions as integers
+// ("blue-1" becomes 0, so prediction badges never resolved) and stores
+// them in a map (random order on every message). Falls back to the
+// parsed map, sorted by name, when the tag is missing.
+func badgesFromTag(raw string, parsed map[string]int) []chat.Badge {
+	if raw == "" {
+		return convertBadges(parsed)
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]chat.Badge, 0, len(parts))
+	for _, p := range parts {
+		name, version, ok := strings.Cut(p, "/")
+		if !ok || name == "" {
+			continue
+		}
+		out = append(out, chat.Badge{Name: name, Version: version})
+	}
+	return out
+}
+
+// convertBadges converts the library's parsed badge map, sorted by name
+// so the order is at least stable.
 func convertBadges(badges map[string]int) []chat.Badge {
 	result := make([]chat.Badge, 0, len(badges))
 	for name, version := range badges {
@@ -630,6 +656,7 @@ func convertBadges(badges map[string]int) []chat.Badge {
 			Version: fmt.Sprintf("%d", version),
 		})
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
 }
 
