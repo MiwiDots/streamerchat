@@ -285,8 +285,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// Set built-in client ID if missing
 	if a.cfg.ClientID == "" && defaultClientID != "" {
-		a.cfg.ClientID = defaultClientID
-		a.cfg.Save()
+		_ = a.updateConfig(func(c *HubConfig) { c.ClientID = defaultClientID })
 	}
 
 	a.emotes = twitch.NewThirdPartyEmotes()
@@ -348,7 +347,7 @@ func (a *App) startup(ctx context.Context) {
 	}()
 
 	// Start authenticated client if we have a token
-	if a.cfg.AccessToken != "" && a.cfg.Username != "" {
+	if au := a.auth(); au.AccessToken != "" && au.Username != "" {
 		go a.validateAndConnect()
 	}
 
@@ -370,13 +369,14 @@ func (a *App) startup(ctx context.Context) {
 	// Token auto-refresh (every hour, like StreamerChat)
 	go a.tokenRefreshLoop()
 
+	au := a.auth()
 	runtime.EventsEmit(a.ctx, "ready", map[string]interface{}{
 		"channels":       a.cfg.Channels,
 		"highlights":     a.cfg.Highlights,
 		"theme":          a.cfg.Theme,
 		"onlyShowLive":   a.cfg.OnlyShowLive,
-		"loggedIn":       a.cfg.AccessToken != "",
-		"username":       a.cfg.Username,
+		"loggedIn":       au.AccessToken != "",
+		"username":       au.Username,
 		"configPath":     hubConfigPath(),
 		"locale":         a.cfg.Locale,
 		"notifSound":     a.cfg.NotifSound,
@@ -384,28 +384,61 @@ func (a *App) startup(ctx context.Context) {
 	})
 }
 
+// twitchAuth is a consistent snapshot of the Twitch login. Bound methods
+// and background loops (live poll, token refresh, login) run on their own
+// goroutines, so the login fields are only read through auth() and only
+// written under a.mu.
+type twitchAuth struct {
+	ClientID, AccessToken, RefreshToken, Username, UserID string
+}
+
+func (a *App) auth() twitchAuth {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.authLocked()
+}
+
+func (a *App) authLocked() twitchAuth {
+	return twitchAuth{
+		ClientID:     a.cfg.ClientID,
+		AccessToken:  a.cfg.AccessToken,
+		RefreshToken: a.cfg.RefreshToken,
+		Username:     a.cfg.Username,
+		UserID:       a.cfg.UserID,
+	}
+}
+
+// updateConfig applies fn to the config and saves it, both under a.mu
+// (Save marshals the whole config, so it must not run while another
+// goroutine changes it).
+func (a *App) updateConfig(fn func(c *HubConfig)) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	fn(a.cfg)
+	return a.cfg.Save()
+}
+
 // validateAndConnect validates the saved token, refreshes if needed, then connects.
 // Resilient: only logs out if we get an explicit "token expired" error from Twitch.
 // Network errors / timeouts keep the saved login state.
 func (a *App) validateAndConnect() {
-	if a.cfg.AccessToken == "" {
+	au := a.auth()
+	if au.AccessToken == "" {
 		log.Printf("[AUTH] No access token in config")
 		return
 	}
-	log.Printf("[AUTH] Validating saved token for user=%s", a.cfg.Username)
-	info, err := twitch.ValidateToken(a.cfg.AccessToken)
+	log.Printf("[AUTH] Validating saved token for user=%s", au.Username)
+	info, err := twitch.ValidateToken(au.AccessToken)
 	if err == nil {
 		log.Printf("[AUTH] Token valid for %s, proactively refreshing for the session", info.Login)
 		if info.Login != "" {
-			a.cfg.Username = info.Login
-			a.cfg.UserID = info.UserID
-			a.cfg.Save()
+			_ = a.updateConfig(func(c *HubConfig) { c.Username, c.UserID = info.Login, info.UserID })
 		}
 		// Even when the token validates we kick off one refresh up-front so
 		// the new session starts with a token that won't expire mid-use just
 		// because the user opened the app right before its TTL elapsed.
 		// Failure here is non-fatal — the existing token is still usable.
-		if a.cfg.RefreshToken != "" {
+		if au.RefreshToken != "" {
 			_ = a.refreshTokenSync()
 		}
 		a.connectSendClient()
@@ -429,10 +462,8 @@ func (a *App) validateAndConnect() {
 	}
 
 	// Verify the new token
-	if newInfo, vErr := twitch.ValidateToken(a.cfg.AccessToken); vErr == nil {
-		a.cfg.Username = newInfo.Login
-		a.cfg.UserID = newInfo.UserID
-		a.cfg.Save()
+	if newInfo, vErr := twitch.ValidateToken(a.auth().AccessToken); vErr == nil {
+		_ = a.updateConfig(func(c *HubConfig) { c.Username, c.UserID = newInfo.Login, newInfo.UserID })
 		log.Printf("[AUTH] Re-authenticated as %s", newInfo.Login)
 	}
 	a.connectSendClient()
@@ -441,16 +472,27 @@ func (a *App) validateAndConnect() {
 // refreshTokenSync refreshes the access token using the refresh token.
 // Returns true on success.
 func (a *App) refreshTokenSync() bool {
-	if a.cfg.RefreshToken == "" || a.cfg.ClientID == "" {
+	au := a.auth()
+	if au.RefreshToken == "" || au.ClientID == "" {
 		return false
 	}
-	token, err := twitch.RefreshAccessToken(a.cfg.ClientID, "", a.cfg.RefreshToken)
+	token, err := twitch.RefreshAccessToken(au.ClientID, "", au.RefreshToken)
 	if err != nil {
 		log.Printf("[AUTH] Refresh error: %v", err)
 		return false
 	}
+	// Only store the result if the login is still the one we refreshed:
+	// after a logout or a new login meanwhile, writing it back would undo
+	// that.
+	a.mu.Lock()
+	if a.cfg.RefreshToken != au.RefreshToken {
+		a.mu.Unlock()
+		log.Printf("[AUTH] Login changed during refresh — discarding refreshed tokens")
+		return false
+	}
 	a.cfg.AccessToken = token.AccessToken
 	a.cfg.RefreshToken = token.RefreshToken
+	a.mu.Unlock()
 	a.saveTwitchTokens()
 	log.Printf("[AUTH] Token refreshed successfully")
 	return true
@@ -470,7 +512,7 @@ func (a *App) tokenRefreshLoop() {
 			return
 		case <-ticker.C:
 		}
-		if a.cfg.AccessToken == "" || a.cfg.RefreshToken == "" {
+		if au := a.auth(); au.AccessToken == "" || au.RefreshToken == "" {
 			continue
 		}
 		if a.refreshTokenSync() {
@@ -511,11 +553,12 @@ func (a *App) connectSendClient() {
 	// Send-only: chathub reads chat through a.irc (MultiIRCClient). The
 	// full client's event channels were never drained here, so after ~256
 	// events its parser blocked and the connection silently died.
-	send := twitch.NewSendOnlyIRCClient(a.cfg.Username, a.cfg.AccessToken, primary, twitchChans[1:]...)
+	au := a.authLocked()
+	send := twitch.NewSendOnlyIRCClient(au.Username, au.AccessToken, primary, twitchChans[1:]...)
 	a.send = send
 	a.mu.Unlock()
 
-	log.Printf("[SEND] connecting IRC for user=%s, channels=%v", a.cfg.Username, twitchChans)
+	log.Printf("[SEND] connecting IRC for user=%s, channels=%v", au.Username, twitchChans)
 	go func() {
 		// gempir's Connect() blocks and auto-reconnects internally. If it
 		// returns, the supervision is over (intentional Disconnect or
@@ -601,7 +644,8 @@ func (a *App) checkLive(channel string) (live, ok bool) {
 // {live, title, gameName, viewerCount, startedAt, thumbnailUrl} — empty
 // values (e.g. live=false) when the channel is offline.
 func (a *App) fetchStreamInfo(channel string) map[string]interface{} {
-	if a.cfg.AccessToken == "" || a.cfg.ClientID == "" {
+	au := a.auth()
+	if au.AccessToken == "" || au.ClientID == "" {
 		return map[string]interface{}{"live": false}
 	}
 	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/streams?user_login="+url.QueryEscape(channel), nil)
@@ -609,8 +653,8 @@ func (a *App) fetchStreamInfo(channel string) map[string]interface{} {
 		log.Printf("[LIVE] %s: request build error: %v", channel, err)
 		return nil
 	}
-	req.Header.Set("Client-Id", a.cfg.ClientID)
-	req.Header.Set("Authorization", "Bearer "+a.cfg.AccessToken)
+	req.Header.Set("Client-Id", au.ClientID)
+	req.Header.Set("Authorization", "Bearer "+au.AccessToken)
 
 	resp, err := helixHTTPClient.Do(req)
 	if err != nil {
@@ -663,7 +707,8 @@ func (a *App) fetchStreamInfo(channel string) map[string]interface{} {
 // to the locally-tracked chatter list.
 func (a *App) GetChannelChatters(channel string) map[string]interface{} {
 	out := map[string]interface{}{"users": []string{}, "source": "none"}
-	if a.cfg.AccessToken == "" || a.cfg.ClientID == "" || a.cfg.UserID == "" {
+	au := a.auth()
+	if au.AccessToken == "" || au.ClientID == "" || au.UserID == "" {
 		return out
 	}
 	channel = strings.ToLower(strings.TrimPrefix(channel, "#"))
@@ -672,13 +717,13 @@ func (a *App) GetChannelChatters(channel string) map[string]interface{} {
 		return out
 	}
 	url := fmt.Sprintf("https://api.twitch.tv/helix/chat/chatters?broadcaster_id=%s&moderator_id=%s&first=1000",
-		broadcasterID, a.cfg.UserID)
+		broadcasterID, au.UserID)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return out
 	}
-	req.Header.Set("Client-Id", a.cfg.ClientID)
-	req.Header.Set("Authorization", "Bearer "+a.cfg.AccessToken)
+	req.Header.Set("Client-Id", au.ClientID)
+	req.Header.Set("Authorization", "Bearer "+au.AccessToken)
 	resp, err := helixHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("[CHATTERS] %s: http error: %v", channel, err)
@@ -910,7 +955,8 @@ func (a *App) loadChannelEmotes(channel string) {
 	// load would silently no-op and never retry.
 	var userID string
 	for range 30 {
-		if a.cfg.AccessToken != "" && a.cfg.ClientID != "" {
+		au := a.auth()
+		if au.AccessToken != "" && au.ClientID != "" {
 			userID = a.resolveChannelID(channel)
 			if userID != "" {
 				break
@@ -924,7 +970,8 @@ func (a *App) loadChannelEmotes(channel string) {
 	}
 	// Channel emotes only — globals are loaded once at startup.
 	a.emotes.LoadChannel(userID)
-	if err := a.badges.LoadChannel(userID, a.cfg.ClientID, a.cfg.AccessToken); err != nil {
+	au := a.auth()
+	if err := a.badges.LoadChannel(userID, au.ClientID, au.AccessToken); err != nil {
 		log.Printf("[BADGES] channel badge load failed for %s: %v", channel, err)
 		return
 	}
@@ -948,8 +995,9 @@ func (a *App) loadChannelEmotes(channel string) {
 // loadGlobalBadges retries until access token is available, then loads global badges.
 func (a *App) loadGlobalBadges() {
 	for range 30 { // try for up to 30 seconds
-		if a.cfg.AccessToken != "" && a.cfg.ClientID != "" {
-			if err := a.badges.LoadGlobal(a.cfg.ClientID, a.cfg.AccessToken); err == nil {
+		au := a.auth()
+		if au.AccessToken != "" && au.ClientID != "" {
+			if err := a.badges.LoadGlobal(au.ClientID, au.AccessToken); err == nil {
 				log.Printf("[BADGES] loaded %d global badge sets", a.badges.Count())
 				return
 			} else {
@@ -971,7 +1019,8 @@ func (a *App) resolveChannelID(channel string) string {
 	}
 	a.mu.Unlock()
 
-	if a.cfg.AccessToken == "" || a.cfg.ClientID == "" {
+	au := a.auth()
+	if au.AccessToken == "" || au.ClientID == "" {
 		return ""
 	}
 
@@ -979,8 +1028,8 @@ func (a *App) resolveChannelID(channel string) string {
 	if err != nil {
 		return ""
 	}
-	req.Header.Set("Client-Id", a.cfg.ClientID)
-	req.Header.Set("Authorization", "Bearer "+a.cfg.AccessToken)
+	req.Header.Set("Client-Id", au.ClientID)
+	req.Header.Set("Authorization", "Bearer "+au.AccessToken)
 	resp, err := helixHTTPClient.Do(req)
 	if err != nil {
 		return ""
@@ -1227,6 +1276,7 @@ func (a *App) checkAndEmitLive(channel string) {
 func (a *App) RemoveChannel(channel string) {
 	ref := parseChannelRef(channel)
 	stored := ref.String()
+	a.mu.Lock()
 	newList := make([]string, 0, len(a.cfg.Channels))
 	for _, c := range a.cfg.Channels {
 		if c != stored && c != channel {
@@ -1235,6 +1285,7 @@ func (a *App) RemoveChannel(channel string) {
 	}
 	a.cfg.Channels = newList
 	a.cfg.Save()
+	a.mu.Unlock()
 	switch ref.Platform {
 	case "youtube":
 		a.stopYouTubeWatcher(ref.Name)
@@ -1247,12 +1298,16 @@ func (a *App) RemoveChannel(channel string) {
 // reorder still work) plus a parallel structured list for the platform-aware
 // UI in the frontend.
 func (a *App) GetChannels() []string {
-	return a.cfg.Channels
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.cfg.Channels...)
 }
 
 // GetChannelsDetailed returns each tracked channel with its platform so the
 // frontend can render the right pill / route the right send target.
 func (a *App) GetChannelsDetailed() []map[string]string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	out := make([]map[string]string, 0, len(a.cfg.Channels))
 	for _, c := range a.cfg.Channels {
 		ref := parseChannelRef(c)
@@ -1345,32 +1400,26 @@ func (a *App) LookupEmote(channel, name string) map[string]interface{} {
 }
 
 func (a *App) SetHighlights(keywords []string) {
-	a.cfg.Highlights = keywords
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *HubConfig) { c.Highlights = keywords })
 }
 
 func (a *App) GetHighlights() []string {
-	return a.cfg.Highlights
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.cfg.Highlights...)
 }
 
 func (a *App) SetTheme(theme string) {
-	a.cfg.Theme = theme
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *HubConfig) { c.Theme = theme })
 }
 
 func (a *App) SetOnlyShowLive(only bool) {
-	a.mu.Lock()
-	a.cfg.OnlyShowLive = only
-	a.mu.Unlock()
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *HubConfig) { c.OnlyShowLive = only })
 }
 
 // SetLiveNotifications enables/disables the "channel went live" notice.
 func (a *App) SetLiveNotifications(enabled bool) {
-	a.mu.Lock()
-	a.cfg.MuteLiveNotifications = !enabled
-	a.mu.Unlock()
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *HubConfig) { c.MuteLiveNotifications = !enabled })
 }
 
 // windowTitle must match options.App.Title in main.go (used to find the
@@ -1389,20 +1438,16 @@ func (a *App) FlashTaskbar() {
 // SetLocale stores the chosen UI locale ("en" or "de"). Frontend reads it
 // back via GetInitialState. Empty or unknown values default to "en".
 func (a *App) SetLocale(locale string) {
-	switch locale {
-	case "de", "en":
-		a.cfg.Locale = locale
-	default:
-		a.cfg.Locale = "en"
+	if locale != "de" {
+		locale = "en"
 	}
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *HubConfig) { c.Locale = locale })
 }
 
 // SetShowTimestamps toggles the always-visible per-message timestamp column.
 // Stored inverted (HideTimestamps) so the historic default stays "visible".
 func (a *App) SetShowTimestamps(show bool) {
-	a.cfg.HideTimestamps = !show
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *HubConfig) { c.HideTimestamps = !show })
 }
 
 // SetNotifSound persists the selected mention/live-go notification tone.
@@ -1410,28 +1455,28 @@ func (a *App) SetShowTimestamps(show bool) {
 func (a *App) SetNotifSound(s string) {
 	switch s {
 	case "bell", "ping", "none":
-		a.cfg.NotifSound = s
 	default:
-		a.cfg.NotifSound = "none"
+		s = "none"
 	}
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *HubConfig) { c.NotifSound = s })
 }
 
 // === Auth flow (Device Code) ===
 
 // StartLogin requests a device code and returns the verification URL + code.
 func (a *App) StartLogin() map[string]interface{} {
-	if a.cfg.ClientID == "" {
+	clientID := a.auth().ClientID
+	if clientID == "" {
 		return map[string]interface{}{"error": "no client_id configured"}
 	}
-	device, err := twitch.RequestDeviceCode(a.cfg.ClientID)
+	device, err := twitch.RequestDeviceCode(clientID)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
 
 	// Poll in background
 	go func() {
-		token, err := twitch.PollForToken(a.cfg.ClientID, device.DeviceCode, device.Interval)
+		token, err := twitch.PollForToken(clientID, device.DeviceCode, device.Interval)
 		if err != nil {
 			runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{"error": err.Error()})
 			return
@@ -1441,11 +1486,10 @@ func (a *App) StartLogin() map[string]interface{} {
 			runtime.EventsEmit(a.ctx, "loginResult", map[string]interface{}{"error": err.Error()})
 			return
 		}
-		a.cfg.AccessToken = token.AccessToken
-		a.cfg.RefreshToken = token.RefreshToken
-		a.cfg.Username = info.Login
-		a.cfg.UserID = info.UserID
-		a.cfg.Save()
+		_ = a.updateConfig(func(c *HubConfig) {
+			c.AccessToken, c.RefreshToken = token.AccessToken, token.RefreshToken
+			c.Username, c.UserID = info.Login, info.UserID
+		})
 		// Tokens are memory-only on HubConfig (json:"-"); this puts them
 		// into the OS keyring (or the logged plaintext fallback).
 		a.saveTwitchTokens()
@@ -1615,22 +1659,22 @@ func (a *App) GetInitialState() map[string]interface{} {
 	for k, v := range a.liveStatus {
 		liveMap[k] = v
 	}
-	a.mu.Unlock()
-
+	defer a.mu.Unlock()
+	au := a.authLocked()
 	return map[string]interface{}{
-		"channels":          a.cfg.Channels,
-		"highlights":        a.cfg.Highlights,
+		"channels":          append([]string(nil), a.cfg.Channels...),
+		"highlights":        append([]string(nil), a.cfg.Highlights...),
 		"theme":             a.cfg.Theme,
 		"onlyShowLive":      a.cfg.OnlyShowLive,
 		"liveNotifications": !a.cfg.MuteLiveNotifications,
-		"loggedIn":          a.cfg.AccessToken != "",
-		"username":          a.cfg.Username,
+		"loggedIn":          au.AccessToken != "",
+		"username":          au.Username,
 		"configPath":        hubConfigPath(),
 		"liveStatus":        liveMap,
 		"locale":            a.cfg.Locale,
 		"notifSound":        a.cfg.NotifSound,
 		"showTimestamps":    !a.cfg.HideTimestamps,
-		"fontSize":          a.GetFontSize(),
+		"fontSize":          clampFontSize(a.cfg.FontSize),
 	}
 }
 
@@ -1654,7 +1698,7 @@ func exeDir() string {
 
 // TestSave forces a config save and returns the error string if any.
 func (a *App) TestSave() string {
-	if err := a.cfg.Save(); err != nil {
+	if err := a.updateConfig(func(*HubConfig) {}); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -1702,10 +1746,17 @@ func (a *App) LookupSevenTV(twitchUserID string) {
 
 // GetFontSize returns the saved chat font size (px), defaulting to 14.
 func (a *App) GetFontSize() int {
-	if a.cfg.FontSize < 10 || a.cfg.FontSize > 28 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return clampFontSize(a.cfg.FontSize)
+}
+
+// clampFontSize maps an unset or out-of-range font size to the default.
+func clampFontSize(px int) int {
+	if px < 10 || px > 28 {
 		return 14
 	}
-	return a.cfg.FontSize
+	return px
 }
 
 // SetFontSize persists the chat font size. Clamped to [10, 28].
@@ -1716,8 +1767,7 @@ func (a *App) SetFontSize(px int) string {
 	if px > 28 {
 		px = 28
 	}
-	a.cfg.FontSize = px
-	if err := a.cfg.Save(); err != nil {
+	if err := a.updateConfig(func(c *HubConfig) { c.FontSize = px }); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -1739,8 +1789,7 @@ func (a *App) SetUpdateChannel(channel string) string {
 	if c != "stable" && c != "beta" && c != "alpha" {
 		c = "stable"
 	}
-	a.cfg.UpdateChannel = c
-	if err := a.cfg.Save(); err != nil {
+	if err := a.updateConfig(func(cfg *HubConfig) { cfg.UpdateChannel = c }); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -1775,11 +1824,9 @@ func (a *App) GetVersion() string { return version.Version }
 
 // Logout clears auth.
 func (a *App) Logout() {
-	a.cfg.AccessToken = ""
-	a.cfg.RefreshToken = ""
-	a.cfg.Username = ""
-	a.cfg.UserID = ""
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *HubConfig) {
+		c.AccessToken, c.RefreshToken, c.Username, c.UserID = "", "", "", ""
+	})
 	a.clearTwitchTokens()
 	a.mu.Lock()
 	if a.send != nil {
@@ -1803,11 +1850,12 @@ func (a *App) SendMessage(channel, text string) string {
 // SendReply sends text to a Twitch channel as a reply to replyParentID
 // (empty = normal message).
 func (a *App) SendReply(channel, text, replyParentID string) string {
-	if a.cfg.AccessToken == "" || a.cfg.ClientID == "" {
+	au := a.auth()
+	if au.AccessToken == "" || au.ClientID == "" {
 		log.Printf("[SEND] rejected — no access token / client id")
 		return "not logged in"
 	}
-	if a.cfg.UserID == "" {
+	if au.UserID == "" {
 		log.Printf("[SEND] rejected — no user id (re-login required?)")
 		return "missing user id — please re-login"
 	}
@@ -1818,7 +1866,7 @@ func (a *App) SendReply(channel, text, replyParentID string) string {
 		return "could not resolve channel"
 	}
 	log.Printf("[SEND] Helix POST #%s (broadcaster=%s) text=%q", channel, broadcasterID, text)
-	if err := twitch.SendChatMessage(a.cfg.ClientID, a.cfg.AccessToken, broadcasterID, a.cfg.UserID, text, replyParentID); err != nil {
+	if err := twitch.SendChatMessage(au.ClientID, au.AccessToken, broadcasterID, au.UserID, text, replyParentID); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -1908,9 +1956,8 @@ func (a *App) GetEmotePicker(channel string) []twitch.PickerSection {
 		return nil
 	}
 	broadcasterID := a.resolveChannelID(ref.Name)
-	a.mu.Lock()
-	clientID, token := a.cfg.ClientID, a.cfg.AccessToken
-	a.mu.Unlock()
+	au := a.auth()
+	clientID, token := au.ClientID, au.AccessToken
 	return twitch.BuildEmotePicker(a.twitchEmotes, a.emotes, clientID, token, broadcasterID)
 }
 
@@ -1923,7 +1970,8 @@ func (a *App) GetEmotePicker(channel string) []twitch.PickerSection {
 // if it's a login we resolve it via /helix/users?login=...
 func (a *App) GetUserCard(channel, userIDOrLogin string) map[string]interface{} {
 	out := map[string]interface{}{}
-	if a.cfg.AccessToken == "" || a.cfg.ClientID == "" {
+	au := a.auth()
+	if au.AccessToken == "" || au.ClientID == "" {
 		out["error"] = "not logged in"
 		return out
 	}
@@ -2007,8 +2055,9 @@ func (a *App) helixGet(url string) (map[string]interface{}, int) {
 	if err != nil {
 		return nil, 0
 	}
-	req.Header.Set("Client-Id", a.cfg.ClientID)
-	req.Header.Set("Authorization", "Bearer "+a.cfg.AccessToken)
+	au := a.auth()
+	req.Header.Set("Client-Id", au.ClientID)
+	req.Header.Set("Authorization", "Bearer "+au.AccessToken)
 	resp, err := helixHTTPClient.Do(req)
 	if err != nil {
 		return nil, 0

@@ -249,12 +249,7 @@ func (a *App) bootSequence() {
 	a.startChattersAndRoles()
 	a.startYouTube()
 
-	a.emit("ready", map[string]interface{}{
-		"channel":        a.cfg.Twitch.Channel,
-		"username":       a.cfg.Twitch.Username,
-		"youtube":        (a.cfg.YouTube.Enabled && a.cfg.YouTube.ChannelHandle != "") || a.cfg.YouTube.VideoID != "",
-		"showTimestamps": a.cfg.UI.ShowTimestamps,
-	})
+	a.emit("ready", a.readyPayload())
 }
 
 // startChannelExtras loads what the channel's chat needs once the user
@@ -286,6 +281,35 @@ func (a *App) startChannelExtras(userID string) {
 	}
 	stv.Start()
 	stv.AddChannel(userID)
+}
+
+// readyPayload is the "ready" event: channel, login and display flags,
+// read under a.mu (boot and login run on background goroutines).
+func (a *App) readyPayload() map[string]interface{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return map[string]interface{}{
+		"channel":        a.cfg.Twitch.Channel,
+		"username":       a.cfg.Twitch.Username,
+		"youtube":        (a.cfg.YouTube.Enabled && a.cfg.YouTube.ChannelHandle != "") || a.cfg.YouTube.VideoID != "",
+		"showTimestamps": a.cfg.UI.ShowTimestamps,
+	}
+}
+
+// updateConfig applies fn to the config and saves it, both under a.mu.
+// Bound methods run on their own goroutines (one per frontend call) and
+// Save also reads the config (and writes the active profile back into
+// Profiles), so every change goes through here instead of touching
+// a.cfg unlocked.
+func (a *App) updateConfig(fn func(c *config.Config)) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	fn(a.cfg)
+	if err := a.cfg.Save(); err != nil {
+		log.Printf("[CONFIG] save failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 // === Multi-account profiles ===
@@ -329,26 +353,30 @@ func (a *App) AddProfile(name string) string {
 	if name == "" {
 		name = "Account"
 	}
-	p := a.cfg.AddProfile(name)
-	// New profiles inherit the client id so login works out of the
-	// box. Tokens stay empty until the user runs the device flow.
-	for i := range a.cfg.Profiles {
-		if a.cfg.Profiles[i].ID == p.ID {
-			a.cfg.Profiles[i].Twitch.ClientID = defaultClientID
-			break
+	var id string
+	_ = a.updateConfig(func(c *config.Config) {
+		p := c.AddProfile(name)
+		id = p.ID
+		// New profiles inherit the client id so login works out of the
+		// box. Tokens stay empty until the user runs the device flow.
+		for i := range c.Profiles {
+			if c.Profiles[i].ID == p.ID {
+				c.Profiles[i].Twitch.ClientID = defaultClientID
+				break
+			}
 		}
-	}
-	_ = a.cfg.Save()
-	return p.ID
+	})
+	return id
 }
 
 // RemoveProfile drops a profile. Can't remove the active one — the
 // frontend should switch first. Always keeps ≥1 profile alive.
 func (a *App) RemoveProfile(id string) string {
-	if err := a.cfg.RemoveProfile(id); err != nil {
+	var err error
+	_ = a.updateConfig(func(c *config.Config) { err = c.RemoveProfile(id) })
+	if err != nil {
 		return err.Error()
 	}
-	_ = a.cfg.Save()
 	return ""
 }
 
@@ -356,10 +384,11 @@ func (a *App) RemoveProfile(id string) string {
 // profile-scoped storage (future per-profile YT keyring etc.) is
 // unaffected.
 func (a *App) RenameProfile(id, newName string) string {
-	if err := a.cfg.RenameProfile(id, strings.TrimSpace(newName)); err != nil {
+	var err error
+	_ = a.updateConfig(func(c *config.Config) { err = c.RenameProfile(id, strings.TrimSpace(newName)) })
+	if err != nil {
 		return err.Error()
 	}
-	_ = a.cfg.Save()
 	return ""
 }
 
@@ -1272,8 +1301,7 @@ func (a *App) SetUpdateChannel(channel string) string {
 	if c != "stable" && c != "beta" && c != "alpha" {
 		c = "stable"
 	}
-	a.cfg.UI.UpdateChannel = c
-	if err := a.cfg.Save(); err != nil {
+	if err := a.updateConfig(func(cfg *config.Config) { cfg.UI.UpdateChannel = c }); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -1295,8 +1323,7 @@ func (a *App) SetFontSize(px int) string {
 	if px > 28 {
 		px = 28
 	}
-	a.cfg.UI.FontSize = px
-	if err := a.cfg.Save(); err != nil {
+	if err := a.updateConfig(func(c *config.Config) { c.UI.FontSize = px }); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -1318,8 +1345,7 @@ func (a *App) SetLocale(loc string) string {
 	if l != "de" {
 		l = "en"
 	}
-	a.cfg.UI.Locale = l
-	if err := a.cfg.Save(); err != nil {
+	if err := a.updateConfig(func(c *config.Config) { c.UI.Locale = l }); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -1334,8 +1360,7 @@ func (a *App) GetShowJoinPart() bool {
 
 // SetShowJoinPart persists the toggle.
 func (a *App) SetShowJoinPart(v bool) string {
-	a.cfg.UI.ShowJoinPart = v
-	if err := a.cfg.Save(); err != nil {
+	if err := a.updateConfig(func(c *config.Config) { c.UI.ShowJoinPart = v }); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -1366,8 +1391,7 @@ func (a *App) GetVersion() string { return version.Version }
 
 // SetShowTimestamps toggles the always-visible per-message timestamp column.
 func (a *App) SetShowTimestamps(show bool) {
-	a.cfg.UI.ShowTimestamps = show
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *config.Config) { c.UI.ShowTimestamps = show })
 }
 
 // === Per-message chat sound ===
@@ -1383,8 +1407,7 @@ func (a *App) GetChatSoundConfig() map[string]interface{} {
 
 // SetChatSoundEnabled toggles the per-message sound playback.
 func (a *App) SetChatSoundEnabled(enabled bool) {
-	a.cfg.UI.ChatSoundEnabled = enabled
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *config.Config) { c.UI.ChatSoundEnabled = enabled })
 }
 
 // SetChatSoundVolume stores a 0-100 volume value for the playback.
@@ -1395,8 +1418,7 @@ func (a *App) SetChatSoundVolume(volume int) {
 	if volume > 100 {
 		volume = 100
 	}
-	a.cfg.UI.ChatSoundVolume = volume
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *config.Config) { c.UI.ChatSoundVolume = volume })
 }
 
 // PickChatSoundFile opens a native file dialog limited to .wav and stores
@@ -1415,8 +1437,7 @@ func (a *App) PickChatSoundFile() string {
 	if path == "" {
 		return a.cfg.UI.ChatSoundFile
 	}
-	a.cfg.UI.ChatSoundFile = path
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *config.Config) { c.UI.ChatSoundFile = path })
 	log.Printf("[SOUND] chat sound file set to %s", path)
 	return path
 }
@@ -1424,8 +1445,7 @@ func (a *App) PickChatSoundFile() string {
 // ClearChatSoundFile drops the saved path so playback falls back to the
 // built-in beep.
 func (a *App) ClearChatSoundFile() {
-	a.cfg.UI.ChatSoundFile = ""
-	a.cfg.Save()
+	_ = a.updateConfig(func(c *config.Config) { c.UI.ChatSoundFile = "" })
 }
 
 // LoadChatSoundData reads the saved (or supplied) wav file from disk and
@@ -1663,12 +1683,7 @@ func (a *App) StartLogin() map[string]interface{} {
 
 		// Re-emit ready so the frontend picks up the new username / channel
 		// and any UI that gates on it (TW/YT pills, login pill) updates.
-		a.emit("ready", map[string]interface{}{
-			"channel":        a.cfg.Twitch.Channel,
-			"username":       a.cfg.Twitch.Username,
-			"youtube":        (a.cfg.YouTube.Enabled && a.cfg.YouTube.ChannelHandle != "") || a.cfg.YouTube.VideoID != "",
-			"showTimestamps": a.cfg.UI.ShowTimestamps,
-		})
+		a.emit("ready", a.readyPayload())
 
 		a.emit("loginResult", map[string]interface{}{
 			"success":  true,

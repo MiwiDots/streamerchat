@@ -65,10 +65,14 @@ func (a *App) migrateTwitchTokensFromConfig() {
 //	with a log line, so a broken keyring doesn't force a re-login on
 //	every start. This is the only path that writes tokens to disk.
 func (a *App) saveTwitchTokens() bool {
-	if a.cfg == nil || a.cfg.AccessToken == "" {
+	if a.cfg == nil {
 		return false
 	}
-	t := twitchTokens{AccessToken: a.cfg.AccessToken, RefreshToken: a.cfg.RefreshToken}
+	au := a.auth()
+	if au.AccessToken == "" {
+		return false
+	}
+	t := twitchTokens{AccessToken: au.AccessToken, RefreshToken: au.RefreshToken}
 	blob, err := json.Marshal(t)
 	if err != nil {
 		log.Printf("[CREDSTORE] twitch save marshal: %v", err)
@@ -76,21 +80,25 @@ func (a *App) saveTwitchTokens() bool {
 	}
 	if err := credstore.Set(credstore.Twitch, string(blob)); err != nil {
 		log.Printf("[CREDSTORE] twitch keyring write failed, falling back to config.json: %v", err)
-		a.cfg.LegacyAccessToken = t.AccessToken
-		a.cfg.LegacyRefreshToken = t.RefreshToken
-		if err := a.cfg.Save(); err != nil {
+		if err := a.updateConfig(func(c *HubConfig) {
+			c.LegacyAccessToken, c.LegacyRefreshToken = t.AccessToken, t.RefreshToken
+		}); err != nil {
 			log.Printf("[CREDSTORE] fallback save failed, tokens only in memory: %v", err)
 		}
 		return false
 	}
-	if a.cfg.LegacyAccessToken != "" || a.cfg.LegacyRefreshToken != "" {
-		a.wipeLegacyTokens()
-	}
+	a.wipeLegacyTokens()
 	return true
 }
 
 // wipeLegacyTokens removes the plaintext token copy from config.json.
+// No-op (and no save) when there is none.
 func (a *App) wipeLegacyTokens() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cfg.LegacyAccessToken == "" && a.cfg.LegacyRefreshToken == "" {
+		return
+	}
 	a.cfg.LegacyAccessToken, a.cfg.LegacyRefreshToken = "", ""
 	if err := a.cfg.Save(); err != nil {
 		log.Printf("[CREDSTORE] wiping plaintext tokens from config.json failed: %v", err)
@@ -105,7 +113,7 @@ func (a *App) clearTwitchTokens() {
 	if err := credstore.Clear(credstore.Twitch); err != nil && !errors.Is(err, credstore.ErrNotFound) {
 		log.Printf("[CREDSTORE] twitch clear: %v", err)
 	}
-	if a.cfg != nil && (a.cfg.LegacyAccessToken != "" || a.cfg.LegacyRefreshToken != "") {
+	if a.cfg != nil {
 		a.wipeLegacyTokens()
 	}
 }
