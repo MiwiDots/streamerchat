@@ -165,3 +165,24 @@ func TestChatPayloadHasFieldsTheFrontendNeeds(t *testing.T) {
 		}
 	}
 }
+
+// A refresh that was in flight while the user logged out (or logged in
+// again) must not write its tokens back. Only the refusal path is tested:
+// the accepting path saves to the real config/keyring.
+func TestCommitTokensRefusesAfterLogoutOrRelogin(t *testing.T) {
+	a := newTestApp(t)
+	a.cfg.Twitch.RefreshToken = "" // logged out meanwhile
+	if a.commitTokens("default", "old-refresh", &twitch.TokenResponse{AccessToken: "new", RefreshToken: "new-r"}) {
+		t.Fatal("tokens refreshed with the pre-logout refresh token were committed")
+	}
+	if a.cfg.Twitch.AccessToken != "" {
+		t.Fatalf("access token written after logout: %q", a.cfg.Twitch.AccessToken)
+	}
+	a.cfg.Twitch.RefreshToken = "relogin-refresh" // new device-code login
+	if a.commitTokens("default", "old-refresh", &twitch.TokenResponse{AccessToken: "new", RefreshToken: "new-r"}) {
+		t.Fatal("stale refresh overwrote a newer login")
+	}
+	if a.commitTokens("other-profile", "relogin-refresh", &twitch.TokenResponse{AccessToken: "new"}) {
+		t.Fatal("tokens committed for an inactive profile")
+	}
+}

@@ -591,8 +591,8 @@ func (a *App) tokenRefreshLoop() {
 			log.Printf("[AUTH] Token refresh failed: %v", err)
 			continue
 		}
-		if !a.commitTokens(activeAtStart, token) {
-			log.Printf("[AUTH] Profile switched during refresh — discarding tokens for %s", activeAtStart)
+		if !a.commitTokens(activeAtStart, refreshToken, token) {
+			log.Printf("[AUTH] Profile switched or logged out during refresh — discarding tokens for %s", activeAtStart)
 			continue
 		}
 		log.Printf("[AUTH] Token refreshed")
@@ -725,7 +725,7 @@ func (a *App) authenticate(profileID, clientID, clientSecret, accessToken, refre
 			// Non-fatal: the validated token is good for its remaining TTL.
 			if refreshToken != "" {
 				if tok, rerr := refreshAccessToken(clientID, clientSecret, refreshToken); rerr == nil {
-					if !a.commitTokens(profileID, tok) {
+					if !a.commitTokens(profileID, refreshToken, tok) {
 						return nil, "", authStale
 					}
 					accessToken = tok.AccessToken
@@ -747,7 +747,7 @@ func (a *App) authenticate(profileID, clientID, clientSecret, accessToken, refre
 			}
 			tok, rerr := refreshAccessToken(clientID, clientSecret, refreshToken)
 			if rerr == nil {
-				if !a.commitTokens(profileID, tok) {
+				if !a.commitTokens(profileID, refreshToken, tok) {
 					return nil, "", authStale
 				}
 				log.Printf("[AUTH] Refreshed after rejected access token; validating again")
@@ -787,15 +787,17 @@ func (a *App) isActiveProfile(profileID string) bool {
 }
 
 // commitTokens stores freshly issued tokens for profileID, but only if
-// that profile is still the active one. Returns false (and writes nothing)
-// when the user switched profiles while the network call was in flight —
-// the flat cfg.Twitch now mirrors a different account and Save() would
-// copy the tokens into the wrong profile slot.
+// that profile is still the active one and still holds usedRefresh, the
+// refresh token the new tokens were issued for. Returns false (and writes
+// nothing) when, while the network call was in flight, the user switched
+// profiles (the flat cfg.Twitch now mirrors a different account and
+// Save() would copy the tokens into the wrong profile slot), logged out
+// (writing them back would silently undo the logout) or logged in again.
 // Must be called WITHOUT a.mu held.
-func (a *App) commitTokens(profileID string, tok *twitch.TokenResponse) bool {
+func (a *App) commitTokens(profileID, usedRefresh string, tok *twitch.TokenResponse) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.cfg.ActiveProfileID != profileID {
+	if a.cfg.ActiveProfileID != profileID || a.cfg.Twitch.RefreshToken != usedRefresh {
 		return false
 	}
 	a.cfg.Twitch.AccessToken = tok.AccessToken
@@ -1687,13 +1689,27 @@ func (a *App) OpenURL(url string) {
 
 // Logout clears auth state. Caller is expected to call StartLogin to recover.
 func (a *App) Logout() {
+	a.mu.Lock()
 	a.cfg.Twitch.AccessToken = ""
 	a.cfg.Twitch.RefreshToken = ""
-	a.cfg.Save()
-	// Only the authenticated send connection goes away; chat keeps being
+	if err := a.cfg.Save(); err != nil {
+		log.Printf("[AUTH] saving logout failed: %v", err)
+	}
+	// Stop everything that still holds the token: mod actions (Helix),
+	// the activity feed / AutoMod queue (EventSub), the chatter + role
+	// poller and the authenticated send connection. Chat keeps being
 	// READ anonymously after logout.
-	a.mu.Lock()
 	a.dropSendClientLocked()
+	a.helixClient = nil
+	if a.esCancel != nil {
+		a.esCancel()
+		a.esCancel = nil
+		a.esClient = nil
+	}
+	if a.rolesCancel != nil {
+		a.rolesCancel()
+		a.rolesCancel = nil
+	}
 	a.mu.Unlock()
 	log.Printf("[AUTH] Logged out")
 }
