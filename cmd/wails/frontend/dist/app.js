@@ -1522,6 +1522,7 @@ async function openSettings() {
     if (a && a.supported) {
       autostartSection.classList.remove('hidden');
       autostartCheckbox.checked = !!a.enabled;
+      showAutostartHint(a.blocked ? i18n.t('autostartBlocked') : '');
     } else {
       autostartSection.classList.add('hidden');
     }
@@ -2185,17 +2186,29 @@ whenRuntime(() => {
 if (autostartCheckbox) {
   autostartCheckbox.addEventListener('change', async () => {
     const want = autostartCheckbox.checked;
+    let err = '';
     try {
-      const err = await window.go.main.App.SetAutostart(want);
-      if (err) {
-        alert('Autostart: ' + err);
-        autostartCheckbox.checked = !want;
-      }
+      err = await window.go.main.App.SetAutostart(want);
     } catch (e) {
-      alert('Autostart failed: ' + e);
-      autostartCheckbox.checked = !want;
+      err = String(e);
     }
+    if (err) {
+      autostartCheckbox.checked = !want; // revert UI on failure
+      showAutostartHint(i18n.t('autostartError', { err }), true);
+      return;
+    }
+    showAutostartHint('');
   });
+}
+
+// Hint under the autostart checkbox: Windows blocked the entry, or an
+// error from the last change. Empty text hides it.
+function showAutostartHint(text, isError) {
+  const hintEl = document.getElementById('autostartHint');
+  if (!hintEl) return;
+  hintEl.textContent = text;
+  hintEl.classList.toggle('hidden', !text);
+  hintEl.classList.toggle('error', !!isError);
 }
 
 // === YouTube login (send support) ===

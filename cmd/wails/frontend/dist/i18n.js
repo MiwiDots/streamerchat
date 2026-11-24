@@ -70,6 +70,8 @@ const STRINGS = {
     activityTab: 'Activity',
     addAccount: 'Add Account',
     autostart: 'Start StreamerChat automatically with Windows',
+    autostartBlocked: 'Windows has switched autostart off (Task Manager → Startup apps). Untick and tick the box again to turn it back on.',
+    autostartError: 'Autostart could not be changed: {err}',
     fontSize: 'Chat font size',
     fontSizeHint: 'Tip: Ctrl + / Ctrl - / Ctrl 0 also work.',
 
@@ -191,6 +193,8 @@ const STRINGS = {
     accountsHint: 'Jedes Profil hat eigenen Twitch-Login + YouTube-Channel. Wechseln über das Dropdown in der Titelleiste.',
     addAccount: 'Account hinzufügen',
     autostart: 'StreamerChat automatisch mit Windows starten',
+    autostartBlocked: 'Windows hat den Autostart abgeschaltet (Task-Manager → Autostart). Haken einmal raus und wieder rein setzen, dann ist er wieder an.',
+    autostartError: 'Autostart konnte nicht geändert werden: {err}',
     fontSize: 'Schriftgröße im Chat',
     fontSizeHint: 'Tipp: Strg + / Strg - / Strg 0 funktionieren auch.',
 

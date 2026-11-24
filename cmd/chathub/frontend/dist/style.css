@@ -1012,3 +1012,7 @@ img.emote.giant-emote { height: 112px; width: auto; vertical-align: bottom; }
 .emote-picker-item:hover { background: #2a2a38; border-color: #3a3a4a; }
 .emote-picker-item img { max-width: 32px; max-height: 32px; }
 .emote-picker-empty { color: #888; font-size: 12px; padding: 12px 4px; }
+
+/* Autostart hint (Windows blocked the entry, or the last change failed). */
+.autostart-hint { font-size: 11px; color: #ffd23f; margin: 4px 0 0 24px; }
+.autostart-hint.error { color: #ff6b6b; }

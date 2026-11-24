@@ -264,6 +264,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// Remove leftover <exe>.old from a previous self-update.
 	selfupdate.CleanupPrevious()
+	syncAutostart()
 
 	// Keep the YouTube cookie session warm in the background. One refresh
 	// ~30s after boot validates the saved session and folds in any
@@ -1756,38 +1757,6 @@ func (a *App) ApplyUpdate() string {
 // GetVersion is a tiny helper for the settings UI.
 func (a *App) GetVersion() string { return version.Version }
 
-// === Windows autostart ===
-
-// AutostartStatus reports the platform support and current state of the
-// "start with Windows" toggle. The frontend uses `supported` to decide
-// whether to show the checkbox at all.
-func (a *App) AutostartStatus() map[string]interface{} {
-	return map[string]interface{}{
-		"supported": autostartSupported(),
-		"enabled":   autostartSupported() && autostartIsEnabled(),
-	}
-}
-
-// SetAutostart enables or disables the Windows autostart entry. Returns an
-// empty string on success, or the error message on failure (e.g. dev build,
-// registry permission issue).
-func (a *App) SetAutostart(enabled bool) string {
-	if !autostartSupported() {
-		return "autostart is only supported on Windows"
-	}
-	var err error
-	if enabled {
-		err = autostartEnable()
-	} else {
-		err = autostartDisable()
-	}
-	if err != nil {
-		log.Printf("[AUTOSTART] %v", err)
-		return err.Error()
-	}
-	log.Printf("[AUTOSTART] enabled=%v", enabled)
-	return ""
-}
 
 // Logout clears auth.
 func (a *App) Logout() {

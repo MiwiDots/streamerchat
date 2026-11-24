@@ -1,3 +1,20 @@
+2026-11-25 04:11 - Both apps: "start with Windows" did not start the apps.
+
+  - Two ways the Run entry existed but Windows skipped it, neither of
+    which the apps checked: the exe was moved after ticking the box (the
+    entry pointed at the old path), or the entry was switched off in
+    Task Manager → Startup apps (StartupApproved\Run), which re-ticking
+    the box in the app did not undo.
+  - Now: enabling also clears the Task Manager "disabled" switch; at
+    every start the entry is repointed at the running exe if it moved;
+    the checkbox shows ticked only when Windows will really start the
+    app, with a hint when Windows blocked it; errors show inline instead
+    of an alert. The autostart state is written to the log at boot.
+  - Refusing to register an exe started from a temp folder (zip opened
+    in Explorer) now has a clear message.
+  - Autostart code shared in internal/platform (was duplicated in both
+    apps), with tests for the path and StartupApproved parsing.
+
 2026-11-19 14:57 - v0.8.0 (stable): RELEASE — chat stats dashboard (most active
   chatters without bots, see the entry below).
 

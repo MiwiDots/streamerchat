@@ -973,3 +973,7 @@ img.emote.giant-emote { height: 112px; width: auto; vertical-align: bottom; }
   font-size: 11px;
   line-height: 1.6;
 }
+
+/* Autostart hint (Windows blocked the entry, or the last change failed). */
+.autostart-hint { font-size: 11px; color: #ffd23f; margin: 4px 0 0 24px; }
+.autostart-hint.error { color: #ff6b6b; }

@@ -119,6 +119,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// Remove leftover <exe>.old from a previous self-update.
 	selfupdate.CleanupPrevious()
+	syncAutostart()
 
 	// Load config
 	cfg, err := config.Load()
@@ -1677,35 +1678,6 @@ func (a *App) Logout() {
 	log.Printf("[AUTH] Logged out")
 }
 
-// AutostartStatus reports the platform support and current state of the
-// "start with Windows" toggle. The frontend uses `supported` to decide
-// whether to show the checkbox at all.
-func (a *App) AutostartStatus() map[string]interface{} {
-	return map[string]interface{}{
-		"supported": autostartSupported(),
-		"enabled":   autostartSupported() && autostartIsEnabled(),
-	}
-}
-
-// SetAutostart enables or disables the Windows autostart entry. Returns an
-// empty string on success, or the error message on failure.
-func (a *App) SetAutostart(enabled bool) string {
-	if !autostartSupported() {
-		return "autostart is only supported on Windows"
-	}
-	var err error
-	if enabled {
-		err = autostartEnable()
-	} else {
-		err = autostartDisable()
-	}
-	if err != nil {
-		log.Printf("[AUTOSTART] %v", err)
-		return err.Error()
-	}
-	log.Printf("[AUTOSTART] enabled=%v", enabled)
-	return ""
-}
 
 // LookupBadge returns the image URL for a badge in the context of `channel`.
 // Channel-specific artwork (sub tiers, custom badges) wins over global.
