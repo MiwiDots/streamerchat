@@ -473,14 +473,16 @@ func (a *App) runIRCSupervisor() {
 		// the authenticated send-only client) — see SendMessage.
 		client := twitch.NewAnonymousIRCClient(channel)
 		// The resolver looks the Helix client up on every call: it outlives
-		// profile switches (which nil the client) and token rebuilds.
+		// profile switches (which nil the client) and token rebuilds. ""
+		// on failure: the cache shows the room ID and retries later
+		// instead of remembering the ID as the channel's name.
 		client.SetRoomResolver(func(roomID string) string {
 			if h := a.helix(); h != nil {
 				if name, err := h.GetChannelName(roomID); err == nil {
 					return name
 				}
 			}
-			return roomID
+			return ""
 		})
 		a.mu.Lock()
 		a.ircClient = client

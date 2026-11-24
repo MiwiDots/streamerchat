@@ -18,11 +18,19 @@ type HelixClient struct {
 	moderatorID   string
 }
 
+// helixRequestTimeout bounds every request made through the helix library.
+const helixRequestTimeout = 15 * time.Second
+
+var helixHTTPClient = &http.Client{Timeout: helixRequestTimeout}
+
 // NewHelixClient creates a new Helix API client.
 func NewHelixClient(clientID, accessToken, broadcasterID, moderatorID string) (*HelixClient, error) {
 	client, err := helix.NewClient(&helix.Options{
-		ClientID:       clientID,
+		ClientID:        clientID,
 		UserAccessToken: accessToken,
+		// Without this the library uses http.DefaultClient, which never
+		// times out: one stalled request would hang a mod action forever.
+		HTTPClient: helixHTTPClient,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create helix client: %w", err)
@@ -219,9 +227,9 @@ func (h *HelixClient) SetEmoteOnly(enabled bool) error {
 // SetFollowerOnly enables or disables follower-only mode.
 func (h *HelixClient) SetFollowerOnly(enabled bool, minMinutes int) error {
 	resp, err := h.client.UpdateChatSettings(&helix.UpdateChatSettingsParams{
-		BroadcasterID:      h.broadcasterID,
-		ModeratorID:        h.moderatorID,
-		FollowerMode:       &enabled,
+		BroadcasterID:        h.broadcasterID,
+		ModeratorID:          h.moderatorID,
+		FollowerMode:         &enabled,
 		FollowerModeDuration: &minMinutes,
 	})
 	if err != nil {

@@ -17,15 +17,14 @@ import (
 
 // IRCClient wraps the Twitch IRC connection.
 type IRCClient struct {
-	client      *twitch.Client
-	channel     string
-	extraJoins  []string // joined inside OnConnect alongside `channel`
-	messages    chan chat.Message
-	joins       chan chat.UserJoinPart
-	settings    chan chat.ChatSettings
-	errors      chan error
-	roomNames   map[string]string          // roomID -> channel name cache
-	resolveRoom func(roomID string) string // callback to resolve room IDs
+	client     *twitch.Client
+	channel    string
+	extraJoins []string // joined inside OnConnect alongside `channel`
+	messages   chan chat.Message
+	joins      chan chat.UserJoinPart
+	settings   chan chat.ChatSettings
+	errors     chan error
+	rooms      *roomNameCache // Shared Chat room ID -> channel name
 
 	// dropped counts events discarded because a consumer channel was full
 	// (see push). Logged every dropLogEvery drops.
@@ -184,7 +183,7 @@ func newIRCClient(client *twitch.Client, channel string, extraChannels, caps []s
 		joins:      make(chan chat.UserJoinPart, 256),
 		settings:   make(chan chat.ChatSettings, 16),
 		errors:     make(chan error, 16),
-		roomNames:  make(map[string]string),
+		rooms:      newRoomNameCache(),
 	}
 }
 
@@ -275,22 +274,9 @@ func (c *IRCClient) Join(channel string) {
 }
 
 // SetRoomResolver sets a callback to resolve room IDs to channel names.
+// It runs in the background; return "" when the name can't be resolved.
 func (c *IRCClient) SetRoomResolver(fn func(roomID string) string) {
-	c.resolveRoom = fn
-}
-
-// resolveRoomName looks up a channel name for a room ID.
-func (c *IRCClient) resolveRoomName(roomID string) string {
-	if name, ok := c.roomNames[roomID]; ok {
-		return name
-	}
-	if c.resolveRoom != nil {
-		if name := c.resolveRoom(roomID); name != "" {
-			c.roomNames[roomID] = name
-			return name
-		}
-	}
-	return roomID
+	c.rooms.setResolver(fn)
 }
 
 func (c *IRCClient) registerHandlers() {
@@ -298,7 +284,7 @@ func (c *IRCClient) registerHandlers() {
 		m := convertPrivateMessage(msg, c.channel)
 		// Resolve shared chat room ID to channel name
 		if m.IsSharedChat && m.SourceChannel == msg.Source.RoomID {
-			m.SourceChannel = c.resolveRoomName(msg.Source.RoomID)
+			m.SourceChannel = c.rooms.name(msg.Source.RoomID)
 		}
 		push(c, c.messages, m)
 	})

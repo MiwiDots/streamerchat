@@ -28,17 +28,15 @@ type MultiIRCClient struct {
 	onSettings func(channel string, s chat.ChatSettings)
 	onSystem   func(channel string, text string)
 
-	roomNames   map[string]string
-	resolveRoom func(roomID string) string
-	roomMu      sync.RWMutex
+	rooms *roomNameCache // Shared Chat room ID -> channel name
 }
 
 // NewMultiIRCClient creates an anonymous IRC client.
 // Twitch allows anonymous read-only login with username "justinfan<number>".
 func NewMultiIRCClient() *MultiIRCClient {
 	m := &MultiIRCClient{
-		channels:  make(map[string]bool),
-		roomNames: make(map[string]string),
+		channels: make(map[string]bool),
+		rooms:    newRoomNameCache(),
 	}
 	m.client = m.newClient()
 	return m
@@ -66,31 +64,15 @@ const (
 	healthySessionMin   = 30 * time.Second
 )
 
-func (m *MultiIRCClient) OnMessage(fn func(channel string, msg chat.Message))     { m.onMessage = fn }
+func (m *MultiIRCClient) OnMessage(fn func(channel string, msg chat.Message))      { m.onMessage = fn }
 func (m *MultiIRCClient) OnJoinPart(fn func(channel string, jp chat.UserJoinPart)) { m.onJoinPart = fn }
-func (m *MultiIRCClient) OnSettings(fn func(channel string, s chat.ChatSettings)) { m.onSettings = fn }
+func (m *MultiIRCClient) OnSettings(fn func(channel string, s chat.ChatSettings))  { m.onSettings = fn }
 func (m *MultiIRCClient) OnSystem(fn func(channel string, text string))            { m.onSystem = fn }
 
+// SetRoomResolver sets a callback to resolve room IDs to channel names.
+// It runs in the background; return "" when the name can't be resolved.
 func (m *MultiIRCClient) SetRoomResolver(fn func(roomID string) string) {
-	m.resolveRoom = fn
-}
-
-func (m *MultiIRCClient) resolveRoomName(roomID string) string {
-	m.roomMu.RLock()
-	if name, ok := m.roomNames[roomID]; ok {
-		m.roomMu.RUnlock()
-		return name
-	}
-	m.roomMu.RUnlock()
-	if m.resolveRoom != nil {
-		if name := m.resolveRoom(roomID); name != "" {
-			m.roomMu.Lock()
-			m.roomNames[roomID] = name
-			m.roomMu.Unlock()
-			return name
-		}
-	}
-	return roomID
+	m.rooms.setResolver(fn)
 }
 
 // Channels returns the currently joined channel list.
@@ -194,7 +176,7 @@ func (m *MultiIRCClient) registerHandlers(c *twitch.Client) {
 	c.OnPrivateMessage(func(msg twitch.PrivateMessage) {
 		converted := convertPrivateMessage(msg, msg.Channel)
 		if converted.IsSharedChat && converted.SourceChannel == msg.Source.RoomID {
-			converted.SourceChannel = m.resolveRoomName(msg.Source.RoomID)
+			converted.SourceChannel = m.rooms.name(msg.Source.RoomID)
 		}
 		if m.onMessage != nil {
 			m.onMessage(msg.Channel, converted)
