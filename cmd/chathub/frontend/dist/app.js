@@ -821,6 +821,7 @@ function removeChannelTab(channel) {
     if (first) switchToChannel(first);
     else emptyState.classList.remove('hidden');
   }
+  applyOnlyLiveFilter();
 }
 
 function switchToChannel(channel) {
@@ -845,6 +846,7 @@ function switchToChannel(channel) {
   msgInput.placeholder = loggedIn ? i18n.t('sendTo', { channel }) : i18n.t('loginRequired');
   state.chatViewEl.scrollTop = state.chatViewEl.scrollHeight;
   refreshStreamMeta();
+  applyOnlyLiveFilter(); // the tab we left may now be hidden (offline)
 }
 
 // === Stream meta banner ===
@@ -1000,15 +1002,78 @@ function showLiveNotification(channel) {
   }).catch(() => {});
 }
 
+// "Only live" tab filter. The active tab always stays visible (hiding the
+// chat you are reading would be confusing); hidden tabs are counted in a
+// "+N offline" chip at the end of the bar that switches back to "all".
+const tabHiddenChip = el('button', { class: 'tab-hidden-chip hidden' });
+tabHiddenChip.onclick = () => setOnlyShowLive(false);
+tabBar.appendChild(tabHiddenChip);
+
 function applyOnlyLiveFilter() {
+  let hidden = 0;
   for (const [ch, state] of channels.entries()) {
-    if (onlyShowLive && !liveStatus.get(ch)) {
-      state.tabEl.classList.add('hidden');
-    } else {
-      state.tabEl.classList.remove('hidden');
-    }
+    const hide = onlyShowLive && !liveStatus.get(ch) && ch !== activeChannel;
+    state.tabEl.classList.toggle('hidden', hide);
+    if (hide) hidden++;
   }
+  tabHiddenChip.textContent = i18n.t('tabHiddenChip', { n: hidden });
+  tabHiddenChip.title = i18n.t('tabHiddenChipTitle', { n: hidden });
+  tabHiddenChip.classList.toggle('hidden', hidden === 0);
 }
+
+function setOnlyShowLive(only) {
+  only = !!only;
+  if (onlyLiveCheckbox) onlyLiveCheckbox.checked = only;
+  if (only === onlyShowLive) return;
+  onlyShowLive = only;
+  window.go.main.App.SetOnlyShowLive(onlyShowLive);
+  applyOnlyLiveFilter();
+}
+
+// Right-click anywhere on the tab bar: choose all channels or live only.
+const tabFilterMenu = el('div', { class: 'tab-filter-menu hidden', role: 'menu' });
+document.body.appendChild(tabFilterMenu);
+
+function closeTabFilterMenu() { tabFilterMenu.classList.add('hidden'); }
+
+function openTabFilterMenu(x, y) {
+  const item = (label, active, onPick) => {
+    const b = el('button', { class: 'tfm-item' + (active ? ' active' : ''), role: 'menuitemradio', 'aria-checked': String(active) },
+      el('span', { class: 'tfm-check' }, active ? '✓' : ''), label);
+    b.onclick = () => { closeTabFilterMenu(); onPick(); };
+    return b;
+  };
+  const total = channels.size;
+  let live = 0;
+  for (const ch of channels.keys()) if (liveStatus.get(ch)) live++;
+  tabFilterMenu.replaceChildren(
+    item(i18n.t('tabFilterAll', { n: total }), !onlyShowLive, () => setOnlyShowLive(false)),
+    item(i18n.t('tabFilterLive', { n: live }), onlyShowLive, () => setOnlyShowLive(true)));
+  tabFilterMenu.classList.remove('hidden');
+  // Keep the menu inside the window.
+  const r = tabFilterMenu.getBoundingClientRect();
+  tabFilterMenu.style.left = Math.max(4, Math.min(x, window.innerWidth - r.width - 4)) + 'px';
+  tabFilterMenu.style.top = Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) + 'px';
+  tabFilterMenu.querySelector('.tfm-item').focus();
+}
+
+tabBar.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  hideTabPreview(true);
+  openTabFilterMenu(e.clientX, e.clientY);
+});
+document.addEventListener('mousedown', (e) => {
+  if (!tabFilterMenu.classList.contains('hidden') && !tabFilterMenu.contains(e.target)) closeTabFilterMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !tabFilterMenu.classList.contains('hidden')) {
+    e.stopPropagation();
+    closeTabFilterMenu();
+  }
+}, true);
+window.addEventListener('blur', closeTabFilterMenu);
+window.addEventListener('resize', closeTabFilterMenu);
+i18n.onLocaleChange(applyOnlyLiveFilter);
 
 // === Emote lookup ===
 const EMOTE_CACHE_MAX = 4000;
@@ -1769,12 +1834,7 @@ function closeSettings() {
   highlights = highlightInput.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   soundOnMention = soundSelect.value;
   try { window.go.main.App.SetNotifSound(soundOnMention); } catch (e) {}
-  const newOnlyLive = onlyLiveCheckbox && onlyLiveCheckbox.checked;
-  if (newOnlyLive !== onlyShowLive) {
-    onlyShowLive = newOnlyLive;
-    window.go.main.App.SetOnlyShowLive(onlyShowLive);
-    applyOnlyLiveFilter();
-  }
+  if (onlyLiveCheckbox) setOnlyShowLive(onlyLiveCheckbox.checked);
   const newLiveNotify = !liveNotifyCheckbox || liveNotifyCheckbox.checked;
   if (newLiveNotify !== liveNotificationsEnabled) {
     liveNotificationsEnabled = newLiveNotify;

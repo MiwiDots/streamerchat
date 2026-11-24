@@ -1,3 +1,19 @@
+2026-11-25 04:13 - ChatHub: right-click the tab bar to show all channels or only
+  live ones.
+
+  - Context menu on the tab bar: "Show all channels (n)" / "Only live
+    channels (n)" (same setting as the checkbox in Settings, both stay
+    in sync and it is saved).
+  - With "only live" on, a "+N offline" chip at the end of the bar shows
+    how many tabs are hidden; clicking it shows all again.
+  - The active tab is never hidden, even when offline; it hides once
+    you switch away.
+  - Live check errors (network, Twitch 5xx) now keep the last known
+    state instead of marking the channel offline, which used to hide
+    every tab for a minute under "only live".
+  - SetOnlyShowLive writes the config field under the app lock.
+  - Autostart hint text simplified (both apps).
+
 2026-11-25 04:11 - Both apps: "start with Windows" did not start the apps.
 
   - Two ways the Run entry existed but Windows skipped it, neither of

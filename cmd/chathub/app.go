@@ -552,7 +552,10 @@ func (a *App) liveStatusLoop() {
 				continue
 			}
 			ch := ref.Name
-			isLive := a.checkLive(ch)
+			isLive, ok := a.checkLive(ch)
+			if !ok {
+				continue // network/API error: keep the last known state
+			}
 			a.mu.Lock()
 			prev, had := a.liveStatus[ch]
 			a.liveStatus[ch] = isLive
@@ -580,9 +583,16 @@ func (a *App) liveStatusLoop() {
 }
 
 // checkLive uses official Helix /streams endpoint. Requires user access token.
-func (a *App) checkLive(channel string) bool {
+// checkLive reports whether channel is live. ok is false when the check
+// itself failed (network error, Twitch 5xx): callers must then keep the
+// last known state instead of flipping the channel to offline, which
+// would hide every tab under "only live" during a short outage.
+func (a *App) checkLive(channel string) (live, ok bool) {
 	info := a.fetchStreamInfo(channel)
-	return info != nil && info["live"] == true
+	if info == nil {
+		return false, false
+	}
+	return info["live"] == true, true
 }
 
 // fetchStreamInfo returns nil on error / not-logged-in, otherwise a map with
@@ -1199,7 +1209,10 @@ func (a *App) stopYouTubeWatcher(handle string) {
 // liveStatus event to the frontend. Used both by liveStatusLoop and by
 // AddChannel so newly-added channels show their live dot immediately.
 func (a *App) checkAndEmitLive(channel string) {
-	isLive := a.checkLive(channel)
+	isLive, ok := a.checkLive(channel)
+	if !ok {
+		return
+	}
 	a.mu.Lock()
 	a.liveStatus[channel] = isLive
 	a.mu.Unlock()
@@ -1346,7 +1359,9 @@ func (a *App) SetTheme(theme string) {
 }
 
 func (a *App) SetOnlyShowLive(only bool) {
+	a.mu.Lock()
 	a.cfg.OnlyShowLive = only
+	a.mu.Unlock()
 	a.cfg.Save()
 }
 
