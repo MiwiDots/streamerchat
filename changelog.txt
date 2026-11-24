@@ -1,3 +1,21 @@
+2026-11-25 04:15 - Dependency updates (security).
+
+  - github.com/gorilla/websocket v1.5.3 -> v1.5.4-0.20240701034025-
+    d67f41855da4: fixes GO-2026-6278 (weak PRNG for the WebSocket mask
+    key), which govulncheck reported as reachable from our code
+    (EventSub client, 7TV event stream). No tagged release has the fix;
+    this is the commit the Go vulnerability database names.
+  - That commit imports golang.org/x/net/proxy, which pulled the old
+    x/net v0.35 (many known issues) into the build: x/net -> v0.63.0,
+    x/crypto -> v0.59.0, x/text -> v0.44.0.
+  - golang.org/x/sys v0.45.0 -> v0.50.0, nicklaw5/helix v2.32.0 ->
+    v2.34.0 (minor).
+  - govulncheck (GOOS=windows): 0 reachable, 0 in imported packages.
+    Remaining: GO-2026-6862 in Wails v2.11.0 (BindingsAllowedOrigins
+    wildcard), not applicable: neither app sets that option. Wails stays
+    on v2.11 (a CLI + runtime upgrade that needs testing on Windows).
+  - Both Windows exes build; all tests pass.
+
 2026-11-25 04:13 - ChatHub: right-click the tab bar to show all channels or only
   live ones.
 
