@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/miwi/streamerchat/internal/applog"
@@ -62,8 +63,9 @@ type App struct {
 
 	// 7TV cosmetics over EventAPI: subscribes to entitlement events for
 	// this streamer's Twitch channel so paint/badge updates can be
-	// pushed to the frontend and applied to chat messages.
-	stv *sevenTV.Client
+	// pushed to the frontend and applied to chat messages. Atomic: set
+	// by boot/login goroutines, read for every chat message.
+	stv atomic.Pointer[sevenTV.Client]
 
 	// EventSub WebSocket for the activity feed (follow / sub /
 	// resub / gift / raid / cheer / channel-points redemption /
@@ -225,32 +227,12 @@ func (a *App) bootSequence() {
 	a.helixClient, _ = twitch.NewHelixClient(clientID, accessToken, info.UserID, info.UserID)
 	a.mu.Unlock()
 
-	// Channel 7TV/BTTV/FFZ emotes for this profile. Used to be loaded only
-	// once at startup, so after a profile switch (or a first login) the
-	// channel's emotes never showed up.
-	if !a.emotes.HasChannel(info.UserID) {
-		go a.emotes.LoadChannel(info.UserID)
-	}
+	a.startChannelExtras(info.UserID)
 
 	// EventSub: per-profile, started here after auth so subscribes
 	// go out with the fresh access token. Any previous session for
 	// a switched-out profile gets canceled first.
 	a.startEventSub()
-
-	// 7TV cosmetics: spin the EventAPI client once we know the
-	// broadcaster id (single-channel app, so this fires once).
-	if a.stv == nil && a.cfg.Twitch.BotUserID != "" {
-		a.stv = sevenTV.NewClient(a.ctx, func(c sevenTV.Cosmetic) {
-			a.emit("sevenTVCosmetic", map[string]interface{}{
-				"userID":    c.UserID,
-				"paintCSS":  c.PaintCSS,
-				"badgeURL":  c.BadgeURL,
-				"badgeName": c.BadgeName,
-			})
-		})
-		a.stv.Start()
-		a.stv.AddChannel(a.cfg.Twitch.BotUserID)
-	}
 
 	// Load badges now that auth is valid (was previously a race against bootSequence).
 	a.loadBadges()
@@ -273,6 +255,37 @@ func (a *App) bootSequence() {
 		"youtube":        (a.cfg.YouTube.Enabled && a.cfg.YouTube.ChannelHandle != "") || a.cfg.YouTube.VideoID != "",
 		"showTimestamps": a.cfg.UI.ShowTimestamps,
 	})
+}
+
+// startChannelExtras loads what the channel's chat needs once the user
+// id is known: the 7TV/BTTV/FFZ channel emotes and the 7TV cosmetics
+// (paints, badges) client. Called after a successful boot and after a
+// device-code login; both steps are no-ops when already done.
+func (a *App) startChannelExtras(userID string) {
+	if userID == "" {
+		return
+	}
+	if !a.emotes.HasChannel(userID) {
+		go a.emotes.LoadChannel(userID)
+	}
+	// One EventAPI client per process (single-channel app). The swap
+	// makes a concurrent boot + login start only one.
+	if a.stv.Load() != nil {
+		return
+	}
+	stv := sevenTV.NewClient(a.ctx, func(c sevenTV.Cosmetic) {
+		a.emit("sevenTVCosmetic", map[string]interface{}{
+			"userID":    c.UserID,
+			"paintCSS":  c.PaintCSS,
+			"badgeURL":  c.BadgeURL,
+			"badgeName": c.BadgeName,
+		})
+	})
+	if !a.stv.CompareAndSwap(nil, stv) {
+		return
+	}
+	stv.Start()
+	stv.AddChannel(userID)
 }
 
 // === Multi-account profiles ===
@@ -1076,8 +1089,8 @@ func (a *App) emitChat(msg chat.Message) {
 	a.stats.Record(msg)
 	// 7TV per-user lookup — see chathub's emitMessage for rationale.
 	// Stv client dedupes by user id so a chat burst is harmless.
-	if a.stv != nil && msg.Platform == chat.PlatformTwitch && msg.UserID != "" {
-		a.stv.LookupUser(msg.UserID)
+	if stv := a.stv.Load(); stv != nil && msg.Platform == chat.PlatformTwitch && msg.UserID != "" {
+		stv.LookupUser(msg.UserID)
 	}
 	a.emit("chat", a.chatToMap(msg))
 }
@@ -1603,6 +1616,11 @@ func (a *App) StartLogin() map[string]interface{} {
 		a.helixClient, _ = twitch.NewHelixClient(clientID, token.AccessToken, info.UserID, info.UserID)
 		a.mu.Unlock()
 		log.Printf("[AUTH] Device-code login complete for %s", info.Login)
+
+		// On a first login (or after an expired token) bootSequence
+		// returned before this; without it channel emotes and 7TV paints
+		// stayed missing until the next restart.
+		a.startChannelExtras(info.UserID)
 
 		// Rebuild helix client and (re)start everything that depends on auth.
 		// On a fresh-install or post-revocation startup, bootSequence will

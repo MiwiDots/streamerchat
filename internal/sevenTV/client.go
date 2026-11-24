@@ -25,7 +25,7 @@ import (
 )
 
 // gqlURL is 7TV's v4 GraphQL endpoint.
-const gqlURL = "https://7tv.io/v4/gql"
+var gqlURL = "https://7tv.io/v4/gql" // var: tests point it at a local server
 
 // Cosmetic is one paint/badge entry the frontend can render against
 // a Twitch user_id. PaintCSS is a "style" attribute snippet
@@ -47,10 +47,21 @@ type Client struct {
 	httpClient *http.Client
 	onCosmetic func(Cosmetic)
 
-	mu      sync.Mutex
-	pending map[string]bool // twitch user id -> in-flight
-	cached  map[string]bool // twitch user id -> already emitted (or learned: nothing)
+	mu       sync.Mutex
+	pending  map[string]bool      // twitch user id -> in-flight
+	cached   map[string]bool      // twitch user id -> already emitted (or learned: nothing)
+	failedAt map[string]time.Time // twitch user id -> last failed lookup
+	sem      chan struct{}        // bounds concurrent requests
+	now      func() time.Time
 }
+
+// maxConcurrentLookups bounds parallel GraphQL requests: a raid brings
+// hundreds of new chatters within seconds.
+const maxConcurrentLookups = 4
+
+// retryFailedAfter: a lookup that failed (7TV down) is not repeated for
+// every chat message of that user, only after this pause.
+const retryFailedAfter = 2 * time.Minute
 
 // NewClient builds a ready-to-use client. Start is also a no-op for
 // the same compat reason as AddChannel.
@@ -61,6 +72,9 @@ func NewClient(ctx context.Context, onCosmetic func(Cosmetic)) *Client {
 		onCosmetic: onCosmetic,
 		pending:    make(map[string]bool),
 		cached:     make(map[string]bool),
+		failedAt:   make(map[string]time.Time),
+		sem:        make(chan struct{}, maxConcurrentLookups),
+		now:        time.Now,
 	}
 }
 
@@ -76,8 +90,7 @@ func (c *Client) AddChannel(broadcasterID string) {}
 // LookupUser fires a one-shot GraphQL query for the given Twitch
 // user id. Deduped across concurrent calls + repeated successful
 // lookups; transient 7TV outages (502 / 504 / network errors) are
-// NOT cached as "done" so the next chat message from the same user
-// retries. Emits a Cosmetic via onCosmetic if the user has an
+// NOT cached as "done"; the user is retried after retryFailedAfter. Emits a Cosmetic via onCosmetic if the user has an
 // active paint OR badge.
 func (c *Client) LookupUser(twitchUserID string) {
 	if twitchUserID == "" {
@@ -88,18 +101,30 @@ func (c *Client) LookupUser(twitchUserID string) {
 		c.mu.Unlock()
 		return
 	}
+	if t, failed := c.failedAt[twitchUserID]; failed && c.now().Sub(t) < retryFailedAfter {
+		c.mu.Unlock()
+		return
+	}
 	c.pending[twitchUserID] = true
 	c.mu.Unlock()
 
 	go func() {
-		ok := c.fetch(twitchUserID)
+		ok := false
+		select {
+		case c.sem <- struct{}{}:
+			ok = c.fetch(twitchUserID)
+			<-c.sem
+		case <-c.ctx.Done():
+		}
 		c.mu.Lock()
 		delete(c.pending, twitchUserID)
 		// Only cache as "done" if the call actually completed
-		// (200 + JSON decoded). 502s leave it unmarked so a later
-		// chat message retries naturally.
+		// (200 + JSON decoded). 502s are retried after retryFailedAfter.
 		if ok {
 			c.cached[twitchUserID] = true
+			delete(c.failedAt, twitchUserID)
+		} else {
+			c.failedAt[twitchUserID] = c.now()
 		}
 		c.mu.Unlock()
 	}()
@@ -171,12 +196,12 @@ type paintLayer struct {
 }
 
 type paintLayerType struct {
-	TypeName  string         `json:"__typename"`
-	Color     *paintColor    `json:"color,omitempty"`
-	Angle     int            `json:"angle"`
-	Repeating bool           `json:"repeating"`
-	Shape     string         `json:"shape,omitempty"`
-	Stops     []paintStop    `json:"stops,omitempty"`
+	TypeName  string      `json:"__typename"`
+	Color     *paintColor `json:"color,omitempty"`
+	Angle     int         `json:"angle"`
+	Repeating bool        `json:"repeating"`
+	Shape     string      `json:"shape,omitempty"`
+	Stops     []paintStop `json:"stops,omitempty"`
 }
 
 type paintColor struct {
