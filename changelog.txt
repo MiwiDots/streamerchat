@@ -1,3 +1,7 @@
+2026-11-25 09:54 - v0.9.0 (stable): RELEASE — autostart fix, ChatHub right-click
+  live filter, dependency security updates, code review fixes (see the
+  entries below).
+
 2026-11-25 04:26 - Code review fixes and optimizations (both apps).
 
   - Helix requests time out (15s); the library used http.DefaultClient
