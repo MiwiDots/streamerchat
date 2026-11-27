@@ -1,3 +1,6 @@
+2026-11-28 02:27 - v0.10.0 (stable): RELEASE — ChatHub split view and live chatter list
+  (see the two entries below).
+
 2026-11-28 02:24 - ChatHub: split view, two chats side by side.
 
   - Right-click a tab -> "Open next to #channel (split view)" shows that
