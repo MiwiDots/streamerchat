@@ -60,6 +60,13 @@ type HubConfig struct {
 	// on :root so all chat messages scale together.
 	FontSize int `json:"font_size"`
 
+	// Split view: two chats side by side. SplitLeft / SplitRight are
+	// channel keys as in Channels; both empty = no split. SplitRatio is
+	// the width share of the left chat (see clampSplitRatio).
+	SplitLeft  string  `json:"split_left,omitempty"`
+	SplitRight string  `json:"split_right,omitempty"`
+	SplitRatio float64 `json:"split_ratio,omitempty"`
+
 	// Optional Twitch auth for sending messages
 	ClientID string `json:"client_id"`
 	Username string `json:"username"`
@@ -1451,6 +1458,42 @@ func (a *App) SetOnlyShowLive(only bool) {
 	_ = a.updateConfig(func(c *HubConfig) { c.OnlyShowLive = only })
 }
 
+// Split view limits: neither chat may get narrower than splitRatioMin of
+// the window, so both stay readable.
+const (
+	splitRatioDefault = 0.5
+	splitRatioMin     = 0.2
+	splitRatioMax     = 0.8
+)
+
+// clampSplitRatio maps an unset or out-of-range split ratio into
+// [splitRatioMin, splitRatioMax]; unset (0) and NaN give the default.
+func clampSplitRatio(r float64) float64 {
+	switch {
+	case r == 0 || r != r:
+		return splitRatioDefault
+	case r < splitRatioMin:
+		return splitRatioMin
+	case r > splitRatioMax:
+		return splitRatioMax
+	}
+	return r
+}
+
+// SetSplitView persists the split view: the two channels shown side by
+// side and the left chat's width share. Two empty names close the split
+// (the ratio is kept for the next one). The frontend checks at startup
+// that both channels still exist.
+func (a *App) SetSplitView(left, right string, ratio float64) {
+	if left == "" || right == "" || left == right {
+		left, right = "", ""
+	}
+	_ = a.updateConfig(func(c *HubConfig) {
+		c.SplitLeft, c.SplitRight = left, right
+		c.SplitRatio = clampSplitRatio(ratio)
+	})
+}
+
 // SetLiveNotifications enables/disables the "channel went live" notice.
 func (a *App) SetLiveNotifications(enabled bool) {
 	_ = a.updateConfig(func(c *HubConfig) { c.MuteLiveNotifications = !enabled })
@@ -1703,6 +1746,9 @@ func (a *App) GetInitialState() map[string]interface{} {
 		"notifSound":        a.cfg.NotifSound,
 		"showTimestamps":    !a.cfg.HideTimestamps,
 		"fontSize":          clampFontSize(a.cfg.FontSize),
+		"splitLeft":         a.cfg.SplitLeft,
+		"splitRight":        a.cfg.SplitRight,
+		"splitRatio":        clampSplitRatio(a.cfg.SplitRatio),
 	}
 }
 

@@ -287,6 +287,67 @@ html, body {
   scrollbar-width: thin;
   scrollbar-color: #2a2a35 transparent;
 }
+
+/* Split view: two chat views side by side. --split is the left half's
+   width share, set from app.js. Each half has a small header. */
+.chat-area { --split: 50%; --split-head-h: 22px; --split-gap: 5px; }
+.chat-area.split .chat-view { top: var(--split-head-h); }
+.chat-area.split .chat-view.pane-left { right: auto; width: calc(var(--split) - var(--split-gap) / 2); }
+.chat-area.split .chat-view.pane-right { left: calc(var(--split) + var(--split-gap) / 2); }
+.split-head, .split-divider { display: none; }
+.chat-area.split .split-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: absolute;
+  top: 0;
+  height: var(--split-head-h);
+  padding: 0 6px 0 14px;
+  font-size: 11px;
+  color: #777;
+  background: #12121a;
+  border-bottom: 2px solid #222;
+  cursor: pointer;
+  z-index: 2;
+}
+.chat-area.split .split-head.split-left { left: 0; width: calc(var(--split) - var(--split-gap) / 2); }
+.chat-area.split .split-head.split-right { left: calc(var(--split) + var(--split-gap) / 2); right: 0; }
+/* The half you write in. */
+.chat-area.focus-left .split-head.split-left,
+.chat-area.focus-right .split-head.split-right { color: #fff; border-bottom-color: #9146ff; cursor: default; }
+.split-head-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: bold; }
+.split-head-close {
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #777;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 5px;
+  cursor: pointer;
+}
+.split-head-close:hover { background: #444; color: #fff; }
+.chat-area.split .split-divider {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--split) - var(--split-gap) / 2);
+  width: var(--split-gap);
+  background: #222;
+  cursor: col-resize;
+  z-index: 3;
+}
+.chat-area.split .split-divider:hover,
+.chat-area.split-dragging .split-divider { background: #9146ff; }
+.chat-area.split-dragging { cursor: col-resize; user-select: none; }
+/* The search bar floats over the focused half only. */
+.chat-area.split.focus-left > .chat-search { top: calc(var(--split-head-h) + 6px); right: calc(100% - var(--split) + 14px); }
+.chat-area.split.focus-right > .chat-search { top: calc(var(--split-head-h) + 6px); left: calc(var(--split) + 14px); }
+/* Tab of the chat in the other half. */
+.tab.in-split { color: #ccc; border-bottom: 2px solid #4a4a5a; margin-bottom: -1px; }
+
 .chat-view::-webkit-scrollbar { width: 8px; }
 .chat-view::-webkit-scrollbar-thumb { background: #2a2a35; border-radius: 4px; }
 .chat-view::-webkit-scrollbar-track { background: transparent; }
@@ -1063,3 +1124,4 @@ img.emote.giant-emote { height: 112px; width: auto; vertical-align: bottom; }
 .tfm-item:hover, .tfm-item:focus { background: rgba(145, 70, 255, 0.2); color: #fff; outline: none; }
 .tfm-item.active { color: #fff; }
 .tfm-check { width: 1em; color: #9146ff; font-weight: bold; }
+.tfm-sep { height: 1px; margin: 4px 2px; background: #333; }

@@ -752,6 +752,10 @@ function addChannelTab(channel) {
 
   const chatViewEl = el('div', { class: 'chat-view', 'data-channel': channel, style: 'display:none' });
   chatArea.appendChild(chatViewEl);
+  // Split view: clicking into the other chat makes it the one you write in.
+  chatViewEl.addEventListener('mousedown', () => {
+    if (split && activeChannel !== channel) switchToChannel(channel);
+  });
 
   const tab = el('div', { class: 'tab', 'data-channel': channel, draggable: 'true' });
   const liveDotEl = el('span', { class: 'live-dot hidden', title: 'Live' });
@@ -819,7 +823,14 @@ function removeChannelTab(channel) {
   liveStatus.delete(channel);
   renderQueues.delete(channel);
 
-  if (activeChannel === channel) {
+  if (split && (split.left === channel || split.right === channel)) {
+    // One half is gone: the other one takes the whole window.
+    const other = split.left === channel ? split.right : split.left;
+    split = null;
+    saveSplit();
+    activeChannel = null;
+    switchToChannel(other);
+  } else if (activeChannel === channel) {
     activeChannel = null;
     const first = channels.keys().next().value;
     if (first) switchToChannel(first);
@@ -828,27 +839,157 @@ function removeChannelTab(channel) {
   applyOnlyLiveFilter();
 }
 
-function switchToChannel(channel) {
-  if (replyTarget && replyTarget.channel !== channel) clearReplyTarget();
-  if (activeChannel) {
-    const prev = channels.get(activeChannel);
-    if (prev) {
-      prev.chatViewEl.style.display = 'none';
-      prev.tabEl.classList.remove('active');
-    }
+// === Split view ===
+// Two chats side by side. `split` names the channel in each half;
+// activeChannel is always one of them: the focused half, which the input,
+// the stream banner, search and the chatter list refer to. Without a
+// split only activeChannel is on screen.
+const SPLIT_RATIO_DEFAULT = 0.5;
+// Neither half gets narrower than this share of the window (the backend
+// clamps to the same range).
+const SPLIT_RATIO_MIN = 0.2;
+const SPLIT_RATIO_MAX = 0.8;
+let split = null; // { left, right } while two chats are shown
+let splitRatio = SPLIT_RATIO_DEFAULT; // width share of the left half
+
+function clampSplitRatio(r) {
+  if (!Number.isFinite(r) || r <= 0) return SPLIT_RATIO_DEFAULT;
+  return Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, r));
+}
+
+function isChannelVisible(channel) {
+  return channel === activeChannel || (!!split && (channel === split.left || channel === split.right));
+}
+
+function saveSplit() {
+  window.go.main.App.SetSplitView(split ? split.left : '', split ? split.right : '', splitRatio);
+}
+
+// A header per half (channel name + close) and the draggable divider.
+// Created once; shown by the .split class on the chat area.
+function makeSplitHead(side) {
+  const nameEl = el('span', { class: 'split-head-name' });
+  const closeEl = el('button', { class: 'split-head-close' }, '✕');
+  closeEl.addEventListener('click', (e) => { e.stopPropagation(); closeSplitSide(side); });
+  const head = el('div', { class: 'split-head split-' + side }, nameEl, closeEl);
+  head.addEventListener('mousedown', () => {
+    if (split && activeChannel !== split[side]) switchToChannel(split[side]);
+  });
+  chatArea.appendChild(head);
+  return { head, nameEl, closeEl };
+}
+const splitHeads = { left: makeSplitHead('left'), right: makeSplitHead('right') };
+const splitDivider = el('div', { class: 'split-divider', role: 'separator', 'aria-orientation': 'vertical' });
+chatArea.appendChild(splitDivider);
+
+function channelLabel(channel) {
+  const meta = parseChannelKey(channel);
+  return (meta.platform === 'youtube' ? '' : '#') + meta.displayName;
+}
+
+// Brings the DOM in line with activeChannel / split / splitRatio.
+function layoutPanes() {
+  chatArea.classList.toggle('split', !!split);
+  chatArea.classList.toggle('focus-left', !!split && split.left === activeChannel);
+  chatArea.classList.toggle('focus-right', !!split && split.right === activeChannel);
+  chatArea.style.setProperty('--split', (splitRatio * 100) + '%');
+  for (const [ch, state] of channels) {
+    const side = !split ? '' : ch === split.left ? 'left' : ch === split.right ? 'right' : '';
+    const visible = split ? side !== '' : ch === activeChannel;
+    const view = state.chatViewEl;
+    const wasHidden = view.style.display === 'none';
+    view.style.display = visible ? '' : 'none';
+    view.classList.toggle('pane-left', side === 'left');
+    view.classList.toggle('pane-right', side === 'right');
+    state.tabEl.classList.toggle('active', ch === activeChannel);
+    state.tabEl.classList.toggle('in-split', visible && ch !== activeChannel);
+    if (!visible) continue;
+    // On screen means read.
+    state.unread = 0;
+    state.hasMention = false;
+    state.unreadEl.classList.add('hidden');
+    state.tabEl.classList.remove('has-mention');
+    // A changed width re-wraps the lines: keep a chat that follows the
+    // newest message at the bottom, and open a tab at the bottom.
+    if (wasHidden || isFollowingBottom(view)) view.scrollTop = view.scrollHeight;
   }
+  if (split) {
+    for (const side of ['left', 'right']) {
+      splitHeads[side].nameEl.textContent = channelLabel(split[side]);
+      splitHeads[side].closeEl.title = i18n.t('splitCloseSide');
+    }
+    splitDivider.title = i18n.t('splitDividerTitle');
+  }
+}
+i18n.onLocaleChange(layoutPanes);
+
+// Shows `channel` next to the chat you are in. With a split already
+// open it replaces the half you are NOT in.
+function openInSplit(channel) {
+  if (!activeChannel || channel === activeChannel || !channels.has(channel)) return;
+  if (!split) split = { left: activeChannel, right: channel };
+  else if (split.left === activeChannel) split.right = channel;
+  else split.left = channel;
+  saveSplit();
+  layoutPanes();
+  applyOnlyLiveFilter();
+}
+
+// Back to one chat. `keep` is the channel that stays (default: the
+// focused one).
+function closeSplit(keep) {
+  if (!split) return;
+  const stay = keep || activeChannel;
+  split = null;
+  saveSplit();
+  switchToChannel(stay);
+}
+function closeSplitSide(side) {
+  if (split) closeSplit(side === 'left' ? split.right : split.left);
+}
+
+// Drag the divider to resize; the ratio is saved when the mouse is released.
+splitDivider.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || !split) return;
+  e.preventDefault();
+  chatArea.classList.add('split-dragging');
+  const onMove = (ev) => {
+    const r = chatArea.getBoundingClientRect();
+    if (r.width <= 0) return;
+    splitRatio = clampSplitRatio((ev.clientX - r.left) / r.width);
+    layoutPanes();
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    chatArea.classList.remove('split-dragging');
+    saveSplit();
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+});
+// Double-click: back to half / half.
+splitDivider.addEventListener('dblclick', () => {
+  splitRatio = SPLIT_RATIO_DEFAULT;
+  layoutPanes();
+  saveSplit();
+});
+
+// Makes `channel` the focused chat. With a split open, a channel that is
+// not on screen takes over the focused half.
+function switchToChannel(channel) {
   const state = channels.get(channel);
   if (!state) return;
-  state.chatViewEl.style.display = '';
-  state.tabEl.classList.add('active');
-  state.tabEl.classList.remove('has-mention');
-  state.unread = 0;
-  state.hasMention = false;
-  state.unreadEl.classList.add('hidden');
+  if (replyTarget && replyTarget.channel !== channel) clearReplyTarget();
+  if (split && channel !== split.left && channel !== split.right) {
+    if (split.right === activeChannel) split.right = channel;
+    else split.left = channel;
+    saveSplit();
+  }
   activeChannel = channel;
+  layoutPanes();
   statusText.textContent = i18n.t('watching', { channel });
   msgInput.placeholder = loggedIn ? i18n.t('sendTo', { channel }) : i18n.t('loginRequired');
-  state.chatViewEl.scrollTop = state.chatViewEl.scrollHeight;
   refreshStreamMeta();
   applyOnlyLiveFilter(); // the tab we left may now be hidden (offline)
 }
@@ -918,7 +1059,7 @@ async function refreshStreamMeta() {
 
 function markUnread(channel, isMention) {
   const state = channels.get(channel);
-  if (!state || activeChannel === channel) return;
+  if (!state || isChannelVisible(channel)) return;
   state.unread++;
   state.unreadEl.textContent = state.unread > 99 ? '99+' : String(state.unread);
   state.unreadEl.classList.remove('hidden');
@@ -1016,7 +1157,7 @@ tabBar.appendChild(tabHiddenChip);
 function applyOnlyLiveFilter() {
   let hidden = 0;
   for (const [ch, state] of channels.entries()) {
-    const hide = onlyShowLive && !liveStatus.get(ch) && ch !== activeChannel;
+    const hide = onlyShowLive && !liveStatus.get(ch) && !isChannelVisible(ch);
     state.tabEl.classList.toggle('hidden', hide);
     if (hide) hidden++;
   }
@@ -1040,17 +1181,30 @@ document.body.appendChild(tabFilterMenu);
 
 function closeTabFilterMenu() { tabFilterMenu.classList.add('hidden'); }
 
-function openTabFilterMenu(x, y) {
+// `channel` is the tab that was right-clicked (null: empty part of the
+// bar); it adds the split view entries on top.
+function openTabFilterMenu(x, y, channel) {
   const item = (label, active, onPick) => {
     const b = el('button', { class: 'tfm-item' + (active ? ' active' : ''), role: 'menuitemradio', 'aria-checked': String(active) },
       el('span', { class: 'tfm-check' }, active ? '✓' : ''), label);
     b.onclick = () => { closeTabFilterMenu(); onPick(); };
     return b;
   };
+  const action = (label, onPick) => {
+    const b = el('button', { class: 'tfm-item', role: 'menuitem' }, el('span', { class: 'tfm-check' }, ''), label);
+    b.onclick = () => { closeTabFilterMenu(); onPick(); };
+    return b;
+  };
+  const entries = [];
+  if (channel && channels.has(channel) && activeChannel && !isChannelVisible(channel)) {
+    entries.push(action(i18n.t('splitOpen', { channel: channelLabel(activeChannel) }), () => openInSplit(channel)));
+  }
+  if (split) entries.push(action(i18n.t('splitClose'), () => closeSplit()));
+  if (entries.length) entries.push(el('div', { class: 'tfm-sep', role: 'separator' }));
   const total = channels.size;
   let live = 0;
   for (const ch of channels.keys()) if (liveStatus.get(ch)) live++;
-  tabFilterMenu.replaceChildren(
+  tabFilterMenu.replaceChildren(...entries,
     item(i18n.t('tabFilterAll', { n: total }), !onlyShowLive, () => setOnlyShowLive(false)),
     item(i18n.t('tabFilterLive', { n: live }), onlyShowLive, () => setOnlyShowLive(true)));
   tabFilterMenu.classList.remove('hidden');
@@ -1064,7 +1218,8 @@ function openTabFilterMenu(x, y) {
 tabBar.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   hideTabPreview(true);
-  openTabFilterMenu(e.clientX, e.clientY);
+  const tab = e.target.closest ? e.target.closest('.tab') : null;
+  openTabFilterMenu(e.clientX, e.clientY, tab ? tab.dataset.channel : null);
 });
 document.addEventListener('mousedown', (e) => {
   if (!tabFilterMenu.classList.contains('hidden') && !tabFilterMenu.contains(e.target)) closeTabFilterMenu();
@@ -1418,7 +1573,7 @@ async function renderMessage(msg) {
   if (mention) {
     div.classList.add('highlight');
     // History replay must not beep or count as unread.
-    if (!msg.historical && soundOnMention !== 'none' && msg.channel !== activeChannel) playBeep();
+    if (!msg.historical && soundOnMention !== 'none' && !isChannelVisible(msg.channel)) playBeep();
   }
 
   applyGigantify(div, msg);
@@ -2501,6 +2656,13 @@ function applyState(data) {
     for (const [ch, live] of Object.entries(data.liveStatus)) {
       setLiveStatus(ch, !!live);
     }
+  }
+  // Restore the split view, if both of its channels are still there.
+  splitRatio = clampSplitRatio(data.splitRatio);
+  if (!split && data.splitLeft && data.splitRight && data.splitLeft !== data.splitRight &&
+      channels.has(data.splitLeft) && channels.has(data.splitRight)) {
+    split = { left: data.splitLeft, right: data.splitRight };
+    switchToChannel(split.left);
   }
   setLoggedInUI(!!data.loggedIn, data.username || '');
   // Keep the status bar clean by default. Transient messages (errors,

@@ -1,3 +1,22 @@
+2026-11-28 02:24 - ChatHub: split view, two chats side by side.
+
+  - Right-click a tab -> "Open next to #channel (split view)" shows that
+    chat beside the one you are in. Each half has a small header with
+    the channel name and a close button; "Close split view" is in the
+    same menu.
+  - One input box: it writes to the focused half (highlighted header,
+    placeholder names the channel). Click into a chat or its tab to
+    focus it. The stream banner, search and chatter list follow the
+    focus. A tab that is not on screen replaces the focused half.
+  - The divider can be dragged (each half keeps at least 20%), a
+    double-click resets to half / half.
+  - Both visible chats count as read: no unread badge, no mention sound.
+    With "only live channels" both stay in the tab bar.
+  - The split (channels + ratio) is saved in the config (split_left,
+    split_right, split_ratio; new SetSplitView) and restored at start if
+    both channels still exist. Removing a channel that is in the split
+    closes the split.
+
 2026-11-28 02:22 - ChatHub: the chatter list shows who is in the chat right now.
 
   - The list used to show everybody who had written since the tab was
