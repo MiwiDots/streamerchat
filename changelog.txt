@@ -1,3 +1,6 @@
+2026-11-28 02:36 - v0.10.1 (stable): RELEASE — ChatHub split view reachable from the
+  active tab (see the entry below).
+
 2026-11-28 02:32 - ChatHub: split view is offered on the tab you are in, too.
 
   - Right-clicking the active tab only showed the all / live filter; the
