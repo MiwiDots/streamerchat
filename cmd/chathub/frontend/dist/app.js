@@ -1181,6 +1181,9 @@ document.body.appendChild(tabFilterMenu);
 
 function closeTabFilterMenu() { tabFilterMenu.classList.add('hidden'); }
 
+// How many channels the active tab's menu offers for the split view.
+const SPLIT_MENU_MAX = 8;
+
 // `channel` is the tab that was right-clicked (null: empty part of the
 // bar); it adds the split view entries on top.
 function openTabFilterMenu(x, y, channel) {
@@ -1198,6 +1201,14 @@ function openTabFilterMenu(x, y, channel) {
   const entries = [];
   if (channel && channels.has(channel) && activeChannel && !isChannelVisible(channel)) {
     entries.push(action(i18n.t('splitOpen', { channel: channelLabel(activeChannel) }), () => openInSplit(channel)));
+  } else if (channel && channel === activeChannel && !split) {
+    // The tab you are in: offer the other channels to put beside it,
+    // live ones first, at most SPLIT_MENU_MAX so the menu stays short.
+    const others = [...channels.keys()].filter(ch => ch !== channel);
+    others.sort((a, b) => (liveStatus.get(b) ? 1 : 0) - (liveStatus.get(a) ? 1 : 0)); // stable: keeps tab order
+    for (const ch of others.slice(0, SPLIT_MENU_MAX)) {
+      entries.push(action(i18n.t('splitWith', { channel: channelLabel(ch) }), () => openInSplit(ch)));
+    }
   }
   if (split) entries.push(action(i18n.t('splitClose'), () => closeSplit()));
   if (entries.length) entries.push(el('div', { class: 'tfm-sep', role: 'separator' }));

@@ -1,3 +1,10 @@
+2026-11-28 02:32 - ChatHub: split view is offered on the tab you are in, too.
+
+  - Right-clicking the active tab only showed the all / live filter; the
+    split entry appeared only on other tabs. The active tab's menu now
+    lists "Split view with #channel" for the other channels (live ones
+    first, at most 8).
+
 2026-11-28 02:27 - v0.10.0 (stable): RELEASE — ChatHub split view and live chatter list
   (see the two entries below).
 
