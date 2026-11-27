@@ -312,7 +312,28 @@ func (a *App) startup(ctx context.Context) {
 			"channel":  channel,
 			"username": jp.Username,
 			"isJoin":   jp.IsJoin,
+			"isBot":    a.botDetector.IsBot(jp.Username),
 		})
+	})
+	// Members Twitch lists when we join a channel: seeds the chatter list
+	// so lurkers show without waiting for them to write.
+	a.irc.OnNames(func(channel string, users []string) {
+		list := make([]map[string]interface{}, 0, len(users))
+		for _, u := range users {
+			list = append(list, map[string]interface{}{
+				"login": u,
+				"isBot": a.botDetector.IsBot(u),
+			})
+		}
+		runtime.EventsEmit(a.ctx, "chatNames", map[string]interface{}{
+			"channel": channel,
+			"users":   list,
+		})
+	})
+	// A (re)connect means join/leave events were missed: the frontend
+	// drops what it learned from them and waits for the fresh names.
+	a.irc.OnConnected(func() {
+		runtime.EventsEmit(a.ctx, "ircConnected")
 	})
 	a.irc.OnSettings(func(channel string, s chat.ChatSettings) {
 		runtime.EventsEmit(a.ctx, "settings", map[string]interface{}{
@@ -1827,7 +1848,6 @@ func (a *App) ApplyUpdate() string {
 
 // GetVersion is a tiny helper for the settings UI.
 func (a *App) GetVersion() string { return version.Version }
-
 
 // Logout clears auth.
 func (a *App) Logout() {

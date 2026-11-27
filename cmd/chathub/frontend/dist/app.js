@@ -793,6 +793,10 @@ function addChannelTab(channel) {
     // username -> { userId, displayName, color, messages: [{ts, text}] }
     // Drives the user-card popup. Last ~50 messages per user are kept.
     userMessages: new Map(),
+    // login -> { at, joined, isBot }: who is in the chat right now, for
+    // the chatter list. See "Chatter presence" below.
+    present: new Map(),
+    membershipSeen: false,
   });
 
   applyOnlyLiveFilter();
@@ -1226,6 +1230,8 @@ async function renderMessage(msg) {
       if (idx >= 0) state.chatterOrder.splice(idx, 1);
       state.userMessages.delete(tgt);
     }
+    // A timed-out user is still in the chat; a banned one is not.
+    if (msg.type === 'ban') presenceRemove(state, tgt);
   }
 
   // Track chatters for @-autocomplete. Move existing names to the end so
@@ -1234,6 +1240,8 @@ async function renderMessage(msg) {
   // pollute the sidebar / autocomplete with strangers.
   if (msg.username && !msg.isSharedChat) {
     const name = msg.username;
+    // History is replayed from disk: its authors may be long gone.
+    if (!msg.historical) presenceSeen(state, name, { joined: false });
     if (state.chatters.has(name)) {
       const idx = state.chatterOrder.indexOf(name);
       if (idx >= 0) state.chatterOrder.splice(idx, 1);
@@ -1436,6 +1444,73 @@ function markMessagesDeleted(state, username, msgId, all) {
     row.classList.remove('highlight', 'first-msg', 'returning-chatter', 'watch-streak', 'highlighted-msg', 'reward-msg', 'powerup-gigantify', 'powerup-effect');
     const note = el('span', { class: 'deleted-text' }, i18n.t('messageDeleted'));
     if (ts) row.replaceChildren(ts, note); else row.replaceChildren(note);
+  }
+}
+
+// === Chatter presence ===
+// Who is in a channel's chat right now, for the chatter list. Sources:
+//   - the names Twitch lists when we join (chatNames) and its JOIN / PART
+//     events: these also cover lurkers, and PART removes them again;
+//   - chat messages: whoever writes is there.
+// Twitch stops sending JOIN / PART above roughly 1000 chatters and YouTube
+// has none at all. There a chatter known only from messages is dropped
+// after CHATTER_IDLE_MS without one.
+const CHATTER_IDLE_MS = 30 * 60 * 1000;
+const CHATTER_SWEEP_MS = 60 * 1000;
+// Hard bound for the map; Twitch only reports members below ~1000.
+const CHATTER_PRESENT_MAX = 5000;
+
+function presenceSeen(state, name, { joined, isBot }) {
+  const key = String(name || '').toLowerCase();
+  if (!key) return;
+  const cur = state.present.get(key);
+  if (cur) {
+    cur.at = Date.now();
+    if (joined) cur.joined = true;
+    if (isBot) cur.isBot = true;
+    return;
+  }
+  if (state.present.size >= CHATTER_PRESENT_MAX) {
+    // Maps iterate in insertion order: drop the oldest entry.
+    state.present.delete(state.present.keys().next().value);
+  }
+  state.present.set(key, { at: Date.now(), joined: !!joined, isBot: !!isBot });
+  chatterListChanged(state);
+}
+
+function presenceRemove(state, name) {
+  if (state.present.delete(String(name || '').toLowerCase())) chatterListChanged(state);
+}
+
+// Drops chatters we only know from messages once they have been quiet for
+// CHATTER_IDLE_MS, in channels where no PART will ever tell us they left.
+function presenceSweep(state, now) {
+  if (state.membershipSeen) return;
+  let changed = false;
+  for (const [key, p] of state.present) {
+    if (!p.joined && now - p.at > CHATTER_IDLE_MS) {
+      state.present.delete(key);
+      changed = true;
+    }
+  }
+  if (changed) chatterListChanged(state);
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const state of channels.values()) presenceSweep(state, now);
+}, CHATTER_SWEEP_MS);
+
+// The IRC connection was (re)established: JOIN / PART events were missed
+// meanwhile, so everything learned from them is stale. Twitch sends the
+// current names again right after.
+function presenceResetMembership() {
+  for (const state of channels.values()) {
+    state.membershipSeen = false;
+    let changed = false;
+    for (const [key, p] of state.present) {
+      if (p.joined) { state.present.delete(key); changed = true; }
+    }
+    if (changed) chatterListChanged(state);
   }
 }
 
@@ -1898,17 +1973,51 @@ channelInput.addEventListener('keydown', (e) => {
 });
 
 // === Chatter list popup ===
-// Categorizes the locally-tracked chatters of the active channel by their
-// IRC-tag roles (broadcaster / mod / VIP / sub / other). No Helix call —
-// the data is whatever we've observed since the tab opened. Clicking a
-// name opens the existing user card.
+// Lists who is in a channel's chat, grouped by role (broadcaster / mod /
+// VIP / sub / other / bots). Two sources:
+//   - Helix /chat/chatters: complete, but Twitch only answers it for the
+//     broadcaster and moderators of the channel;
+//   - the presence map (see "Chatter presence") everywhere else.
+// The list keeps itself up to date while it is open. Clicking a name opens
+// the user card.
 const chatterListBg = el('div', { class: 'modal-bg hidden', id: 'chatterListBg' });
 const chatterListModal = el('div', { class: 'modal chatter-list' });
 chatterListBg.appendChild(chatterListModal);
 chatterListBg.addEventListener('click', (e) => { if (e.target === chatterListBg) closeChatterList(); });
 document.body.appendChild(chatterListBg);
 
-function closeChatterList() { chatterListBg.classList.add('hidden'); }
+// How often the open list asks Helix again (mod channels), and how often
+// it may re-render from join / leave events at most.
+const CHATTER_HELIX_REFRESH_MS = 30 * 1000;
+const CHATTER_RENDER_THROTTLE_MS = 500;
+// Helix is asked for one page. A full page means there may be more
+// chatters than it returned, so presence data is merged in as well.
+const CHATTER_HELIX_PAGE = 1000;
+
+let chatterListChannel = null; // channel the open list shows, null = closed
+let chatterListRefreshTimer = null;
+let chatterListRenderTimer = null;
+
+function isChatterListOpen() { return chatterListChannel !== null; }
+
+function closeChatterList() {
+  chatterListBg.classList.add('hidden');
+  chatterListChannel = null;
+  clearInterval(chatterListRefreshTimer);
+  clearTimeout(chatterListRenderTimer);
+  chatterListRefreshTimer = chatterListRenderTimer = null;
+}
+
+// Called by the presence code: re-render the open list, throttled so a
+// burst of joins costs one render.
+function chatterListChanged(state) {
+  if (!isChatterListOpen() || chatterListRenderTimer) return;
+  if (channels.get(chatterListChannel) !== state) return;
+  chatterListRenderTimer = setTimeout(() => {
+    chatterListRenderTimer = null;
+    if (isChatterListOpen()) renderChatterList(chatterListOpts);
+  }, CHATTER_RENDER_THROTTLE_MS);
+}
 
 // Cache of last-fetched Helix chatter logins per channel so re-opening the
 // modal feels instant. Refreshed on every open.
@@ -1928,18 +2037,28 @@ chatterListModal.append(el('div', { class: 'modal-header' }, clTitleEl, clCloseE
 
 async function openChatterList() {
   if (!activeChannel) return;
+  closeChatterList();
   const ch = activeChannel;
+  chatterListChannel = ch;
   chatterListBg.classList.remove('hidden');
   clSearchEl.value = '';
   clSearchEl.placeholder = i18n.t('chatterListSearch');
-  renderChatterList({ loading: true });
+  // Show what we already know right away; Helix answers on top of it.
+  const cached = helixChattersCache.get(ch) || null;
+  renderChatterList(cached ? { helixChatters: cached, helixSource: 'helix' } : { loading: true });
   clSearchEl.focus();
-  // Fire Helix call in the background; render again when it returns. If we
-  // already have a cached list show it immediately, then refresh on top.
-  // helixChatters is the richer [{login, isBot}, …] shape from v0.2.25+.
-  let helixChatters = helixChattersCache.get(ch) || null;
-  let helixSource = 'unknown';
-  if (helixChatters) renderChatterList({ helixChatters, helixSource: 'helix' });
+  await refreshHelixChatters(ch);
+  if (chatterListChannel !== ch) return; // closed or reopened meanwhile
+  chatterListRefreshTimer = setInterval(() => {
+    // Only channels Helix answers for are worth asking again.
+    if (chatterListOpts.helixSource === 'helix') refreshHelixChatters(ch);
+  }, CHATTER_HELIX_REFRESH_MS);
+}
+
+// Asks Helix for the channel's chatters and re-renders the open list.
+async function refreshHelixChatters(ch) {
+  let helixChatters = null;
+  let helixSource = 'none';
   try {
     const res = await window.go.main.App.GetChannelChatters(ch);
     helixSource = (res && res.source) || 'none';
@@ -1948,69 +2067,86 @@ async function openChatterList() {
     } else if (res && Array.isArray(res.users)) {
       helixChatters = res.users.map(login => ({ login, isBot: false }));
     }
-    if (helixChatters && helixChatters.length > 0) helixChattersCache.set(ch, helixChatters);
   } catch (e) { helixSource = 'error'; }
-  if (activeChannel === ch && !chatterListBg.classList.contains('hidden')) {
-    // Keeps whatever the user has typed in the search box meanwhile.
-    renderChatterList({ helixChatters, helixSource });
-  }
+  if (helixSource === 'helix' && helixChatters) helixChattersCache.set(ch, helixChatters);
+  else helixChattersCache.delete(ch);
+  // Keeps whatever the user has typed in the search box meanwhile.
+  if (chatterListChannel === ch) renderChatterList({ helixChatters, helixSource });
 }
 
 function renderChatterList(opts) {
   opts = opts || {};
   chatterListOpts = opts;
+  const channel = chatterListChannel;
   const filterText = clSearchEl.value;
-  const state = channels.get(activeChannel);
-  clTitleEl.textContent = i18n.t('chatterListTitle', { channel: activeChannel });
+  const state = channels.get(channel);
   const body = clBodyEl;
   body.replaceChildren();
+  clTitleEl.textContent = i18n.t('chatterListTitle', { channel });
 
-  // Surface the data source so the user understands why "lurkers" may be
-  // missing. Twitch's /chat/chatters endpoint only returns the full list
-  // when the caller is broadcaster or moderator of the channel.
-  const showNote = !!(opts.helixSource && opts.helixSource !== 'helix' && !opts.loading);
-  clNoteEl.classList.toggle('hidden', !showNote);
-  clNoteEl.textContent = showNote ? i18n.t('chatterListRestricted') : '';
+  const fromHelix = opts.helixSource === 'helix' && Array.isArray(opts.helixChatters);
+  if (state) presenceSweep(state, Date.now());
 
-  if (opts.loading && !opts.helixChatters) {
-    body.appendChild(el('div', { class: 'cl-empty' }, i18n.t('chatterListLoading')));
-    return;
-  }
-
-  // Combine sources: Helix gives us EVERY current viewer (lurkers + bots),
-  // with a flag for known bots. Local userMessages gives us roles for users
-  // we've seen chat in this session. Merge by username, prefer local role
-  // data (and never demote a Helix-flagged bot if our local data is silent
-  // about it).
-  const merged = new Map(); // login -> { name, displayName, color, isMod, isVIP, isBroadcaster, isSub, isBot, userId }
-  if (Array.isArray(opts.helixChatters)) {
+  const blank = (name) => ({
+    name, displayName: name, color: '',
+    isMod: false, isVIP: false, isBroadcaster: false, isSub: false, isBot: false, userId: '',
+  });
+  const merged = new Map(); // lowercase login -> entry
+  let hasJoined = false;
+  if (fromHelix) {
     for (const c of opts.helixChatters) {
       const login = (c.login || '').toString();
       if (!login) continue;
-      merged.set(login.toLowerCase(), {
-        name: login,
-        displayName: login,
-        color: '',
-        isMod: false, isVIP: false, isBroadcaster: false, isSub: false,
-        isBot: !!c.isBot,
-        userId: '',
-      });
+      const e = blank(login);
+      e.isBot = !!c.isBot;
+      merged.set(login.toLowerCase(), e);
     }
   }
-  if (state) {
-    for (const [name, u] of state.userMessages.entries()) {
-      const key = name.toLowerCase();
-      const existing = merged.get(key) || { name, displayName: u.displayName || name, color: u.color || '', isMod: false, isVIP: false, isBroadcaster: false, isSub: false, isBot: false, userId: u.userId || '' };
-      existing.displayName = u.displayName || existing.displayName;
-      existing.color = u.color || existing.color;
-      if (u.isMod) existing.isMod = true;
-      if (u.isVIP) existing.isVIP = true;
-      if (u.isBroadcaster) existing.isBroadcaster = true;
-      if (u.isSub) existing.isSub = true;
-      existing.userId = u.userId || existing.userId;
-      // Don't clear the bot flag if Helix already set it.
-      merged.set(key, existing);
+  // Presence fills the list where Helix does not answer, and tops it up
+  // when Helix returned a full page (there may be more chatters).
+  if (state && (!fromHelix || opts.helixChatters.length >= CHATTER_HELIX_PAGE)) {
+    for (const [key, p] of state.present) {
+      if (p.joined) hasJoined = true;
+      if (merged.has(key)) continue;
+      const e = blank(key);
+      e.isBot = p.isBot;
+      merged.set(key, e);
     }
+  }
+  // Roles, colour and display name come from the messages we saw. They
+  // only decorate chatters that are present: who left stays out.
+  if (state) {
+    for (const [name, u] of state.userMessages) {
+      const e = merged.get(name.toLowerCase());
+      if (!e) continue;
+      e.name = name;
+      e.displayName = u.displayName || name;
+      e.color = u.color || '';
+      e.isMod = !!u.isMod;
+      e.isVIP = !!u.isVIP;
+      e.isBroadcaster = !!u.isBroadcaster;
+      e.isSub = !!u.isSub;
+      e.userId = u.userId || '';
+    }
+  }
+
+  // The broadcaster is known by name even before they write.
+  const owner = merged.get(String(channel || '').toLowerCase());
+  if (owner) owner.isBroadcaster = true;
+  clTitleEl.textContent = i18n.t('chatterListTitle', { channel }) + (merged.size ? ` (${merged.size})` : '');
+
+  // Say where the list comes from, so missing lurkers are no surprise.
+  let note = '';
+  if (!opts.loading && !fromHelix) {
+    note = i18n.t(hasJoined ? 'chatterListFromEvents' : 'chatterListRestricted',
+      { minutes: Math.round(CHATTER_IDLE_MS / 60000) });
+  }
+  clNoteEl.classList.toggle('hidden', !note);
+  clNoteEl.textContent = note;
+
+  if (opts.loading && merged.size === 0) {
+    body.appendChild(el('div', { class: 'cl-empty' }, i18n.t('chatterListLoading')));
+    return;
   }
 
   if (merged.size === 0) {
@@ -2054,7 +2190,7 @@ function renderChatterList(opts) {
       const row = el('div', { class: 'cl-name', style: u.color ? 'color:' + readableColor(u.color) : '' }, u.displayName || name);
       row.addEventListener('click', () => {
         closeChatterList();
-        openUserCard(activeChannel, name, u.userId);
+        openUserCard(channel, name, u.userId);
       });
       section.appendChild(row);
     }
@@ -2066,7 +2202,7 @@ function renderChatterList(opts) {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !chatterListBg.classList.contains('hidden')) closeChatterList();
+  if (e.key === 'Escape' && isChatterListOpen()) closeChatterList();
 });
 const chatterListBtnEl = document.getElementById('chatterListBtn');
 if (chatterListBtnEl) chatterListBtnEl.addEventListener('click', openChatterList);
@@ -2394,7 +2530,19 @@ function setupEvents() {
   window.runtime.EventsOn('joinPart', (data) => {
     if (!data || !data.channel || !channels.has(data.channel)) return;
     renderJoinPart(data.channel, data.username, !!data.isJoin);
+    const state = channels.get(data.channel);
+    state.membershipSeen = true;
+    if (data.isJoin) presenceSeen(state, data.username, { joined: true, isBot: !!data.isBot });
+    else presenceRemove(state, data.username);
   });
+
+  window.runtime.EventsOn('chatNames', (data) => {
+    const state = data && channels.get(data.channel);
+    if (!state || !Array.isArray(data.users)) return;
+    for (const u of data.users) presenceSeen(state, u.login, { joined: true, isBot: !!u.isBot });
+  });
+
+  window.runtime.EventsOn('ircConnected', presenceResetMembership);
 
   // When backend finishes loading channel-specific badge artwork, drop any
   // stale entries we cached earlier (which would have been the global

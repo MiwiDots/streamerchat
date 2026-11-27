@@ -1,3 +1,21 @@
+2026-11-28 02:22 - ChatHub: the chatter list shows who is in the chat right now.
+
+  - The list used to show everybody who had written since the tab was
+    opened, and nobody else (outside channels you moderate).
+  - It now tracks presence: the names Twitch lists when the channel is
+    joined (IRC 353, new OnNames callback) and its JOIN events add
+    chatters, lurkers included; PART and bans remove them. The open list
+    re-renders by itself (at most every 500 ms).
+  - Chats without join/leave events (YouTube, Twitch chats above ~1000
+    chatters): a chatter is dropped after 30 minutes without a message.
+  - After an IRC reconnect everything learned from JOIN/PART is dropped
+    and refilled from the fresh names (new ircConnected event).
+  - Channels you moderate keep the Helix list; it now refreshes every
+    30 s while the list is open and no longer keeps users who left.
+  - Anonymous (justinfan) connections are filtered out of JOIN/PART and
+    names. Known bots are flagged in the events. The title shows the
+    number of chatters; the note says where the list comes from.
+
 2026-11-25 09:54 - v0.9.0 (stable): RELEASE — autostart fix, ChatHub right-click
   live filter, dependency security updates, code review fixes (see the
   entries below).

@@ -27,6 +27,10 @@ type MultiIRCClient struct {
 	onJoinPart func(channel string, jp chat.UserJoinPart)
 	onSettings func(channel string, s chat.ChatSettings)
 	onSystem   func(channel string, text string)
+	// onNames delivers the members Twitch lists when we join a channel
+	// (IRC 353). onConnected fires on every (re)connect, before any names.
+	onNames     func(channel string, users []string)
+	onConnected func()
 
 	rooms *roomNameCache // Shared Chat room ID -> channel name
 }
@@ -68,6 +72,29 @@ func (m *MultiIRCClient) OnMessage(fn func(channel string, msg chat.Message))   
 func (m *MultiIRCClient) OnJoinPart(fn func(channel string, jp chat.UserJoinPart)) { m.onJoinPart = fn }
 func (m *MultiIRCClient) OnSettings(fn func(channel string, s chat.ChatSettings))  { m.onSettings = fn }
 func (m *MultiIRCClient) OnSystem(fn func(channel string, text string))            { m.onSystem = fn }
+func (m *MultiIRCClient) OnNames(fn func(channel string, users []string))          { m.onNames = fn }
+func (m *MultiIRCClient) OnConnected(fn func())                                    { m.onConnected = fn }
+
+// anonymousLoginPrefix is the nick prefix of Twitch's anonymous read-only
+// logins. Our own connection shows up under it in JOIN and NAMES.
+const anonymousLoginPrefix = "justinfan"
+
+// isAnonymousLogin reports whether name is an anonymous read-only
+// connection (ours or another viewer tool's), not a real chatter.
+func isAnonymousLogin(name string) bool {
+	return strings.HasPrefix(strings.ToLower(name), anonymousLoginPrefix)
+}
+
+// realChatters returns names without anonymous connections.
+func realChatters(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if n != "" && !isAnonymousLogin(n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
 
 // SetRoomResolver sets a callback to resolve room IDs to channel names.
 // It runs in the background; return "" when the name can't be resolved.
@@ -183,8 +210,17 @@ func (m *MultiIRCClient) registerHandlers(c *twitch.Client) {
 		}
 	})
 
+	c.OnNamesMessage(func(msg twitch.NamesMessage) {
+		if m.onNames == nil {
+			return
+		}
+		if users := realChatters(msg.Users); len(users) > 0 {
+			m.onNames(msg.Channel, users)
+		}
+	})
+
 	c.OnUserJoinMessage(func(msg twitch.UserJoinMessage) {
-		if m.onJoinPart != nil {
+		if m.onJoinPart != nil && !isAnonymousLogin(msg.User) {
 			m.onJoinPart(msg.Channel, chat.UserJoinPart{
 				Platform: chat.PlatformTwitch,
 				Channel:  msg.Channel,
@@ -196,7 +232,7 @@ func (m *MultiIRCClient) registerHandlers(c *twitch.Client) {
 	})
 
 	c.OnUserPartMessage(func(msg twitch.UserPartMessage) {
-		if m.onJoinPart != nil {
+		if m.onJoinPart != nil && !isAnonymousLogin(msg.User) {
 			m.onJoinPart(msg.Channel, chat.UserJoinPart{
 				Platform: chat.PlatformTwitch,
 				Channel:  msg.Channel,
@@ -305,5 +341,8 @@ func (m *MultiIRCClient) registerHandlers(c *twitch.Client) {
 		n := len(m.channels)
 		m.mu.RUnlock()
 		log.Printf("[IRC] read client connected (%d channels)", n)
+		if m.onConnected != nil {
+			m.onConnected()
+		}
 	})
 }
